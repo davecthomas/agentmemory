@@ -127,6 +127,7 @@ When you open Claude Code in a wired repo, the `SessionStart` hook fires automat
 2. Bootstraps any missing repo-local wiring
 3. Shows a notification in the UI: _"Shared repo memory loaded. Last refresh: …"_
 4. Injects the ADR index and recent daily summaries into the model's context
+5. If no event shards exist yet, spawns a `claude -p` subagent in the background to seed initial memory from recent commits and design docs — the session is not blocked
 
 You do not need to ask the agent to read memory — it arrives as session context.
 
@@ -266,14 +267,13 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 2. Restart agent session
    └── SessionStart bootstraps repo wiring
+   └── No event shards found → bootstrap subagent spawned automatically in background
+   └── Shards appear in .agents/memory/daily/ within ~30 seconds
 
-3. Invoke memory-bootstrap
-   └── Mines recent design docs and commits
-   └── Creates bounded set of decision-candidate shards
-   └── Promotes strongest decisions into initial ADRs
-
-4. Review and commit the bootstrapped memory
+3. Review and commit the bootstrapped memory
 ```
+
+To trigger bootstrap manually (e.g. after deleting shards): `/memory-bootstrap`
 
 ---
 

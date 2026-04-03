@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
@@ -218,6 +219,106 @@ def decision_candidate(strings: list[str]) -> bool:
     return any(pattern.search(value) for value in strings)
 
 
+# ---------------------------------------------------------------------------
+# Diff-hash deduplication
+# ---------------------------------------------------------------------------
+
+_DIFF_STATE_FILE = ".codex/local/last-shard-diff-state.json"
+
+
+def _diff_hash(repo_root: Path, files: list[str]) -> str:
+    """Return an MD5 of 'git diff HEAD -- <files>' for the given file list.
+
+    An empty diff (all changes already staged/committed) produces a hash of
+    the empty string, which is still a valid stable value to compare against.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD", "--"] + files,
+            cwd=str(repo_root),
+            capture_output=True,
+            check=False,
+        )
+        return hashlib.md5(result.stdout).hexdigest()
+    except Exception:
+        return ""
+
+
+def _load_diff_state(repo_root: Path) -> dict:
+    state_path = repo_root / _DIFF_STATE_FILE
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_diff_state(repo_root: Path, thread_id: str, diff_hash_val: str) -> None:
+    state_path = repo_root / _DIFF_STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state = _load_diff_state(repo_root)
+    state[thread_id] = diff_hash_val
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _already_captured(repo_root: Path, thread_id: str, current_hash: str) -> bool:
+    """Return True if this exact diff was already captured in a shard this session."""
+    if not current_hash:
+        return False
+    state = _load_diff_state(repo_root)
+    return state.get(thread_id) == current_hash
+
+
+# ---------------------------------------------------------------------------
+# Git diff summary for Why content
+# ---------------------------------------------------------------------------
+
+
+def _diff_summary(repo_root: Path, files: list[str]) -> str:
+    """Return a compact human-readable summary of what changed in the given files.
+
+    Runs 'git diff HEAD --stat' for a one-liner per file, then pulls up to
+    three representative changed lines (additions starting with '+') from the
+    full diff as supporting detail.  Returns empty string on any failure.
+    """
+    try:
+        stat = subprocess.run(
+            ["git", "diff", "HEAD", "--stat", "--"] + files,
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if not stat:
+            # Try staged changes too
+            stat = subprocess.run(
+                ["git", "diff", "--cached", "--stat", "--"] + files,
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+        # Pull a few representative added lines from the diff
+        diff_text = subprocess.run(
+            ["git", "diff", "HEAD", "-U0", "--"] + files,
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        added = [
+            ln[1:].strip()
+            for ln in diff_text.splitlines()
+            if ln.startswith("+") and not ln.startswith("+++") and ln[1:].strip()
+        ][:3]
+        parts = []
+        if stat:
+            parts.append(stat.splitlines()[-1] if "\n" in stat else stat)
+        parts.extend(added)
+        return "; ".join(parts)
+    except Exception:
+        return ""
+
+
 def main() -> int:
     """Post-turn hook entry point.
 
@@ -298,6 +399,28 @@ def main() -> int:
         )
         return 0
 
+    # Diff-hash deduplication gate: git status is sticky -- once a file is
+    # modified it appears in every subsequent turn until committed.  Hash the
+    # actual diff content so we only write a new shard when the working-tree
+    # content has genuinely changed since the last captured shard for this thread.
+    # thread_id must be resolved first for this check; use a stable fallback.
+    _early_thread_id = (
+        find_first(payload, THREAD_KEYS) or stable_identifier("thread", payload)
+    ).replace(" ", "_")
+    current_diff_hash = _diff_hash(repo_root, files_touched)
+    if _already_captured(repo_root, _early_thread_id, current_diff_hash):
+        append_hook_trace(
+            "Notify",
+            "noop",
+            repo_root=repo_root,
+            details={"reason": "diff_unchanged_since_last_shard"},
+        )
+        emit_hook_response(
+            "noop",
+            message="diff unchanged since last shard for this thread; skipping duplicate",
+        )
+        return 0
+
     # Determine which agent triggered this hook and resolve the model name.
     hook_event = find_first(payload, {"hook_event_name", "hookEventName"}) or ""
     is_claude_code = hook_event == "Stop" or bool(os.environ.get("CLAUDECODE"))
@@ -348,20 +471,36 @@ def main() -> int:
             prompt = extract_user_prompt_from_transcript(str(transcript_path))
 
     assistant_text = find_first(payload, ASSISTANT_KEYS)
+
+    # Why: prefer the user prompt (the task that drove the change), but only if
+    # it reads like a task, not a conversational fragment.  Supplement or replace
+    # with a git diff summary so the shard describes what actually changed.
+    diff_summary = _diff_summary(repo_root, files_touched)
     why_lines = []
     if prompt:
-        why_lines.append(f"- {prompt.strip()}")
-    elif assistant_text:
-        why_lines.append(f"- {assistant_text.strip().splitlines()[0]}")
-    else:
-        why_lines.append("- Meaningful repo state changed during this agent turn.")
+        prompt_stripped = prompt.strip()
+        # Treat very short prompts or prompts with no verb-like content as noise;
+        # fall back to the diff summary in those cases.
+        if len(prompt_stripped) >= 15:
+            why_lines.append(f"- {prompt_stripped}")
+    if not why_lines and assistant_text:
+        first = assistant_text.strip().splitlines()[0]
+        if len(first) >= 15:
+            why_lines.append(f"- {first}")
+    if diff_summary and len(why_lines) == 0:
+        why_lines.append(f"- {diff_summary}")
+    if not why_lines:
+        why_lines.append("- Repo state changed during this agent turn.")
 
     what_lines = [f"- Updated {path}" for path in files_touched] or [
         "- No tracked files were detected."
     ]
-    evidence_lines = verification or [
-        "- Tracked repo changes were detected in the working tree."
-    ]
+    # Evidence: include the git diff summary as a concrete signal when available.
+    evidence_lines = verification[:]
+    if diff_summary:
+        evidence_lines.insert(0, f"- git diff: {diff_summary}")
+    if not evidence_lines:
+        evidence_lines = ["- Tracked repo changes were detected in the working tree."]
     next_lines = blockers or [
         "- Review the generated shard and summary, then explicitly commit and push them with the related code changes if ready."
     ]
@@ -468,6 +607,10 @@ def main() -> int:
             "error", message="summary rebuild did not produce summary.md"
         )
         return 1
+
+    # Persist the diff hash so subsequent turns can detect unchanged diffs and
+    # skip writing duplicate shards for the same working-tree state.
+    _save_diff_state(repo_root, thread_id, current_diff_hash)
 
     # Stage the shard and rebuilt summary so they are ready to commit alongside
     # the code changes.  The developer must commit explicitly -- this system

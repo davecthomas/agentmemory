@@ -20,8 +20,24 @@ memory bootstrap, bootstrap repo memory, seed repo memory, seed adr candidates, 
 
 ---
 
+## CLI / Non-Interactive Mode
+
+When this skill is invoked as a non-interactive subagent via `claude -p` or `gemini --prompt` (spawned by the SessionStart hook — no user is present):
+
+- Skip all user-facing commentary. Do not announce progress or ask questions.
+- Proceed directly with the filesystem check and shard writing.
+- After writing shards, call `rebuild-summary.py` for each affected date and run `git add`.
+- Exit cleanly. The main session will detect the new shards on the next turn.
+
+---
+
 ## Workflow
 
+**FIRST: check whether event shards exist.**
+Run: `find .agents/memory/daily -name "*.md" -path "*/events/*" 2>/dev/null | head -1`
+If that returns nothing, `.agents/memory/daily/` has no event shards and you MUST proceed with bootstrap. Do not declare "already bootstrapped" based on ADR count alone. ADRs and event shards are completely separate artifacts — ADRs are durable decisions, event shards are the historical event record. The presence of ADRs does NOT mean event shards exist. If the user explicitly invoked this skill and no event shards are found, always run bootstrap.
+
+- Before doing any file work, tell the user what you are about to do in one short sentence — e.g. "Bootstrapping shared memory from recent commits and design docs…" — so they know work is in progress.
 - Keep user interaction minimal during bootstrap. This skill is for seeding history, not for negotiating repo setup.
 - Assume `SessionStart` already handled repo-local shared-memory wiring. If `.agents/memory/adr/INDEX.md` is still missing, or `.codex/memory` is not wired to `../.agents/memory`, stop and report that repo startup wiring failed instead of trying to create the repo layout from this skill.
 - Treat cross-repo bootstrap as an anti-pattern. Do not attempt to seed memory for some other repository from the current workspace.

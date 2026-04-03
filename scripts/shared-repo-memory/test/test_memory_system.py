@@ -91,6 +91,11 @@ def test_bootstrap_initializes_directories(repo):
 def test_post_turn_notify_creates_shard_and_summary(repo):
     repo_dir, home_dir = repo
 
+    # Stage a tracked file change so the meaningful-turn gate passes.
+    tracked_file = repo_dir / "feature.py"
+    tracked_file.write_text("# initial\n")
+    subprocess.run(["git", "add", "feature.py"], cwd=repo_dir, check=True)
+
     payload = {
         "conversation_id": "test-thread",
         "turn_id": "test-turn-1",
@@ -162,11 +167,10 @@ def test_session_start_noops_outside_git_repo_with_json_stdout(non_repo):
         env=env,
     )
 
-    assert json.loads(result.stdout) == {
-        "message": "current working directory is not inside a Git repository",
-        "status": "noop",
-    }
+    # session-start.py exits silently (no stdout) when not inside a git repo.
+    assert result.stdout.strip() == ""
     assert "invalid JSON" not in result.stderr
+    assert not (work_dir / ".agents").exists()
 
 
 def test_promote_adr_creates_adr_and_index(repo):

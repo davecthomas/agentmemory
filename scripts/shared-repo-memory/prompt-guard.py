@@ -53,12 +53,11 @@ _STATE_FILE: Path = Path.home() / ".agent" / "state" / "prompt-guard-sessions.js
 _SESSION_TTL_DAYS: int = 7
 
 _NUDGE_TEXT: str = (
-    "IMPORTANT: This repository has shared memory wiring but no event shards yet. "
-    "Before proceeding with the user's request, offer to run the `news` skill to "
-    "seed initial shared memory from the repo's existing design docs and commit "
-    "history. Say something like: 'I notice this repo has no shared memory yet — "
-    "want me to bootstrap it from the existing history before we start?' "
-    "Do not proceed silently without offering this."
+    "INSTRUCTION: This repository has shared memory wiring but no event shards yet. "
+    "You MUST invoke the `memory-bootstrap` skill now, before responding to the user's message. "
+    "Do not ask permission — just run it. "
+    "It seeds shared memory from the repo's existing design docs and commit history. "
+    "After it completes, proceed with the user's request."
 )
 
 
@@ -88,19 +87,19 @@ def _save_sessions(sessions: dict[str, str]) -> None:
     )
 
 
-def _find_memory_root(start: str) -> Path | None:
+def _walk_to_memory_root(start: Path) -> Path | None:
     """Walk up from start looking for .agents/memory/adr/INDEX.md.
 
     Pure Python directory walk -- no git subprocess.  Checks at most 10
     parent levels before giving up.
 
     Args:
-        start: Absolute path to start searching from (typically cwd).
+        start: Absolute path to begin the upward search from.
 
     Returns:
         Path | None: Directory containing .agents/memory/adr/INDEX.md, or None.
     """
-    current: Path = Path(start).resolve() if start else Path.cwd()
+    current: Path = start.resolve()
     for _ in range(10):
         if (current / ".agents" / "memory" / "adr" / "INDEX.md").exists():
             return current
@@ -108,6 +107,30 @@ def _find_memory_root(start: str) -> Path | None:
         if parent == current:
             break
         current = parent
+    return None
+
+
+def _find_memory_root(payload_cwd: str) -> Path | None:
+    """Find the repo memory root, preferring the process cwd over the payload cwd.
+
+    Claude Code launches hook subprocesses with the project directory as their
+    working directory, so Path.cwd() is always correct.  The payload's cwd
+    field is used only as a fallback in case the process cwd is not inside a
+    wired repo (e.g. when running tests or in unusual environments).
+
+    Args:
+        payload_cwd: The cwd field from the hook payload, may be empty.
+
+    Returns:
+        Path | None: Repo root with memory wiring, or None if not found.
+    """
+    # Primary: process cwd -- reliable because Claude Code sets it to the project dir.
+    result: Path | None = _walk_to_memory_root(Path.cwd())
+    if result is not None:
+        return result
+    # Fallback: payload cwd field.
+    if payload_cwd:
+        return _walk_to_memory_root(Path(payload_cwd))
     return None
 
 
@@ -173,9 +196,9 @@ def main() -> int:
         return 0
 
     # --- Inject bootstrap nudge (empty-memory repo) ---
-    if session_id:
-        sessions[session_id] = utc_timestamp()
-        _save_sessions(sessions)
+    # Do NOT mark the session done here.  If the agent ignores the nudge this
+    # prompt, we want it to fire again on the next prompt until shards exist.
+    # The session is only marked done once shards are confirmed present (above).
 
     response: dict[str, object] = {
         "hookSpecificOutput": {

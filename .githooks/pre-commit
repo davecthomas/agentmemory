@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Pre-commit: lint and test via the poetry venv.
+set -euo pipefail
+
+poetry run ruff check scripts/ skills/
+poetry run pytest scripts/shared-repo-memory/test/ -q

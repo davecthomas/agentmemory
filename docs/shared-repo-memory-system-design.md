@@ -53,7 +53,8 @@ Give coding agents durable repo context so every new session starts from prior d
 │   ├── post-compact.py
 │   ├── rebuild-summary.py
 │   ├── build-catchup.py
-│   └── promote-adr.py
+│   ├── promote-adr.py
+│   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
 └── state/
     └── shared_asset_refresh_state.json
 
@@ -169,7 +170,15 @@ Gemini CLI has no `PostCompact` equivalent — `PreCompress` fires before compre
 | `hookEventName == "AfterAgent"` | Gemini CLI |
 | Neither | Codex |
 
-`session-start.py` and `prompt-guard.py` do not need to detect the agent — they emit the same JSON schema for all agents.
+`session-start.py` also detects the agent in order to choose the correct subagent CLI for memory bootstrap (see [Memory Bootstrap](#memory-bootstrap)):
+
+| Env var | Agent |
+|---|---|
+| `CLAUDECODE=1` | Claude Code |
+| `GEMINI_CLI=1` | Gemini CLI |
+| Neither | defaults to `claude` (covers Codex sessions with `claude` on PATH) |
+
+`prompt-guard.py` does not need to detect the agent — it emits the same JSON schema for all agents.
 
 ---
 
@@ -181,7 +190,8 @@ Gemini CLI has no `PostCompact` equivalent — `PreCompress` fires before compre
 2. Verifies required installed assets exist under `~/.agent/shared-repo-memory/`
 3. Checks repo wiring; calls `bootstrap-repo.py` to fix any gaps
 4. Loads the ADR index and the three most recent daily summaries as memory context
-5. Outputs a single unified JSON schema accepted by all agents:
+5. If event shards are absent, spawns a bootstrap subagent in the background (see [Memory Bootstrap](#memory-bootstrap))
+6. Outputs a single unified JSON schema accepted by all agents:
 
 ```json
 {
@@ -233,6 +243,45 @@ After the first prompt in any session where shards exist, every subsequent promp
 Compaction discards the full transcript, including the memory context injected by `SessionStart`. Without this hook the agent loses awareness of ADRs and recent summaries for the remainder of the session. The hook re-injects the same bounded read set: ADR index + three most recent daily summaries.
 
 Gemini CLI has no `PostCompact` equivalent — its `PreCompress` fires before compression and is advisory only.
+
+---
+
+## Memory Bootstrap
+
+When `SessionStart` detects that a wired repo has no event shards yet, it spawns an isolated bootstrap subagent in the background so the session is not blocked.
+
+### Why subagent, not in-session instruction
+
+Injecting a "please bootstrap" instruction into the main agent's context fails in practice: the agent sees existing ADRs and reasons that the repo is already initialised, ignoring the instruction. An isolated subagent has no conversation history and no competing context — it simply receives the skill as its system prompt and executes it.
+
+### Subagent invocation
+
+`session-start.py` spawns the subagent as a detached subprocess using the agent CLI:
+
+| Agent | Command |
+|---|---|
+| Claude Code | `claude -p --system <SKILL.md content> --cwd <repo_root> "Bootstrap shared repo memory…"` |
+| Gemini CLI | `gemini --prompt "Bootstrap…" --system-prompt <SKILL.md content>` |
+| Codex (fallback) | same as Claude Code — `claude` binary used cross-agent |
+
+`claude -p` inherits Claude Code's keychain auth — no `ANTHROPIC_API_KEY` needed in the hook subprocess environment.
+
+### Fallback chain
+
+1. **Subagent CLI** (`claude -p` or `gemini --prompt`) — primary path; no API key required
+2. **`auto-bootstrap.py`** — legacy path; used when the agent CLI binary is not on PATH; requires `ANTHROPIC_API_KEY` in the environment
+
+### Lock file
+
+`.agents/memory/.auto_bootstrap_running` prevents concurrent bootstrap runs. Lock files older than 300 seconds are treated as stale and ignored.
+
+### Bootstrap log
+
+Subagent stdout and stderr are written to `.agents/memory/logs/bootstrap.log` for debugging. This file is not committed.
+
+### Skill: non-interactive mode
+
+The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** section instructing the subagent to skip user-facing commentary, write shards directly, call `rebuild-summary.py`, and exit. This ensures the subagent completes cleanly without waiting for user input that will never arrive.
 
 ---
 

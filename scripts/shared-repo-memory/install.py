@@ -40,6 +40,7 @@ SCRIPTS = [
     "post-turn-notify.py",
     "prompt-guard.py",
     "post-compact.py",
+    "auto-bootstrap.py",
     "rebuild-summary.py",
     "build-catchup.py",
     "promote-adr.py",

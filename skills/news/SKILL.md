@@ -27,6 +27,7 @@ news, what's new, what is new, what happened, what's been happening, anything sp
   - do not invoke `memory-bootstrap` from this skill when startup wiring is missing
 - If the repo is already wired but has no substantive shared-memory history yet, invoke `memory-bootstrap` instead of stopping at "no news":
   - treat an empty shared-memory tree, or a tree with only the ADR index scaffold and no substantive artifacts yet, as a bootstrap-needed condition
+  - before invoking bootstrap, tell the user: "No memory history found — running memory-bootstrap to seed it from existing commits and docs…"
   - after bootstrap completes, summarize the newly created summaries and ADRs as the repo's first news report
 - Start with the newest shared-memory artifacts available:
   - newest daily summaries under `.agents/memory/daily/*/summary.md`

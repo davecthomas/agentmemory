@@ -30,6 +30,7 @@ Install location after `./install.sh`:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -304,6 +305,122 @@ def run_repo_bootstrap(helper_path: Path, repo_root: Path) -> bool:
     return True
 
 
+def _lock_held(repo_root: Path, ttl: int = 300) -> bool:
+    """Return True if the bootstrap lock file exists and is younger than ttl seconds."""
+    import time
+
+    lock = repo_root / ".agents" / "memory" / ".auto_bootstrap_running"
+    return lock.exists() and (time.time() - lock.stat().st_mtime) < ttl
+
+
+def _open_bootstrap_log(repo_root: Path):
+    """Open (or create) the bootstrap log file and return the file object."""
+    log_dir = repo_root / ".agents" / "memory" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return open(log_dir / "bootstrap.log", "a")  # noqa: SIM115
+
+
+def _detect_agent() -> str:
+    """Return the active agent identifier string.
+
+    Uses environment variables set by each agent runtime:
+      CLAUDECODE=1   -- Claude Code (most reliable signal)
+      GEMINI_CLI=1   -- Gemini CLI
+    Falls back to "claude" so that Codex sessions also attempt claude -p.
+    """
+    if os.environ.get("CLAUDECODE"):
+        return "claude"
+    if os.environ.get("GEMINI_CLI"):
+        return "gemini"
+    return "claude"
+
+
+def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
+    """Spawn a claude -p subagent (or gemini equivalent) to run memory bootstrap.
+
+    This replaces the old auto-bootstrap.py approach which required ANTHROPIC_API_KEY
+    in the hook environment -- an env var Claude Code does not expose to hooks because
+    it uses keychain auth instead.  Spawning ``claude -p`` inherits the running Claude
+    Code process's auth automatically, so no API key is needed.
+
+    The subagent receives the full SKILL.md content as its system prompt and a short
+    user message as the task.  It runs with a clean context (no conversation history),
+    which prevents the reasoning-around-instructions failure mode seen when bootstrap
+    instructions are injected into the main agent's context.
+
+    Falls back to the legacy auto-bootstrap.py script when:
+      - The claude (or gemini) binary is not on PATH, or
+      - The SKILL.md file is not installed, or
+      - Running under Gemini and the ``gemini --prompt`` flag is unavailable.
+
+    Returns True if a process was launched, False if skipped.
+    """
+    if _lock_held(repo_root):
+        return False
+
+    skill_path = Path.home() / ".agent" / "skills" / "memory-bootstrap" / "SKILL.md"
+    agent = _detect_agent()
+
+    if skill_path.exists():
+        skill_content = skill_path.read_text(encoding="utf-8")
+        log_file = _open_bootstrap_log(repo_root)
+        task = "Bootstrap shared repo memory from recent commits and design docs."
+        if agent == "gemini":
+            cmd = [
+                "gemini",
+                "--prompt", task,
+                "--system-prompt", skill_content,
+            ]
+        else:
+            # claude -p: non-interactive print mode; inherits Claude Code auth.
+            cmd = [
+                "claude", "-p",
+                "--system", skill_content,
+                "--cwd", str(repo_root),
+                task,
+            ]
+        try:
+            subprocess.Popen(
+                cmd,
+                cwd=str(repo_root),
+                stdout=log_file,
+                stderr=log_file,
+                start_new_session=True,
+            )
+            return True
+        except FileNotFoundError:
+            # Binary not on PATH -- fall through to legacy fallback.
+            warn(f"SessionStart: {agent} binary not found; falling back to auto-bootstrap.py")
+            log_file.close()
+
+    # Legacy fallback: auto-bootstrap.py via direct API call (requires ANTHROPIC_API_KEY).
+    return _spawn_auto_bootstrap(repo_root)
+
+
+def _spawn_auto_bootstrap(repo_root: Path) -> bool:
+    """Legacy fallback: spawn auto-bootstrap.py as a detached background process.
+
+    Requires ANTHROPIC_API_KEY in the environment.  Prefer _spawn_subagent_bootstrap
+    which uses ``claude -p`` and inherits keychain auth.
+
+    Returns True if the process was launched, False if skipped.
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return False
+    if _lock_held(repo_root):
+        return False
+    script = Path(__file__).parent / "auto-bootstrap.py"
+    if not script.exists():
+        return False
+    subprocess.Popen(
+        [sys.executable, str(script), "--repo-root", str(repo_root)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return True
+
+
 def main() -> int:
     """SessionStart hook entry point.
 
@@ -437,30 +554,42 @@ def main() -> int:
         },
     )
     memory_context = load_memory_context(repo_root)
+    daily_dir = repo_root / ".agents" / "memory" / "daily"
+    has_shards = any(daily_dir.glob("*/events/*.md")) if daily_dir.is_dir() else False
     suffix = " Repo wiring was bootstrapped this session." if bootstrapped_repo else ""
     warn(
         "SessionStart OK: installed assets, refresh state, and repo wiring are reachable. "
         f"Last shared-asset refresh: {last_refresh}.{suffix}"
     )
-    if memory_context:
+    if memory_context and has_shards:
         memory_text: str = memory_context
         status_msg: str = (
             f"Shared repo memory loaded. Last refresh: {last_refresh}.{suffix}"
         )
     else:
-        memory_text = (
-            "No shared memory recorded yet for this repository.\n\n"
-            "Proactively offer to seed initial memory now by invoking the `news` skill. "
-            "The `news` skill will automatically run `memory-bootstrap`, which mines "
-            "recent design docs and commit history to create a bounded set of "
-            "decision-candidate shards and promote the strongest ones into ADRs. "
-            "Do not wait for the user to ask — offer this immediately as the first thing "
-            "you say in this session."
-        )
-        status_msg = (
-            f"Shared repo memory wired but empty. Last refresh: {last_refresh}.{suffix} "
-            "Invoke /news to seed initial memory from existing repo history."
-        )
+        # No event shard history yet.  Spawn a subagent via claude -p (or gemini
+        # equivalent) so bootstrap runs in an isolated context without polluting
+        # this session.  Falls back to auto-bootstrap.py if the CLI is unavailable.
+        spawned = _spawn_subagent_bootstrap(repo_root)
+        if spawned:
+            bg_note = (
+                "Memory bootstrap subagent is running in the background. "
+                "Shards will appear in .agents/memory/daily/ shortly. Proceed normally."
+            )
+        else:
+            bg_note = (
+                "INSTRUCTION: This repository has no event shard history yet. "
+                "Invoke /memory-bootstrap to seed it from existing commits and docs."
+            )
+        if memory_context:
+            memory_text = memory_context + "\n\n" + bg_note
+            status_msg = (
+                f"Shared repo memory loaded (ADRs present, no event history). "
+                f"Last refresh: {last_refresh}.{suffix}"
+            )
+        else:
+            memory_text = bg_note
+            status_msg = f"Shared repo memory wired but empty. Last refresh: {last_refresh}.{suffix}"
 
     emit_session_response(status_msg, additional_context=memory_text)
     return 0
