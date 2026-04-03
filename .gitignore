@@ -1,0 +1,51 @@
+# Editor and OS artifacts
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Python build artifacts
+*.pyc
+*.pyo
+*.pyd
+**/__pycache__/
+*.egg-info/
+dist/
+build/
+.build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Python version files
+.python-version
+
+# Test output and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local state (never committed -- agent catch-up digests and debug payloads)
+.codex/local/
+.claude/local/
+
+# Environment variables (may contain secrets)
+.env
+*.env
+env.local
+
+# Byte-compiled / optimized Python files
+*.pyc
+
+# Distribution / packaging
+*.egg
+MANIFEST
+
+# mypy / pyright type checker cache
+.mypy_cache/
+.pyright/
+pyrightconfig.json

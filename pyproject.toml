@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "agentmemory"
+version = "0.1.0"
+description = "Shared repo memory system for agentic development — captures why decisions were made, what changed, and what comes next, persisted as plain Markdown in Git and surfaced automatically at agent session start."
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.13,<3.14"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+black = "^25.0"
+ruff = "^0.11"
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+# E501 (line too long) is delegated to Black, which does not reformat docstrings.
+# Suppressing here avoids false positives on long docstring lines.
+ignore = ["E501"]

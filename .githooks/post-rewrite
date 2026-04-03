@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" post-rewrite "$@"; then
+    echo "[shared-repo-memory] warning: post-rewrite memory catch-up failed (non-fatal)" >&2
+fi
