@@ -28,7 +28,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from common import ensure_dir, try_repo_root, warn, write_text
+from common import ensure_dir, safe_main, try_repo_root, warn, write_text
 
 # Expected relative target for the .codex/memory symlink.
 # This must match the value validated by session-start.py's repo_wiring_issues().
@@ -143,6 +143,52 @@ def set_git_hooks_path(repo_root: Path, hooks_dir: str, *, dry_run: bool) -> Non
         )
 
 
+# Lines that must appear in the repo's .gitignore.
+# These cover agent-local state that is never committed.  The list does NOT
+# include .agents/memory/ or .codex/memory because those are intentionally
+# committed and shared.
+_GITIGNORE_ENTRIES = [
+    "# Agent local state (never committed)",
+    ".codex/local/",
+    ".claude/local/",
+    ".claude/settings.local.json",
+    ".agents/memory/logs/",
+]
+
+
+def ensure_gitignore(repo_root: Path, *, dry_run: bool) -> None:
+    """Append missing agent-local ignore entries to the repo's .gitignore.
+
+    Reads the existing .gitignore (if any), checks which required entries are
+    missing, and appends only the missing ones.  Creates the file if absent.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        dry_run: When True, log the action without modifying the filesystem.
+    """
+    gitignore_path = repo_root / ".gitignore"
+    existing = ""
+    if gitignore_path.exists():
+        existing = gitignore_path.read_text(encoding="utf-8")
+    existing_lines = set(existing.splitlines())
+
+    missing = [entry for entry in _GITIGNORE_ENTRIES if entry not in existing_lines]
+    if not missing:
+        return
+
+    log(
+        f"appending {len(missing)} entries to .gitignore",
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return
+
+    # Ensure a blank line before our block if the file doesn't end with one.
+    separator = "\n" if existing and not existing.endswith("\n\n") else ""
+    with gitignore_path.open("a", encoding="utf-8") as f:
+        f.write(separator + "\n".join(missing) + "\n")
+
+
 def main() -> int:
     """Bootstrap repo-local wiring.
 
@@ -185,6 +231,9 @@ def main() -> int:
         if not dry_run:
             write_text(index_path, _INDEX_INITIAL)
 
+    # Ensure .gitignore covers local-only paths that should never be committed.
+    ensure_gitignore(repo_root, dry_run=dry_run)
+
     # Point git at .githooks so post-checkout, post-merge, and post-rewrite fire.
     set_git_hooks_path(repo_root, ".githooks", dry_run=dry_run)
 
@@ -202,4 +251,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "BootstrapRepo"))
