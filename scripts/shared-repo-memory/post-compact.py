@@ -23,7 +23,7 @@ import json
 import sys
 from pathlib import Path
 
-from common import append_hook_trace, try_repo_root, warn
+from common import append_hook_trace, safe_main, try_repo_root, warn
 
 
 def _load_memory_context(repo_root: Path) -> str:
@@ -112,4 +112,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "PostCompact"))

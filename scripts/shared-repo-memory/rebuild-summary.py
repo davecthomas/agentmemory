@@ -35,6 +35,7 @@ from common import (
     list_event_files,
     load_event,
     relative_link,
+    safe_main,
     utc_now,
     write_text,
 )
@@ -236,4 +237,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "RebuildSummary"))

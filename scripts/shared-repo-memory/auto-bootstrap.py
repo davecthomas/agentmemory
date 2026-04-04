@@ -54,6 +54,7 @@ from common import (
     append_hook_trace,
     git,
     render_frontmatter,
+    safe_main,
     utc_now,
     utc_timestamp,
     write_text,
@@ -458,4 +459,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "AutoBootstrap"))

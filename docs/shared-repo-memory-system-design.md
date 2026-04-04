@@ -423,6 +423,11 @@ Owners: <author>
 Must read: true
 Supersedes:
 Superseded by:
+ai-generated: true
+ai-model: <model from source shard>
+ai-tool: <tool from source shard>
+ai-surface: <surface from source shard>
+ai-executor: <executor from source shard>
 
 Purpose: <title>
 Derived from: <link to source event shard>

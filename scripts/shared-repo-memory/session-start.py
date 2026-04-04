@@ -36,7 +36,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from common import append_hook_trace, load_json, warn
+from common import append_hook_trace, load_json, safe_main, warn
 
 # Expected relative target for the .codex/memory -> .agents/memory symlink.
 # bootstrap-repo.sh creates this symlink; session-start.py validates it.
@@ -596,4 +596,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "SessionStart"))

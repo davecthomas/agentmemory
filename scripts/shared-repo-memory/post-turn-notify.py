@@ -51,6 +51,7 @@ from common import (
     read_codex_model,
     render_frontmatter,
     run,
+    safe_main,
     stage_paths,
     tracked_changed_files,
     try_repo_root,
@@ -588,17 +589,41 @@ def main() -> int:
     write_text(shard_path, "\n".join(body_lines))
 
     # Rebuild today's summary from the full shard set (including the new shard).
-    run(
-        [
-            str(Path(__file__).with_name("rebuild-summary.py")),
-            "--repo-root",
-            str(repo_root),
-            "--date",
-            timestamp[:10],
-        ],
-        cwd=repo_root,
-        check=True,
-    )
+    try:
+        run(
+            [
+                str(Path(__file__).with_name("rebuild-summary.py")),
+                "--repo-root",
+                str(repo_root),
+                "--date",
+                timestamp[:10],
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        # Log the actual error so it's diagnosable -- previously swallowed.
+        warn(f"rebuild-summary.py failed (exit {exc.returncode})")
+        if exc.stdout:
+            warn(f"  stdout: {exc.stdout.strip()}")
+        if exc.stderr:
+            warn(f"  stderr: {exc.stderr.strip()}")
+        append_hook_trace(
+            "Notify",
+            "error",
+            repo_root=repo_root,
+            details={
+                "reason": "rebuild_summary_failed",
+                "exit_code": exc.returncode,
+                "stderr": (exc.stderr or "")[:1000],
+            },
+        )
+        # Shard was already written; degrade gracefully rather than aborting.
+        emit_hook_response(
+            "error",
+            message=f"shard written but summary rebuild failed: {(exc.stderr or '').strip()[:200]}",
+        )
+        return 1
 
     summary_path = day_dir / "summary.md"
     if not summary_path.exists():
@@ -642,4 +667,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "Notify"))

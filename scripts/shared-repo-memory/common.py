@@ -878,6 +878,39 @@ def read_claude_model(home: Path | None = None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def safe_main(main_fn: Any, hook_name: str) -> int:
+    """Run a hook's main() inside a top-level exception handler.
+
+    Every hook script should call this instead of ``raise SystemExit(main())``.
+    If main_fn raises any exception, safe_main:
+
+      1. Logs the full traceback to stderr (visible in agent hook output).
+      2. Appends a structured error record to the hook trace log.
+      3. Returns exit code 1 so the hook signals failure without a raw traceback
+         crashing through the agent UI.
+
+    Args:
+        main_fn: The hook's main() callable (no arguments).
+        hook_name: Human-readable hook name for trace records, e.g. "Notify".
+
+    Returns:
+        int: Whatever main_fn returns on success, or 1 on unhandled exception.
+    """
+    import traceback
+
+    try:
+        return main_fn()
+    except Exception:
+        tb = traceback.format_exc()
+        warn(f"{hook_name} crashed:\n{tb}")
+        append_hook_trace(
+            hook_name,
+            "crash",
+            details={"error": tb.splitlines()[-1], "traceback": tb[:2000]},
+        )
+        return 1
+
+
 def warn(message: str) -> None:
     """Write a warning message to stderr, prefixed with the system identifier.
 

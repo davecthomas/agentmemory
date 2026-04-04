@@ -44,7 +44,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from common import append_hook_trace, utc_now, utc_timestamp
+from common import append_hook_trace, safe_main, utc_now, utc_timestamp
 
 # Path to the per-session state file.
 _STATE_FILE: Path = Path.home() / ".agent" / "state" / "prompt-guard-sessions.json"
@@ -218,4 +218,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "PromptGuard"))

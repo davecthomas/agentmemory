@@ -37,6 +37,7 @@ from common import (
     iso_date,
     load_event,
     relative_link,
+    safe_main,
     slugify,
     utc_now,
     write_text,
@@ -232,6 +233,13 @@ def main() -> int:
     related_event_link = relative_link(adr_path, event["__path"], related_event_name)
     related_code_paths = [f"- {path}" for path in event.get("files_touched", [])]
 
+    # Carry forward AI attribution from the source shard when present.
+    ai_lines: list[str] = []
+    for field in ("ai_generated", "ai_model", "ai_tool", "ai_surface", "ai_executor"):
+        value = event.get(field)
+        if value is not None:
+            ai_lines.append(f"{field.replace('_', '-')}: {value}")
+
     # Write the ADR file using the canonical structure defined in the design doc.
     lines = [
         f"# {adr_id} {title}",
@@ -242,6 +250,7 @@ def main() -> int:
         "Must read: true",
         "Supersedes: ",
         "Superseded by: ",
+        *([line for line in ai_lines] if ai_lines else []),
         "",
         f"Purpose: {title}",
         f"Derived from: {related_event_link}",
@@ -278,4 +287,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "PromoteADR"))

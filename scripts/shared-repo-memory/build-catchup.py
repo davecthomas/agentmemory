@@ -39,6 +39,7 @@ from common import (
     head_sha,
     load_json,
     relative_link,
+    safe_main,
     utc_now,
     utc_timestamp,
     write_text,
@@ -237,4 +238,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(safe_main(main, "BuildCatchup"))
