@@ -47,6 +47,50 @@ SCRIPTS = [
 ]
 
 
+def read_version(repo_root: Path) -> str:
+    """Read the version string from pyproject.toml.
+
+    Args:
+        repo_root: Absolute path to the agentmemory repo root.
+
+    Returns:
+        str: Version string, e.g. "0.1.0", or "unknown" if not found.
+    """
+    pyproject = repo_root / "pyproject.toml"
+    if pyproject.exists():
+        match = re.search(
+            r'^version\s*=\s*"([^"]+)"',
+            pyproject.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        if match:
+            return match.group(1)
+    return "unknown"
+
+
+def print_banner(version: str) -> None:
+    """Print the install banner with version info.
+
+    Args:
+        version: Version string to display.
+    """
+    banner = f"""\
+
+   ___                   _  ___  ___
+  / _ \\                 | | |  \\/  |
+ / /_\\ \\ __ _  ___ _ __ | |_| .  . | ___ _ __ ___   ___  _ __ _   _
+ |  _  |/ _  |/ _ \\ '_ \\| __| |\\/| |/ _ \\ '_ ' _ \\ / _ \\| '__| | | |
+ | | | | (_| |  __/ | | | |_| |  | |  __/ | | | | | (_) | |  | |_| |
+ \\_| |_/\\__, |\\___|_| |_|\\__\\_|  |_/\\___|_| |_| |_|\\___/|_|   \\__, |
+         __/ |                                                  __/ |
+        |___/                                                  |___/
+
+  v{version}  Shared Repo Memory System
+  github.com/davecthomas/agentmemory
+"""
+    print(banner)
+
+
 def log(message: str) -> None:
     """Print a prefixed log message to stdout.
 
@@ -687,7 +731,10 @@ def main() -> int:
             return 1
         root = Path(result.stdout.strip()).resolve()
 
+    version = read_version(root)
+    print_banner(version)
     Installer(repo_root=root, dry_run=args.dry_run, force=args.force).run()
+    log(f"install complete — v{version}")
     return 0
 
 
