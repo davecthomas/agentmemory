@@ -17,6 +17,13 @@ class AgentSupport:
 
     Args:
         str_agent_name: Human-readable runtime name used in logs and docs.
+        str_agent_id: Short machine identifier (e.g., "claude", "gemini", "codex").
+        str_config_dir: User-home-relative config directory name (e.g., ".claude").
+        dict_hook_event_map: Maps canonical hook names to the runtime's event
+            names.  Keys are the canonical names used in this system
+            (SessionStart, PostTurn, SubagentStop, PromptGuard, PostCompact);
+            values are the runtime-specific event names.
+        str_env_var: Environment variable set by the runtime, used for detection.
         bool_supports_session_start: True when the runtime supports loading
             memory at session open.
         bool_supports_post_turn: True when post-turn shard capture is a
@@ -33,6 +40,10 @@ class AgentSupport:
     """
 
     str_agent_name: str
+    str_agent_id: str
+    str_config_dir: str
+    dict_hook_event_map: dict[str, str]
+    str_env_var: str
     bool_supports_session_start: bool
     bool_supports_post_turn: bool
     bool_supports_subagent_capture: bool
@@ -53,6 +64,16 @@ def list_agent_support() -> list[AgentSupport]:
     list_agent_support_entries: list[AgentSupport] = [
         AgentSupport(
             str_agent_name="Claude Code",
+            str_agent_id="claude",
+            str_config_dir=".claude",
+            dict_hook_event_map={
+                "SessionStart": "SessionStart",
+                "PostTurn": "Stop",
+                "SubagentStop": "SubagentStop",
+                "PromptGuard": "UserPromptSubmit",
+                "PostCompact": "PostCompact",
+            },
+            str_env_var="CLAUDECODE",
             bool_supports_session_start=True,
             bool_supports_post_turn=True,
             bool_supports_subagent_capture=True,
@@ -63,6 +84,14 @@ def list_agent_support() -> list[AgentSupport]:
         ),
         AgentSupport(
             str_agent_name="Gemini CLI",
+            str_agent_id="gemini",
+            str_config_dir=".gemini",
+            dict_hook_event_map={
+                "SessionStart": "SessionStart",
+                "PostTurn": "AfterAgent",
+                "PromptGuard": "BeforeAgent",
+            },
+            str_env_var="GEMINI_CLI",
             bool_supports_session_start=True,
             bool_supports_post_turn=True,
             bool_supports_subagent_capture=False,
@@ -76,6 +105,12 @@ def list_agent_support() -> list[AgentSupport]:
         ),
         AgentSupport(
             str_agent_name="Codex CLI",
+            str_agent_id="codex",
+            str_config_dir=".codex",
+            dict_hook_event_map={
+                "SessionStart": "SessionStart",
+            },
+            str_env_var="",
             bool_supports_session_start=True,
             bool_supports_post_turn=False,
             bool_supports_subagent_capture=False,
@@ -100,23 +135,38 @@ def support_summary_lines() -> list[str]:
             validation output. Each line explicitly calls out major support
             limits so degraded runtimes are visible to operators.
     """
+    # Map AgentSupport boolean fields to human-readable hook labels.
+    _CAPABILITY_LABELS: list[tuple[str, str]] = [
+        ("bool_supports_session_start", "SessionStart"),
+        ("bool_supports_post_turn", "post-turn"),
+        ("bool_supports_subagent_capture", "subagent capture"),
+        ("bool_supports_prompt_guard", "prompt guard"),
+        ("bool_supports_post_compact", "post-compact"),
+    ]
+
     list_str_summary_lines: list[str] = []
-    list_agent_support_entries: list[AgentSupport] = list_agent_support()
-    for agent_support in list_agent_support_entries:
-        if agent_support.str_agent_name == "Claude Code":
-            str_line: str = (
-                "Claude Code: SessionStart, post-turn, subagent capture, "
-                "prompt guard, and post-compact are supported."
-            )
-        elif agent_support.str_agent_name == "Gemini CLI":
+    for agent in list_agent_support():
+        supported = [label for attr, label in _CAPABILITY_LABELS if getattr(agent, attr)]
+        unsupported = [label for attr, label in _CAPABILITY_LABELS if not getattr(agent, attr)]
+
+        if unsupported:
             str_line = (
-                "Gemini CLI: SessionStart, post-turn, and prompt guard are "
-                "supported. Subagent capture and post-compact are unavailable."
+                f"{agent.str_agent_name}: {', '.join(supported)} "
+                f"{'is' if len(supported) == 1 else 'are'} supported. "
+                f"{', '.join(unsupported).capitalize()} "
+                f"{'is' if len(unsupported) == 1 else 'are'} unavailable."
             )
         else:
             str_line = (
-                "Codex CLI: SessionStart only. Native post-turn capture is not "
-                "provisioned; notify-wrapper remains a manual smoke-test path."
+                f"{agent.str_agent_name}: {', '.join(supported)} are supported."
             )
+
+        # Append post-turn mode note for non-native runtimes.
+        if agent.str_post_turn_mode != "native" and agent.bool_supports_post_turn is False:
+            str_line += (
+                " Native post-turn capture is not provisioned;"
+                " notify-wrapper remains a manual smoke-test path."
+            )
+
         list_str_summary_lines.append(str_line)
     return list_str_summary_lines

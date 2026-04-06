@@ -30,25 +30,22 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
 
+from adapters import detect_adapter, detect_adapter_from_hook_event
 from common import (
     append_hook_trace,
     author_slug,
     collect_matches,
     current_branch,
-    emit_hook_response,
     ensure_dir,
     find_first,
     flatten_strings,
     info,
-    read_claude_model,
-    read_codex_model,
     render_frontmatter,
     run,
     safe_main,
@@ -60,40 +57,7 @@ from common import (
     warn,
     write_text,
 )
-
-# ---------------------------------------------------------------------------
-# Payload key sets -- agents and platforms use different field names for the
-# same logical concepts.  find_first() searches recursively through any of
-# these aliases so we get the right value regardless of the calling agent.
-# ---------------------------------------------------------------------------
-
-# Keys that may carry the conversation / session / thread identifier.
-THREAD_KEYS = {
-    "thread_id",
-    "threadId",
-    "conversation_id",
-    "conversationId",
-    "session_id",
-    "sessionId",
-}
-
-# Keys that may carry the individual turn identifier.
-TURN_KEYS = {"turn_id", "turnId", "id"}
-
-# Keys that may carry the user's prompt text.
-PROMPT_KEYS = {"prompt", "user_prompt", "userPrompt", "inputText", "input_text"}
-
-# Keys that may carry the assistant's most recent response text.
-ASSISTANT_KEYS = {
-    "last_assistant_message",
-    "lastAssistantMessage",
-    "output_text",
-    "summary_text",
-    "reasoning_text",
-    "prompt_response",
-    "text",
-    "content",
-}
+from models import HookResponse
 
 
 def parse_args() -> argparse.Namespace:
@@ -174,26 +138,6 @@ def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
     ).hexdigest()
     return f"{prefix}_{digest[:10]}"
 
-
-def extract_model(payload: dict[str, object]) -> str | None:
-    """Attempt to resolve the AI model name from the hook payload or agent config.
-
-    Resolution order:
-      1. model / model_name / modelName keys anywhere in the payload.
-      2. CLAUDE_MODEL env var via read_claude_model().
-      3. model key in ~/.codex/config.toml via read_codex_model().
-
-    Args:
-        payload: The raw hook payload dict.
-
-    Returns:
-        str | None: Model identifier string, or None if all sources are absent.
-    """
-    model = find_first(payload, {"model", "model_name", "modelName"})
-    if model:
-        return model
-    home = Path.home()
-    return read_claude_model(home) or read_codex_model(home)
 
 
 def decision_candidate(strings: list[str]) -> bool:
@@ -375,6 +319,19 @@ def build_why_lines(str_prompt: str | None, str_diff_summary: str) -> list[str]:
     return list_str_why_lines  # Normal exit.
 
 
+def _emit(adapter: type, status: str, message: str = "", **extra: object) -> None:
+    """Print a hook response JSON payload using the given adapter.
+
+    Args:
+        adapter: The detected adapter class.
+        status: Short status token: "ok", "noop", "error", "skipped".
+        message: Optional human-readable description.
+        **extra: Additional key-value pairs merged into the response.
+    """
+    filtered = {k: v for k, v in extra.items() if v is not None}
+    print(adapter.render_hook_response(HookResponse(status=status, message=message, extra=filtered)))
+
+
 def main() -> int:
     """Post-turn hook entry point.
 
@@ -390,19 +347,25 @@ def main() -> int:
         payload = json.loads(payload_text or "{}")
     except json.JSONDecodeError as error:
         warn(f"invalid notify payload JSON: {error}")
-        emit_hook_response("error", message="invalid JSON payload")
+        # Adapter detection requires the payload; fall back to env-based detection.
+        adapter = detect_adapter()
+        _emit(adapter, "error", message="invalid JSON payload")
         return 1
+
+    # Detect the adapter from the hook event in the payload.
+    hook_event = find_first(payload, {"hook_event_name", "hookEventName"}) or ""
+    adapter = detect_adapter_from_hook_event(hook_event)
+
+    # Normalize the payload into a canonical request.
+    req = adapter.normalize_hook_request(payload)
 
     # Claude Code injects the working directory into the payload as "cwd".
     # Prefer that over os.getcwd() so the hook operates on the correct repo when
     # Claude Code changes directory during a session.
-    cwd_override = payload.get("cwd") or args.repo_root
+    cwd_override = req.cwd or args.repo_root
     repo_root = try_repo_root(cwd_override)
     if repo_root is None:
-        emit_hook_response(
-            "noop",
-            message="current working directory is not inside a Git repository",
-        )
+        _emit(adapter, "noop", message="current working directory is not inside a Git repository")
         return 0
 
     append_hook_trace("Notify", "started", repo_root=repo_root)
@@ -426,9 +389,7 @@ def main() -> int:
         warn(
             "missing .agents/memory/; run bootstrap-repo.sh or re-open Claude to trigger SessionStart"
         )
-        emit_hook_response(
-            "error", message="missing .agents/memory/ directory; repo not bootstrapped"
-        )
+        _emit(adapter, "error", message="missing .agents/memory/ directory; repo not bootstrapped")
         return 1
 
     # Collect evidence and metadata from the payload.
@@ -450,58 +411,33 @@ def main() -> int:
         append_hook_trace(
             "Notify", "noop", repo_root=repo_root, details={"reason": "not_meaningful"}
         )
-        emit_hook_response(
-            "noop", message="notify payload was not meaningful; no shard written"
-        )
+        _emit(adapter, "noop", message="notify payload was not meaningful; no shard written")
         return 0
+
+    # Build shard identity fields from the normalised request.
+    # Fall back to stable hash-based identifiers when the payload lacks explicit IDs.
+    thread_id = (req.thread_id or stable_identifier("thread", payload)).replace(" ", "_")
+    model = adapter.resolve_model(payload)
 
     # Diff-hash deduplication gate: git status is sticky -- once a file is
     # modified it appears in every subsequent turn until committed.  Hash the
     # actual diff content so we only write a new shard when the working-tree
     # content has genuinely changed since the last captured shard for this thread.
-    # thread_id must be resolved first for this check; use a stable fallback.
-    _early_thread_id = (
-        find_first(payload, THREAD_KEYS) or stable_identifier("thread", payload)
-    ).replace(" ", "_")
     current_diff_hash = _diff_hash(repo_root, files_touched)
-    if _already_captured(repo_root, _early_thread_id, current_diff_hash):
+    if _already_captured(repo_root, thread_id, current_diff_hash):
         append_hook_trace(
             "Notify",
             "noop",
             repo_root=repo_root,
             details={"reason": "diff_unchanged_since_last_shard"},
         )
-        emit_hook_response(
-            "noop",
-            message="diff unchanged since last shard for this thread; skipping duplicate",
-        )
+        _emit(adapter, "noop", message="diff unchanged since last shard for this thread; skipping duplicate")
         return 0
 
-    # Determine which agent triggered this hook and resolve the model name.
-    hook_event = find_first(payload, {"hook_event_name", "hookEventName"}) or ""
-    is_claude_code = hook_event == "Stop" or bool(os.environ.get("CLAUDECODE"))
-
-    if is_claude_code:
-        # For Claude Code, read_claude_model() checks CLAUDE_MODEL env var first,
-        # then falls back to ~/.claude/settings.json.  Never use read_codex_model()
-        # for Claude Code sessions -- it would return the Codex model identifier instead.
-        model = read_claude_model() or "claude-unknown"
-    else:
-        model = extract_model(payload)
-        if not model:
-            model = (
-                "claude-unknown" if "stop" in hook_event.lower() else "agent-unknown"
-            )
-            warn(f"unable to resolve ai_model; defaulting to '{model}'")
-
-    # Build shard identity fields.
     now = utc_now()
     timestamp = utc_timestamp(now)
     author = author_slug(repo_root)
     branch = current_branch(repo_root)
-    thread_id = (
-        find_first(payload, THREAD_KEYS) or stable_identifier("thread", payload)
-    ).replace(" ", "_")
 
     # Exclude volatile fields from the turn hash so the same logical turn
     # produces the same turn_id even if the payload timestamp changes between retries.
@@ -513,18 +449,13 @@ def main() -> int:
     }
     payload_for_turn_hash = {k: v for k, v in payload.items() if k not in volatile_keys}
     turn_id = (
-        find_first(payload, TURN_KEYS)
-        or stable_identifier("turn", payload_for_turn_hash)
+        req.turn_id or stable_identifier("turn", payload_for_turn_hash)
     ).replace(" ", "_")
 
     # Extract "why" text: prefer the user's prompt, fall back to the assistant response.
-    prompt = find_first(payload, PROMPT_KEYS)
-    if not prompt:
-        transcript_path = payload.get("transcript_path") or payload.get(
-            "transcriptPath"
-        )
-        if transcript_path:
-            prompt = extract_user_prompt_from_transcript(str(transcript_path))
+    prompt = req.prompt
+    if not prompt and req.transcript_path:
+        prompt = extract_user_prompt_from_transcript(req.transcript_path)
 
     # Why: prefer the user prompt that drove the change. When prompt text is
     # unavailable or too weak, fall back to a diff summary rather than assistant
@@ -573,17 +504,11 @@ def main() -> int:
         basename = f"{timestamp.replace(':', '-')}--{author}--thread_{thread_id}--turn_{turn_id}"
         shard_path = events_dir / f"{basename}.md"
 
-    # Assign agent attribution based on hook event name.
-    if hook_event == "AfterAgent":
-        ai_tool = "gemini"
-        ai_surface = "gemini-cli"
-        model = model or "gemini-unknown"
-    elif hook_event == "Stop":
-        ai_tool = "claude"
-        ai_surface = "claude-code"
-    else:
-        ai_tool = "codex"
-        ai_surface = "codex-cli"
+    # Assign agent attribution from the detected adapter.
+    attribution = adapter.shard_attribution()
+    ai_tool = attribution.ai_tool
+    ai_surface = attribution.ai_surface
+    model = model or attribution.default_model
 
     # Build the shard frontmatter.  OrderedDict preserves a stable field order
     # that is easier to scan in a Markdown viewer.
@@ -658,18 +583,13 @@ def main() -> int:
             },
         )
         # Shard was already written; degrade gracefully rather than aborting.
-        emit_hook_response(
-            "error",
-            message=f"shard written but summary rebuild failed: {(exc.stderr or '').strip()[:200]}",
-        )
+        _emit(adapter, "error", message=f"shard written but summary rebuild failed: {(exc.stderr or '').strip()[:200]}")
         return 1
 
     summary_path = day_dir / "summary.md"
     if not summary_path.exists():
         warn("summary rebuild did not produce summary.md")
-        emit_hook_response(
-            "error", message="summary rebuild did not produce summary.md"
-        )
+        _emit(adapter, "error", message="summary rebuild did not produce summary.md")
         return 1
 
     # Persist the diff hash so subsequent turns can detect unchanged diffs and
@@ -697,7 +617,8 @@ def main() -> int:
         },
     )
     info(f"wrote {shard_path.relative_to(repo_root)}")
-    emit_hook_response(
+    _emit(
+        adapter,
         "ok",
         shard_path=str(shard_path.relative_to(repo_root)),
         summary_path=str(summary_path.relative_to(repo_root)),

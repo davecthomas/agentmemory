@@ -10,7 +10,7 @@ It covers six areas:
   4. Shard serialisation -- frontmatter rendering and parsing for event shards.
   5. Payload extraction -- flatten and search the arbitrary JSON that agent
      hook payloads deliver, regardless of field naming conventions.
-  6. Hook infrastructure -- emit_hook_response, append_hook_trace, warn/info.
+  6. Hook infrastructure -- append_hook_trace, warn/info.
 
 All public symbols are re-exported; callers should import from common directly.
 """
@@ -811,69 +811,6 @@ def collect_matches(strings: list[str], pattern: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Agent config readers
-# ---------------------------------------------------------------------------
-
-
-def read_codex_model(home: Path) -> str | None:
-    """Read the Codex model name from ~/.codex/config.toml.
-
-    Looks for a bare top-level key of the form:  model = "some-model-id"
-    Used as a fallback when post-turn-notify.py cannot resolve the model from
-    the hook payload and the calling agent is Codex.
-
-    Args:
-        home: User home directory, typically Path.home().
-
-    Returns:
-        str | None: Model identifier string, or None if the file is absent or
-            the key is not found.
-    """
-    config_path = home / ".codex" / "config.toml"
-    if not config_path.exists():
-        return None
-    match = re.search(
-        r'^\s*model\s*=\s*"([^"]+)"',
-        config_path.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    if match:
-        return match.group(1)
-    return None
-
-
-def read_claude_model(home: Path | None = None) -> str | None:
-    """Return the active Claude model identifier.
-
-    Resolution order:
-      1. CLAUDE_MODEL environment variable (set by Claude Code at hook invocation).
-      2. "model" key in ~/.claude/settings.json.
-
-    The environment variable takes priority because it reflects the model that
-    is actually running the current session, whereas the settings file may
-    contain a stale or default value.
-
-    Args:
-        home: User home directory.  Defaults to Path.home() when None.
-
-    Returns:
-        str | None: Model identifier string (e.g., "claude-sonnet-4-6"), or None
-            if neither source yields a value.
-    """
-    model = os.environ.get("CLAUDE_MODEL")
-    if model:
-        return model
-    settings_path = (home or Path.home()) / ".claude" / "settings.json"
-    if not settings_path.exists():
-        return None
-    try:
-        data = json.loads(settings_path.read_text(encoding="utf-8"))
-        return data.get("model") or None
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-# ---------------------------------------------------------------------------
 # Hook output and tracing
 # ---------------------------------------------------------------------------
 
@@ -931,34 +868,6 @@ def info(message: str) -> None:
     """
     print(f"[shared-repo-memory] {message}", file=sys.stderr)
 
-
-def emit_hook_response(
-    status: str, *, message: str | None = None, **extra: Any
-) -> None:
-    """Print the JSON response payload expected by agent hook frameworks.
-
-    Claude Code's Stop hook, Codex, and Gemini's AfterAgent hook all read this
-    output from stdout.  The format is a single JSON object with at minimum a
-    "status" field.  Claude Code additionally renders "message" in the UI for
-    non-ok statuses.
-
-    For Claude Code SessionStart, use the dedicated systemMessage format instead;
-    this function is for all other hooks.
-
-    Args:
-        status: Short status token: "ok", "noop", "error", "skipped".
-        message: Optional human-readable description of the status.
-        **extra: Additional key-value pairs merged into the response object.
-            None values are omitted.
-    """
-    payload: dict[str, Any] = {"status": status}
-    if message is not None:
-        payload["message"] = message
-    for key, value in extra.items():
-        if value is None:
-            continue
-        payload[key] = value
-    print(json.dumps(payload, sort_keys=True))
 
 
 def append_hook_trace(

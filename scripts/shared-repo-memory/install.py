@@ -31,12 +31,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, InstallerContext
 from agent_support import support_summary_lines
 
 # Scripts copied verbatim from scripts/shared-repo-memory/ into ~/.agent/shared-repo-memory/.
 # The order here is for readability; installation processes them in sequence.
 SCRIPTS = [
     "common.py",
+    "models.py",
+    "agent_support.py",
     "bootstrap-repo.py",
     "session-start.py",
     "post-turn-notify.py",
@@ -47,6 +50,17 @@ SCRIPTS = [
     "build-catchup.py",
     "promote-adr.py",
 ]
+
+# Adapter package files, installed under adapters/ subdirectory.
+ADAPTER_FILES = [
+    "adapters/__init__.py",
+    "adapters/claude.py",
+    "adapters/codex.py",
+    "adapters/gemini.py",
+]
+
+# Ordered list of adapter classes for installation wiring.
+_ADAPTERS = [ClaudeAdapter, CodexAdapter, GeminiAdapter]
 
 
 def read_version(repo_root: Path) -> str:
@@ -211,7 +225,8 @@ class Installer:
         logs each copy operation without modifying files.
         """
         src_dir = self.repo_root / "scripts" / "shared-repo-memory"
-        for name in SCRIPTS:
+        all_files = list(SCRIPTS) + list(ADAPTER_FILES)
+        for name in all_files:
             src = src_dir / name
             dst = self.install_root / name
             if self.dry_run:
@@ -220,6 +235,7 @@ class Installer:
                 )
                 log(f"[DRY-RUN] {action}: {name}")
             else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
                 changed: bool = not self._same_content(src, dst)
                 shutil.copy2(src, dst)
                 # Ensure the script is executable for all hook runners.
@@ -240,335 +256,27 @@ class Installer:
             log(f"  {str_summary_line}")
 
     # ------------------------------------------------------------------
-    # Claude Code wiring (~/.claude/settings.json)
+    # Agent hook wiring (delegated to runtime adapters)
     # ------------------------------------------------------------------
 
-    def _wire_claude(self) -> None:
-        """Wire Claude Code hooks by updating ~/.claude/settings.json.
+    def _wire_agents(self) -> None:
+        """Wire all agent runtime hooks by delegating to adapter modules.
 
-        Adds or updates:
-          shared_repo_memory_configured: true
-          shared_agent_assets_repo_path: <repo_root>
-          hooks.SessionStart:        session-start.py
-          hooks.Stop:                post-turn-notify.py  (post-turn shard capture)
-          hooks.SubagentStop:        post-turn-notify.py  (shard capture for Task agents)
-          hooks.UserPromptSubmit:    prompt-guard.py      (empty-memory bootstrap nudge)
-          hooks.PostCompact:         post-compact.py      (re-inject memory after compaction)
-
-        Idempotency: existing hook entries with the same command path are not
-        duplicated.
+        Each adapter knows its own config file format, hook event names, timeout
+        conventions, and idempotency rules.  The installer just passes context.
         """
-        session_start_cmd = str(self.install_root / "session-start.py")
-        post_turn_cmd = str(self.install_root / "post-turn-notify.py")
-        prompt_guard_cmd = str(self.install_root / "prompt-guard.py")
-        post_compact_cmd = str(self.install_root / "post-compact.py")
-
-        settings = self._load_json(self.claude_settings)
-        settings["shared_repo_memory_configured"] = True
-        settings["shared_agent_assets_repo_path"] = str(self.repo_root)
-
-        hooks = settings.setdefault("hooks", {})
-
-        # SessionStart -- validates wiring and bootstraps repo if needed.
-        session_hooks = hooks.setdefault("SessionStart", [])
-        already_wired = any(
-            any(h.get("command") == session_start_cmd for h in entry.get("hooks", []))
-            for entry in session_hooks
+        ctx = InstallerContext(
+            install_root=self.install_root,
+            home=self.home,
+            repo_root=self.repo_root,
+            dry_run=self.dry_run,
+            load_json=self._load_json,
+            save_json=self._save_json,
         )
-        if not already_wired:
-            session_hooks.append(
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": session_start_cmd,
-                            "timeout": 30,
-                        }
-                    ]
-                }
-            )
-
-        # Stop -- post-turn event shard capture.
-        stop_hooks = hooks.setdefault("Stop", [])
-        already_wired = any(
-            any(h.get("command") == post_turn_cmd for h in entry.get("hooks", []))
-            for entry in stop_hooks
-        )
-        if not already_wired:
-            stop_hooks.append(
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": post_turn_cmd,
-                            "timeout": 60,
-                        }
-                    ]
-                }
-            )
-
-        # SubagentStop -- post-turn shard capture for Task/subagent turns.
-        subagent_stop_hooks = hooks.setdefault("SubagentStop", [])
-        already_wired = any(
-            any(h.get("command") == post_turn_cmd for h in entry.get("hooks", []))
-            for entry in subagent_stop_hooks
-        )
-        if not already_wired:
-            subagent_stop_hooks.append(
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": post_turn_cmd,
-                            "timeout": 60,
-                        }
-                    ]
-                }
-            )
-
-        # UserPromptSubmit -- detect empty-memory sessions and nudge bootstrap.
-        prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
-        already_wired = any(
-            any(h.get("command") == prompt_guard_cmd for h in entry.get("hooks", []))
-            for entry in prompt_hooks
-        )
-        if not already_wired:
-            prompt_hooks.append(
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": prompt_guard_cmd,
-                            "timeout": 10,
-                        }
-                    ]
-                }
-            )
-
-        # PostCompact -- re-inject memory context after context compaction.
-        compact_hooks = hooks.setdefault("PostCompact", [])
-        already_wired = any(
-            any(h.get("command") == post_compact_cmd for h in entry.get("hooks", []))
-            for entry in compact_hooks
-        )
-        if not already_wired:
-            compact_hooks.append(
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": post_compact_cmd,
-                            "timeout": 15,
-                        }
-                    ]
-                }
-            )
-
-        self._save_json(self.claude_settings, settings)
-        if not self.dry_run:
-            log(f"updated Claude settings at {self.claude_settings}")
-
-    # ------------------------------------------------------------------
-    # Codex wiring (~/.codex/config.toml + ~/.codex/hooks.json)
-    # ------------------------------------------------------------------
-
-    def _wire_codex(self) -> None:
-        """Wire Codex hooks by updating ~/.codex/config.toml and ~/.codex/hooks.json.
-
-        config.toml receives:
-          experimental_use_hooks = true
-          hooks_config_path = "<path to hooks.json>"
-          features.codex_hooks = true
-          shared_repo_memory_configured = true
-          shared_agent_assets_repo_path = "<repo_root>"
-          [projects."<repo_root>"] trust_level = "trusted"
-
-        hooks.json receives:
-          hooks.SessionStart: session-start.py
-
-        TOML is edited in-place using regex rather than a proper TOML serialiser
-        to preserve any existing user configuration and comments.
-        """
-        if self.dry_run:
-            log(f"[DRY-RUN] would update Codex config at {self.codex_config}")
-            log(f"[DRY-RUN] would update Codex hooks at {self.codex_hooks}")
-            return
-
-        self.codex_config.parent.mkdir(parents=True, exist_ok=True)
-        self.codex_config.touch()
-        text = self.codex_config.read_text(encoding="utf-8")
-
-        def upsert(key: str, line: str) -> None:
-            """Replace an existing top-level key=value line, or append it."""
-            nonlocal text
-            pattern = re.compile(rf"^{re.escape(key)}\s*=.*$", re.MULTILINE)
-            if pattern.search(text):
-                text = pattern.sub(line, text, count=1)
-            else:
-                suffix = "" if not text or text.endswith("\n") else "\n"
-                text = f"{text}{suffix}\n{line}\n"
-
-        def append_if_missing(pat: str, line: str, comment: str = "") -> None:
-            """Append a line (with optional comment) only if the pattern is not found."""
-            nonlocal text
-            if re.search(pat, text, re.MULTILINE):
-                return
-            prefix = f"\n# {comment}\n" if comment else "\n"
-            text += f"{prefix}{line}\n"
-
-        upsert("experimental_use_hooks", "experimental_use_hooks = true")
-        upsert("hooks_config_path", f'hooks_config_path = "{self.codex_hooks}"')
-        append_if_missing(
-            r"^\s*features\.codex_hooks\s*=",
-            "features.codex_hooks = true",
-            "Enable Codex hook execution so SessionStart can validate installed shared memory assets.",
-        )
-        append_if_missing(
-            r"^\s*shared_repo_memory_configured\s*=",
-            "shared_repo_memory_configured = true",
-            "Enable automatic shared repo-memory startup checks and repo bootstrap in Git repositories.",
-        )
-        append_if_missing(
-            r"^\s*shared_agent_assets_repo_path\s*=",
-            f'shared_agent_assets_repo_path = "{self.repo_root}"',
-            "Shared repo-memory authoring checkout used to refresh installed shared assets.",
-        )
-
-        # Mark the agentmemory repo itself as trusted so Codex can work in it.
-        escaped = re.escape(str(self.repo_root))
-        if not re.search(rf'\[projects\."{escaped}"\]', text):
-            text += (
-                f"\n# Trust this shared repo-memory authoring repo for local Codex work.\n"
-                f'[projects."{self.repo_root}"]\ntrust_level = "trusted"\n'
-            )
-
-        self.codex_config.write_text(text, encoding="utf-8")
-
-        # Write the hooks.json with the SessionStart command.
-        session_start_cmd = str(self.install_root / "session-start.py")
-        hooks_data = self._load_json(self.codex_hooks)
-        hooks_data.setdefault("hooks", {})
-        hooks_data["hooks"]["SessionStart"] = [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": session_start_cmd,
-                        "timeout": 30,
-                    }
-                ]
-            }
-        ]
-        self._save_json(self.codex_hooks, hooks_data)
-
-        log(f"updated Codex config at {self.codex_config}")
-        log(f"updated Codex hooks at {self.codex_hooks}")
-
-    # ------------------------------------------------------------------
-    # Gemini wiring (~/.gemini/settings.json)
-    # ------------------------------------------------------------------
-
-    def _wire_gemini(self) -> None:
-        """Wire Gemini CLI hooks by updating ~/.gemini/settings.json.
-
-        Adds or updates:
-          shared_repo_memory_configured: true
-          shared_agent_assets_repo_path: <repo_root>
-          hooks.SessionStart:  session-start.py  (matched by name for idempotency)
-          hooks.AfterAgent:    post-turn-notify.py  (post-turn shard capture)
-          hooks.BeforeAgent:   prompt-guard.py  (empty-memory bootstrap nudge)
-
-        Gemini CLI uses "AfterAgent" instead of "Stop" for the post-turn hook and
-        "BeforeAgent" instead of "UserPromptSubmit" for the pre-turn hook.
-        Gemini has no PostCompact equivalent (PreCompress is advisory and fires
-        before compression, not after).
-        Each hook entry includes a "name" field used to detect existing entries.
-        """
-        session_start_cmd = str(self.install_root / "session-start.py")
-        post_turn_cmd = str(self.install_root / "post-turn-notify.py")
-        prompt_guard_cmd = str(self.install_root / "prompt-guard.py")
-
-        settings = self._load_json(self.gemini_settings)
-        settings["shared_agent_assets_repo_path"] = str(self.repo_root)
-        settings["shared_repo_memory_configured"] = True
-
-        hooks = settings.setdefault("hooks", {})
-
-        # SessionStart hook -- uses a named entry so we can detect duplicates by name.
-        session_hooks = hooks.setdefault("SessionStart", [])
-        if not any(
-            h.get("matcher") == "*"
-            and any(
-                sh.get("name") == "shared-repo-memory-session-start"
-                for sh in h.get("hooks", [])
-            )
-            for h in session_hooks
-        ):
-            session_hooks.append(
-                {
-                    "matcher": "*",
-                    "hooks": [
-                        {
-                            "name": "shared-repo-memory-session-start",
-                            "type": "command",
-                            "command": session_start_cmd,
-                            "timeout": 30000,
-                        }
-                    ],
-                }
-            )
-
-        # AfterAgent hook (Gemini's equivalent of Claude Code's Stop hook).
-        after_hooks = hooks.setdefault("AfterAgent", [])
-        if not any(
-            h.get("matcher") == "*"
-            and any(
-                sh.get("name") == "shared-repo-memory-post-turn"
-                for sh in h.get("hooks", [])
-            )
-            for h in after_hooks
-        ):
-            after_hooks.append(
-                {
-                    "matcher": "*",
-                    "hooks": [
-                        {
-                            "name": "shared-repo-memory-post-turn",
-                            "type": "command",
-                            "command": post_turn_cmd,
-                            "timeout": 30000,
-                        }
-                    ],
-                }
-            )
-
-        # BeforeAgent hook (Gemini's equivalent of Claude Code's UserPromptSubmit).
-        before_hooks = hooks.setdefault("BeforeAgent", [])
-        if not any(
-            h.get("matcher") == "*"
-            and any(
-                sh.get("name") == "shared-repo-memory-prompt-guard"
-                for sh in h.get("hooks", [])
-            )
-            for h in before_hooks
-        ):
-            before_hooks.append(
-                {
-                    "matcher": "*",
-                    "hooks": [
-                        {
-                            "name": "shared-repo-memory-prompt-guard",
-                            "type": "command",
-                            "command": prompt_guard_cmd,
-                            "timeout": 10000,
-                        }
-                    ],
-                }
-            )
-
-        self._save_json(self.gemini_settings, settings)
-        if not self.dry_run:
-            log(f"updated Gemini settings at {self.gemini_settings}")
+        for adapter in _ADAPTERS:
+            adapter.wire_hooks(ctx)
+            if not self.dry_run:
+                log(f"wired {adapter.agent_id()} hooks")
 
     # ------------------------------------------------------------------
     # Skills installation
@@ -694,9 +402,7 @@ class Installer:
         self._copy_scripts()
         self._install_skills()
         self._init_refresh_state()
-        self._wire_claude()
-        self._wire_codex()
-        self._wire_gemini()
+        self._wire_agents()
         self._log_agent_support_summary()
 
         log(f"installed helper files under {self.install_root}")

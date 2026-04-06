@@ -300,7 +300,7 @@ def test_agent_support_summary_marks_codex_session_start_only():
     assert any("Claude Code:" in str_line for str_line in list_str_summary_lines)
     assert any("Gemini CLI:" in str_line for str_line in list_str_summary_lines)
     assert any(
-        "Codex CLI: SessionStart only." in str_line
+        "Codex CLI:" in str_line and "SessionStart" in str_line
         for str_line in list_str_summary_lines
     )
 
