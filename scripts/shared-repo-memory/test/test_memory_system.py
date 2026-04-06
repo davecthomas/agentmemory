@@ -1,11 +1,47 @@
+import importlib.util
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 SCRIPT_DIR = Path(__file__).parent.parent.resolve()
+
+
+def load_script_module(script_path: Path, str_module_name: str) -> ModuleType:
+    """Load a Python script from disk as a module for direct helper-level testing.
+
+    Args:
+        script_path: Absolute path to the Python script file to import.
+        str_module_name: Synthetic module name used for the imported script.
+
+    Returns:
+        ModuleType: Imported module object with the script's globals and functions.
+
+    Raises:
+        ImportError: Raised when the import spec or loader cannot be created.
+    """
+    str_script_parent: str = str(script_path.parent)
+    bool_added_sys_path: bool = False
+    if str_script_parent not in sys.path:
+        sys.path.insert(0, str_script_parent)
+        bool_added_sys_path = True
+    try:
+        module_spec = importlib.util.spec_from_file_location(
+            str_module_name, script_path
+        )
+        if module_spec is None or module_spec.loader is None:
+            raise ImportError(f"Could not load module spec for {script_path}")
+        module = importlib.util.module_from_spec(module_spec)
+        sys.modules[str_module_name] = module
+        module_spec.loader.exec_module(module)
+    finally:
+        if bool_added_sys_path:
+            sys.path.remove(str_script_parent)
+    return module
 
 
 @pytest.fixture
@@ -78,6 +114,9 @@ def test_bootstrap_initializes_directories(repo):
     repo_dir, _ = repo
     assert (repo_dir / ".agents" / "memory").exists()
     assert (repo_dir / ".codex" / "memory").is_symlink()
+    assert (repo_dir / ".githooks" / "post-checkout").is_file()
+    assert (repo_dir / ".githooks" / "post-merge").is_file()
+    assert (repo_dir / ".githooks" / "post-rewrite").is_file()
 
     result = subprocess.run(
         ["git", "config", "--get", "core.hooksPath"],
@@ -99,6 +138,7 @@ def test_post_turn_notify_creates_shard_and_summary(repo):
     payload = {
         "conversation_id": "test-thread",
         "turn_id": "test-turn-1",
+        "prompt": "Record this durable repo decision in shared memory for future sessions.",
         "last_assistant_message": "Treated this as a durable repo decision.",
         "model": "gpt-5.4",
     }
@@ -126,6 +166,45 @@ def test_post_turn_notify_creates_shard_and_summary(repo):
     summary_path = day_dir / "summary.md"
     assert summary_path.exists()
     assert "durable repo decision" in summary_path.read_text().lower()
+
+
+def test_post_turn_notify_ignores_assistant_chatter_for_why(repo):
+    repo_dir, home_dir = repo
+
+    tracked_file = repo_dir / "feature.py"
+    tracked_file.write_text("# noisy update\n")
+    subprocess.run(["git", "add", "feature.py"], cwd=repo_dir, check=True)
+
+    payload = {
+        "conversation_id": "test-thread",
+        "turn_id": "test-turn-2",
+        "last_assistant_message": "How's that look?",
+        "model": "gpt-5.4",
+    }
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    subprocess.run(
+        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        check=True,
+        env=env,
+    )
+
+    day_dir = next((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
+    shard_path = next((day_dir / "events").glob("*.md"))
+    shard_text = shard_path.read_text(encoding="utf-8")
+    summary_text = (day_dir / "summary.md").read_text(encoding="utf-8")
+
+    assert "How's that look?" not in shard_text
+    assert "How's that look?" not in summary_text
+    assert (
+        "Repo state changed during this agent turn." in shard_text
+        or "1 file changed" in shard_text
+    )
 
 
 def test_post_turn_notify_noops_outside_git_repo(non_repo):
@@ -171,6 +250,59 @@ def test_session_start_noops_outside_git_repo_with_json_stdout(non_repo):
     assert result.stdout.strip() == ""
     assert "invalid JSON" not in result.stderr
     assert not (work_dir / ".agents").exists()
+
+
+def test_session_start_releases_lock_when_auto_bootstrap_script_missing(
+    repo, monkeypatch, tmp_path
+):
+    """Ensure the legacy auto-bootstrap fallback never leaves a stale lock behind.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+        monkeypatch: Pytest fixture used to control environment variables and module
+            globals for this regression case.
+        tmp_path: Temporary directory used to point __file__ at a location that does
+            not contain auto-bootstrap.py.
+
+    Returns:
+        None: Assertions verify the fallback returns False and cleans up its lock.
+    """
+    repo_dir, _ = repo
+    session_start_module = load_script_module(
+        SCRIPT_DIR / "session-start.py", "session_start_test_module"
+    )
+    lock_path = repo_dir / ".agents" / "memory" / ".auto_bootstrap_running"
+    fake_script_path = tmp_path / "fake-session-start.py"
+    fake_script_path.write_text("# fake session-start path\n", encoding="utf-8")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(session_start_module, "__file__", str(fake_script_path))
+
+    spawned = session_start_module._spawn_auto_bootstrap(repo_dir)
+
+    assert spawned is False
+    assert not lock_path.exists()
+
+
+def test_agent_support_summary_marks_codex_session_start_only():
+    """Verify the canonical support summary does not overstate Codex support.
+
+    Returns:
+        None: Assertions verify the summary explicitly marks Codex as
+            SessionStart-only and keeps Claude and Gemini summaries present.
+    """
+    agent_support_module = load_script_module(
+        SCRIPT_DIR / "agent_support.py", "agent_support_test_module"
+    )
+
+    list_str_summary_lines = agent_support_module.support_summary_lines()
+
+    assert any("Claude Code:" in str_line for str_line in list_str_summary_lines)
+    assert any("Gemini CLI:" in str_line for str_line in list_str_summary_lines)
+    assert any(
+        "Codex CLI: SessionStart only." in str_line
+        for str_line in list_str_summary_lines
+    )
 
 
 def test_promote_adr_creates_adr_and_index(repo):
@@ -236,11 +368,38 @@ Added automated tests.
 def test_build_catchup_generates_file(repo):
     repo_dir, home_dir = repo
 
-    # Setup: Create a mock summary
+    # Setup: Create a mock shard and summary with a real Markdown target.
     day_dir = repo_dir / ".agents" / "memory" / "daily" / "2026-03-30"
     day_dir.mkdir(parents=True, exist_ok=True)
+    events_dir = day_dir / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+    shard_path = (
+        events_dir
+        / "2026-03-30T12-00-00Z--test-user--thread_test-thread--turn_test-turn.md"
+    )
+    shard_path.write_text("# mock shard\n", encoding="utf-8")
     summary_path = day_dir / "summary.md"
-    summary_path.write_text("This is a mock daily summary.")
+    summary_path.write_text(
+        "\n".join(
+            [
+                "# 2026-03-30 summary",
+                "",
+                "## Active blockers",
+                "",
+                "- None",
+                "",
+                "## Next likely steps",
+                "",
+                "- Review the generated shard.",
+                "",
+                "## Relevant event shards",
+                "",
+                "- [2026-03-30 12:00:00 UTC by test-user](events/2026-03-30T12-00-00Z--test-user--thread_test-thread--turn_test-turn.md)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
@@ -258,4 +417,37 @@ def test_build_catchup_generates_file(repo):
     catchup_text = catchup_path.read_text()
     assert "# Local catch-up" in catchup_text
     assert "2026-03-30" in catchup_text
-    assert "summary.md" in catchup_text
+    assert (
+        "events/2026-03-30T12-00-00Z--test-user--thread_test-thread--turn_test-turn.md"
+        in catchup_text
+    )
+
+
+def test_prompt_guard_injects_one_time_news_nudge(repo):
+    repo_dir, home_dir = repo
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    payload = {"session_id": "prompt-guard-test", "hook_event_name": "UserPromptSubmit"}
+
+    first_result = subprocess.run(
+        ["python3", SCRIPT_DIR / "prompt-guard.py"],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    second_result = subprocess.run(
+        ["python3", SCRIPT_DIR / "prompt-guard.py"],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    assert "`news` skill" in first_result.stdout
+    assert second_result.stdout.strip() == ""

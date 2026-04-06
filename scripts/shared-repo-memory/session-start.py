@@ -41,6 +41,11 @@ from common import append_hook_trace, load_json, safe_main, warn
 # Expected relative target for the .codex/memory -> .agents/memory symlink.
 # bootstrap-repo.sh creates this symlink; session-start.py validates it.
 EXPECTED_MEMORY_TARGET = "../.agents/memory"
+REQUIRED_GIT_HOOKS: tuple[str, ...] = (
+    "post-checkout",
+    "post-merge",
+    "post-rewrite",
+)
 
 # Config key checked in ~/.claude/settings.json and ~/.codex/config.toml.
 # The SessionStart hook exits silently when this key is absent or false,
@@ -172,6 +177,9 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
       .agents/memory/daily/     -- daily shard storage directory
       .codex/local/             -- local catch-up state (not committed)
       .githooks/                -- git hooks directory
+      .githooks/post-checkout   -- rebuilds local catch-up after checkout
+      .githooks/post-merge      -- rebuilds local catch-up after merge/pull
+      .githooks/post-rewrite    -- rebuilds local catch-up after rebase/rewrite
       .agents/memory/adr/INDEX.md   -- ADR index file
       .codex/memory             -- symlink to ../.agents/memory
       git config core.hooksPath == ".githooks"
@@ -203,6 +211,11 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
         issues.append(str(codex_local))
     if not githooks.is_dir():
         issues.append(str(githooks))
+    # Ensure each required Git hook exists, not just the parent directory.
+    for str_hook_name in REQUIRED_GIT_HOOKS:
+        hook_path: Path = githooks / str_hook_name
+        if not hook_path.is_file():
+            issues.append(str(hook_path))
     if not adr_index.is_file():
         issues.append(str(adr_index))
     # Validate the symlink: must exist as a symlink and point to the canonical target.
@@ -305,12 +318,29 @@ def run_repo_bootstrap(helper_path: Path, repo_root: Path) -> bool:
     return True
 
 
-def _lock_held(repo_root: Path, ttl: int = 300) -> bool:
-    """Return True if the bootstrap lock file exists and is younger than ttl seconds."""
+def _acquire_lock(repo_root: Path, ttl: int = 300) -> bool:
+    """Acquire the bootstrap lock. Return False if already locked by a recent process."""
     import time
 
     lock = repo_root / ".agents" / "memory" / ".auto_bootstrap_running"
-    return lock.exists() and (time.time() - lock.stat().st_mtime) < ttl
+    if lock.exists() and (time.time() - lock.stat().st_mtime) < ttl:
+        return False
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch()
+    return True
+
+
+def _release_lock(repo_root: Path) -> None:
+    """Remove the bootstrap lock file so a fallback or retry can proceed.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        None: Missing locks are ignored.
+    """
+    lock: Path = repo_root / ".agents" / "memory" / ".auto_bootstrap_running"
+    lock.unlink(missing_ok=True)
 
 
 def _open_bootstrap_log(repo_root: Path):
@@ -355,7 +385,7 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
 
     Returns True if a process was launched, False if skipped.
     """
-    if _lock_held(repo_root):
+    if not _acquire_lock(repo_root):
         return False
 
     skill_path = Path.home() / ".agent" / "skills" / "memory-bootstrap" / "SKILL.md"
@@ -368,15 +398,20 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
         if agent == "gemini":
             cmd = [
                 "gemini",
-                "--prompt", task,
-                "--system-prompt", skill_content,
+                "--prompt",
+                task,
+                "--system-prompt",
+                skill_content,
             ]
         else:
             # claude -p: non-interactive print mode; inherits Claude Code auth.
             cmd = [
-                "claude", "-p",
-                "--system", skill_content,
-                "--cwd", str(repo_root),
+                "claude",
+                "-p",
+                "--system",
+                skill_content,
+                "--cwd",
+                str(repo_root),
                 task,
             ]
         try:
@@ -388,12 +423,16 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
                 start_new_session=True,
             )
             return True
-        except FileNotFoundError:
-            # Binary not on PATH -- fall through to legacy fallback.
-            warn(f"SessionStart: {agent} binary not found; falling back to auto-bootstrap.py")
+        except OSError:
+            # Binary launch failed - release the lock before trying the legacy fallback.
+            warn(
+                f"SessionStart: {agent} CLI launch failed; falling back to auto-bootstrap.py"
+            )
             log_file.close()
+            _release_lock(repo_root)
 
     # Legacy fallback: auto-bootstrap.py via direct API call (requires ANTHROPIC_API_KEY).
+    _release_lock(repo_root)
     return _spawn_auto_bootstrap(repo_root)
 
 
@@ -407,17 +446,24 @@ def _spawn_auto_bootstrap(repo_root: Path) -> bool:
     """
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return False
-    if _lock_held(repo_root):
+    if not _acquire_lock(repo_root):
         return False
-    script = Path(__file__).parent / "auto-bootstrap.py"
+    script: Path = Path(__file__).parent / "auto-bootstrap.py"
     if not script.exists():
+        warn(f"SessionStart: auto-bootstrap fallback unavailable; missing {script}")
+        _release_lock(repo_root)
         return False
-    subprocess.Popen(
-        [sys.executable, str(script), "--repo-root", str(repo_root)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            [sys.executable, str(script), "--repo-root", str(repo_root)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        warn(f"SessionStart: auto-bootstrap launch failed: {error}")
+        _release_lock(repo_root)
+        return False
     return True
 
 

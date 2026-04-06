@@ -358,5 +358,6 @@ ensure_gemini_settings_json
 
 log "installed helper files under $install_root"
 log "updated Codex config at $codex_config"
+log "Codex support status: SessionStart only. Native post-turn capture is not provisioned; notify-wrapper remains a manual smoke-test path."
 log "updated hooks config at $hooks_config"
 log "updated Gemini settings at $gemini_config"

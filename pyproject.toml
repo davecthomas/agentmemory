@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "agentmemory"
-version = "0.1.0"
-description = "Shared repo memory system for agentic development — captures why decisions were made, what changed, and what comes next, persisted as plain Markdown in Git and surfaced automatically at agent session start."
+version = "0.2.3"
+description = "Collaborative shared repo memory for fast-moving software work — helps people, agents, and teams stay aligned by capturing why decisions were made, what changed, and what comes next in plain Markdown in Git."
 package-mode = false
 
 [tool.poetry.dependencies]

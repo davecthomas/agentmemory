@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# validate-notify.sh -- Smoke-test the post-turn notify path end-to-end.
+# validate-notify.sh -- Smoke-test the manual post-turn notify wrapper path.
 #
-# Sends a synthetic hook payload through notify-wrapper.sh (the same path a
-# live Codex agent turn uses) and verifies that a new event shard was created
-# under .agents/memory/daily/<today>/events/.
+# Sends a synthetic hook payload through notify-wrapper.sh and verifies that a
+# new event shard was created under .agents/memory/daily/<today>/events/.
 #
-# Use this script after installation to confirm the wiring is working, or when
-# troubleshooting missing shards.
+# Use this script to confirm that post-turn-notify.py works when invoked
+# directly through the wrapper, or when troubleshooting missing shards.
+# This does NOT prove native Codex post-turn integration support.
 #
 # Note: this script uses README.md as the "files_touched" signal in the payload.
 # The meaningful-turn gate in post-turn-notify.py requires at least one tracked
@@ -40,7 +40,7 @@ payload="$(cat <<'EOF'
 EOF
 )"
 
-# Pipe the payload through notify-wrapper.sh exactly as a real Codex turn would.
+# Pipe the payload through notify-wrapper.sh to exercise the manual wrapper path.
 printf '%s' "$payload" | ./scripts/shared-repo-memory/notify-wrapper.sh
 
 # Count shards after the run; a successful notify increases the count by at least one.
@@ -50,11 +50,11 @@ if [ -d ".agents/memory/daily/$today/events" ]; then
 fi
 
 if [ "$after_count" -le "$before_count" ]; then
-  echo "[shared-repo-memory] notify validation did not create a new event shard" >&2
+  echo "[shared-repo-memory] notify-wrapper validation did not create a new event shard" >&2
   echo "[shared-repo-memory] check: do you have uncommitted tracked changes? (git status)" >&2
   echo "[shared-repo-memory] check: tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl" >&2
   exit 1
 fi
 
-echo "[shared-repo-memory] notify validation succeeded"
-echo "[shared-repo-memory] restart the current Codex session if live turns still are not writing memory"
+echo "[shared-repo-memory] notify-wrapper validation succeeded"
+echo "[shared-repo-memory] this confirms the manual wrapper path only, not native Codex post-turn hook support"

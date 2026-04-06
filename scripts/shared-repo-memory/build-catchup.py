@@ -31,6 +31,7 @@ Install location after `./install.sh`:
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from common import (
@@ -138,6 +139,24 @@ def summary_bullets(path: Path, heading: str) -> list[str]:
     return lines
 
 
+def parse_markdown_link(str_line: str) -> tuple[str, str] | None:
+    """Extract the label and target path from a Markdown bullet link.
+
+    Args:
+        str_line: Bullet line that may contain a Markdown link in the form
+            "- [label](target)".
+
+    Returns:
+        tuple[str, str] | None: The link label and raw target path when the line
+            contains a Markdown link, otherwise None.
+    """
+    match = re.match(r"^- \[([^\]]+)\]\(([^)]+)\)$", str_line.strip())
+    if not match:
+        return None  # Early return for non-link lines.
+    tuple_link: tuple[str, str] = (match.group(1), match.group(2))
+    return tuple_link  # Normal exit.
+
+
 def main() -> int:
     """Entry point: build catchup.md and update sync_state.json.
 
@@ -170,6 +189,8 @@ def main() -> int:
     blockers: list[str] = []
     next_steps: list[str] = []
     referenced: list[str] = []
+    # Walk the most recent summaries to collect deduplicated blockers, next steps,
+    # and event shard links for the local catch-up digest.
     for summary_path in summaries:
         for line in summary_bullets(summary_path, "Active blockers"):
             if line != "- None" and line not in blockers:
@@ -178,12 +199,16 @@ def main() -> int:
             if line != "- None" and line not in next_steps:
                 next_steps.append(line)
         # Re-resolve shard links relative to catchup.md rather than summary.md,
-        # since the two files are in different directories.
+        # preserving the original shard target instead of reconstructing it from
+        # the human-readable label text.
         for line in summary_bullets(summary_path, "Relevant event shards"):
             if line != "- None":
-                shard_name = line.removeprefix("- ").split("](", 1)[0].lstrip("[")
-                target = summary_path.parent / "events" / f"{shard_name}.md"
-                link = f"- {relative_link(catchup_path, target, shard_name)}"
+                tuple_link = parse_markdown_link(line)
+                if tuple_link is None:
+                    continue
+                shard_label, str_relative_target = tuple_link
+                target = (summary_path.parent / str_relative_target).resolve()
+                link = f"- {relative_link(catchup_path, target, shard_label)}"
                 if link not in referenced:
                     referenced.append(link)
 
