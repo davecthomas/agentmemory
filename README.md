@@ -1,16 +1,16 @@
-# Shared Repo Memory
+# Collaborative Shared Repo Memory
 
-A shared memory system for agentic development. Agents capture why decisions were made, what changed, and what comes next — and that context persists across sessions, branches, and collaborators.
+A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.2.2`
+Current version: `0.2.3`
 
 ---
 
 ## What It Does
 
-Coding agents are productive inside a single session and fragile across time. This system gives them durable repo context so every new session starts from prior decisions rather than rebuilding history from scratch.
+Coding agents are productive inside a single session and fragile across time. Teams are productive within one meeting or one PR and then lose context as the change landscape moves. This system gives people and agents durable shared repo context so each new session starts from prior decisions instead of rebuilding history from scratch.
 
-**Memory is plain Markdown committed to Git.** There is no external service, no vector database, no embedding pipeline. The repo owns the memory, Git moves it, and any agent that can read files can consume it.
+**Memory is plain Markdown committed to Git.** There is no external service, no vector database, and no embedding pipeline. The repo owns the memory, Git moves it, and people, agents, and teams can all stay aligned from the same source of truth.
 
 ### Key concepts
 

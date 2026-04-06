@@ -14,38 +14,26 @@ related_adrs:
 files_touched:
   - "README.md"
   - "__version__.py"
-  - "docs/shared-repo-memory-system-design.md"
   - "pyproject.toml"
-  - "scripts/shared-repo-memory/install-user-assets.sh"
-  - "scripts/shared-repo-memory/install.py"
-  - "scripts/shared-repo-memory/session-start.py"
   - "scripts/shared-repo-memory/test/test_memory_system.py"
-  - "scripts/shared-repo-memory/test/test_poc.sh"
-  - "scripts/shared-repo-memory/validate-notify.sh"
 verification:
-  - "git diff:  10 files changed, 140 insertions(+), 32 deletions(-); Current version: `0.2.2`; 2. Wires the supported hooks for each agent and reports the current support limits (see Agent Support below); | Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | Not provisioned |"
+  - "git diff:  4 files changed, 22 insertions(+), 14 deletions(-); # Collaborative Shared Repo Memory; A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.; Current version: `0.2.3`"
 ---
 
 ## Why
 
--  10 files changed, 140 insertions(+), 32 deletions(-); Current version: `0.2.2`; 2. Wires the supported hooks for each agent and reports the current support limits (see Agent Support below); | Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | Not provisioned |
+-  4 files changed, 22 insertions(+), 14 deletions(-); # Collaborative Shared Repo Memory; A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.; Current version: `0.2.3`
 
 ## Repo changes
 
 - Updated README.md
 - Updated __version__.py
-- Updated docs/shared-repo-memory-system-design.md
 - Updated pyproject.toml
-- Updated scripts/shared-repo-memory/install-user-assets.sh
-- Updated scripts/shared-repo-memory/install.py
-- Updated scripts/shared-repo-memory/session-start.py
 - Updated scripts/shared-repo-memory/test/test_memory_system.py
-- Updated scripts/shared-repo-memory/test/test_poc.sh
-- Updated scripts/shared-repo-memory/validate-notify.sh
 
 ## Evidence
 
-- git diff:  10 files changed, 140 insertions(+), 32 deletions(-); Current version: `0.2.2`; 2. Wires the supported hooks for each agent and reports the current support limits (see Agent Support below); | Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | Not provisioned |
+- git diff:  4 files changed, 22 insertions(+), 14 deletions(-); # Collaborative Shared Repo Memory; A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.; Current version: `0.2.3`
 
 ## Next
 

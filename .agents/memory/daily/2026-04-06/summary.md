@@ -20,7 +20,7 @@
 
 ## Why this mattered
 
--  10 files changed, 140 insertions(+), 32 deletions(-); Current version: `0.2.2`; 2. Wires the supported hooks for each agent and reports the current support limits (see Agent Support below); | Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | Not provisioned |
+-  4 files changed, 22 insertions(+), 14 deletions(-); # Collaborative Shared Repo Memory; A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.; Current version: `0.2.3`
 
 ## Active blockers
 

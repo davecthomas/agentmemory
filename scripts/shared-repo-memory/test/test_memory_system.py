@@ -25,14 +25,22 @@ def load_script_module(script_path: Path, str_module_name: str) -> ModuleType:
         ImportError: Raised when the import spec or loader cannot be created.
     """
     str_script_parent: str = str(script_path.parent)
+    bool_added_sys_path: bool = False
     if str_script_parent not in sys.path:
         sys.path.insert(0, str_script_parent)
-    module_spec = importlib.util.spec_from_file_location(str_module_name, script_path)
-    if module_spec is None or module_spec.loader is None:
-        raise ImportError(f"Could not load module spec for {script_path}")
-    module = importlib.util.module_from_spec(module_spec)
-    sys.modules[str_module_name] = module
-    module_spec.loader.exec_module(module)
+        bool_added_sys_path = True
+    try:
+        module_spec = importlib.util.spec_from_file_location(
+            str_module_name, script_path
+        )
+        if module_spec is None or module_spec.loader is None:
+            raise ImportError(f"Could not load module spec for {script_path}")
+        module = importlib.util.module_from_spec(module_spec)
+        sys.modules[str_module_name] = module
+        module_spec.loader.exec_module(module)
+    finally:
+        if bool_added_sys_path:
+            sys.path.remove(str_script_parent)
     return module
 
 
