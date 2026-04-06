@@ -131,15 +131,15 @@ def detect_adapter() -> type[AgentAdapter]:
     """Detect the active runtime from environment variables.
 
     Checks adapters in priority order (Claude, Gemini, Codex) and returns the
-    first whose matches_environment() returns True.  Codex is the fallback when
-    no env var matches.
+    first whose matches_environment() returns True.  Falls back to CodexAdapter
+    when no env var matches, since Codex is the only runtime without a detection
+    env var.  Callers that need a bootstrap command should handle the case where
+    the adapter returns None from build_bootstrap_command().
     """
     for adapter in _ADAPTERS:
         if adapter.matches_environment():
             return adapter
-    # Fallback to Claude so that Codex sessions also attempt claude -p
-    # (matches the existing _detect_agent() behavior in session-start.py).
-    return ClaudeAdapter
+    return CodexAdapter
 
 
 def detect_adapter_from_hook_event(hook_event: str) -> type[AgentAdapter]:

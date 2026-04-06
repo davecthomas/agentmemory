@@ -36,7 +36,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from adapters import detect_adapter
+from adapters import ClaudeAdapter, detect_adapter
 from common import append_hook_trace, load_json, safe_main, warn
 from models import SessionResponse
 
@@ -367,6 +367,10 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
         skill_content = skill_path.read_text(encoding="utf-8")
         task = "Bootstrap shared repo memory from recent commits and design docs."
         cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
+
+        # Codex cannot spawn subagents; fall back to Claude CLI for bootstrap.
+        if cmd is None:
+            cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
 
         if cmd is not None:
             log_file = _open_bootstrap_log(repo_root)

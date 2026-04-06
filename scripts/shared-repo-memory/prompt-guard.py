@@ -47,7 +47,6 @@ from pathlib import Path
 
 from adapters import detect_adapter_from_hook_event
 from common import append_hook_trace, safe_main, utc_now, utc_timestamp
-from models import HookResponse
 
 # Path to the per-session state file.
 _STATE_FILE: Path = Path.home() / ".agent" / "state" / "prompt-guard-sessions.json"
@@ -205,17 +204,18 @@ def main() -> int:
         sessions[req.session_id] = utc_timestamp()
         _save_sessions(sessions)
 
+    # Emit hookSpecificOutput directly for context injection -- the same shape
+    # used by post-compact.py.  render_hook_response() adds a top-level "status"
+    # field that pre-turn hooks did not previously include, so we avoid it here
+    # until a dedicated context-injection renderer is added to the adapter protocol.
     hook_event: str = req.hook_event or "UserPromptSubmit"
-    resp = HookResponse(
-        status="ok",
-        extra={
-            "hookSpecificOutput": {
-                "hookEventName": hook_event,
-                "additionalContext": _NUDGE_TEXT,
-            }
-        },
-    )
-    print(adapter.render_hook_response(resp))
+    response: dict[str, object] = {
+        "hookSpecificOutput": {
+            "hookEventName": hook_event,
+            "additionalContext": _NUDGE_TEXT,
+        }
+    }
+    print(json.dumps(response, sort_keys=True))
 
     append_hook_trace(
         "PromptGuard",

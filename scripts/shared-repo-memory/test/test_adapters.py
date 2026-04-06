@@ -51,11 +51,11 @@ class TestDetectAdapter:
             with patch.dict(os.environ, env, clear=True):
                 assert detect_adapter() is GeminiAdapter
 
-    def test_fallback_is_claude(self):
+    def test_fallback_is_codex(self):
         env = {k: v for k, v in os.environ.items()
                if k not in ("CLAUDECODE", "GEMINI_CLI")}
         with patch.dict(os.environ, env, clear=True):
-            assert detect_adapter() is ClaudeAdapter
+            assert detect_adapter() is CodexAdapter
 
     def test_claude_takes_priority_over_gemini(self):
         with patch.dict(os.environ, {"CLAUDECODE": "1", "GEMINI_CLI": "1"}, clear=False):
@@ -82,7 +82,7 @@ class TestDetectAdapterFromHookEvent:
         with patch.dict(os.environ, env, clear=True):
             # No adapter claims empty string, falls back to env-based detection
             result = detect_adapter_from_hook_event("")
-            assert result is ClaudeAdapter  # fallback
+            assert result is CodexAdapter  # fallback when no env var matches
 
 
 # ---------------------------------------------------------------------------
