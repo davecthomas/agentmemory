@@ -6,7 +6,7 @@ that implements the AgentAdapter protocol.  Core memory logic calls adapter
 methods to handle runtime-specific concerns such as:
 
   - Environment-based runtime detection
-  - Hook payload normalisation into canonical models
+  - Hook payload normalization into canonical models
   - Response rendering in the runtime's expected JSON schema
   - AI model resolution from env vars and config files
   - Shard attribution (ai_tool, ai_surface)
@@ -78,12 +78,12 @@ class AgentAdapter(Protocol):
 
     @staticmethod
     def render_session_response(resp: SessionResponse) -> str:
-        """Serialise a SessionResponse to the JSON string expected by this runtime."""
+        """Serialize a SessionResponse to the JSON string expected by this runtime."""
         ...
 
     @staticmethod
     def render_hook_response(resp: HookResponse) -> str:
-        """Serialise a HookResponse to the JSON string expected by this runtime."""
+        """Serialize a HookResponse to the JSON string expected by this runtime."""
         ...
 
     @staticmethod

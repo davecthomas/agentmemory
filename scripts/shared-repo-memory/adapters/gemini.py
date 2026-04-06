@@ -2,7 +2,7 @@
 """gemini.py -- Gemini CLI runtime adapter.
 
 Handles all Gemini CLI-specific concerns: environment detection, payload
-normalisation, response rendering, model resolution, installer wiring, and
+normalization, response rendering, model resolution, installer wiring, and
 subagent bootstrap command construction.
 """
 from __future__ import annotations

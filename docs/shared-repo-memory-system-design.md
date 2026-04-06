@@ -80,7 +80,7 @@ Give coding agents durable repo context so every new session starts from prior d
 `install.sh` calls `scripts/shared-repo-memory/install.py`, which:
 
 1. Creates `~/.agent/shared-repo-memory/` and copies all helper scripts into it
-2. Creates `~/.agent/state/` and initialises `shared_asset_refresh_state.json`
+2. Creates `~/.agent/state/` and initializes `shared_asset_refresh_state.json`
 3. Copies skills into `~/.agent/skills/` and creates per-agent symlinks under `~/.claude/skills/`, `~/.codex/skills/`, and `~/.gemini/skills/`
 4. Writes agent config and hook wiring (see Agent Wiring)
 
@@ -238,7 +238,7 @@ After the first prompt in any session where shards exist, every subsequent promp
 
 ## PostCompact Hook
 
-`post-compact.py` runs after Claude Code compacts (summarises) the context window.
+`post-compact.py` runs after Claude Code compacts (summarizes) the context window.
 
 Compaction discards the full transcript, including the memory context injected by `SessionStart`. Without this hook the agent loses awareness of ADRs and recent summaries for the remainder of the session. The hook re-injects the same bounded read set: ADR index + three most recent daily summaries.
 
@@ -252,7 +252,7 @@ When `SessionStart` detects that a wired repo has no event shards yet, it spawns
 
 ### Why subagent, not in-session instruction
 
-Injecting a "please bootstrap" instruction into the main agent's context fails in practice: the agent sees existing ADRs and reasons that the repo is already initialised, ignoring the instruction. An isolated subagent has no conversation history and no competing context — it simply receives the skill as its system prompt and executes it.
+Injecting a "please bootstrap" instruction into the main agent's context fails in practice: the agent sees existing ADRs and reasons that the repo is already initialized, ignoring the instruction. An isolated subagent has no conversation history and no competing context — it simply receives the skill as its system prompt and executes it.
 
 ### Subagent invocation
 

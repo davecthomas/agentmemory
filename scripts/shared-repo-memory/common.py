@@ -331,7 +331,7 @@ def append_jsonl(path: str | Path, payload: dict[str, Any]) -> None:
 
     Args:
         path: Target JSONL file path.  Parent directories are created if missing.
-        payload: Mapping to serialise as a single JSON line.  Keys are sorted for
+        payload: Mapping to serialize as a single JSON line.  Keys are sorted for
             stable output so the file is diff-friendly.
     """
     target = Path(path)
@@ -474,7 +474,7 @@ def relative_link(from_path: str | Path, to_path: str | Path, label: str) -> str
 
 
 def scalar_yaml(value: str) -> str:
-    """Serialise a scalar string as a JSON-quoted string for YAML frontmatter.
+    """Serialize a scalar string as a JSON-quoted string for YAML frontmatter.
 
     We use JSON quoting (double-quoted, with escape sequences) rather than
     bare YAML scalars to avoid ambiguity with colons, boolean keywords, etc.
@@ -600,11 +600,11 @@ def _parse_scalar(value: str) -> Any:
 def parse_sections(markdown_body: str) -> dict[str, list[str]]:
     """Parse the body of a shard Markdown file into its named sections.
 
-    Recognises H2 headings ("## Title") and collects subsequent non-heading lines
+    Recognizes H2 headings ("## Title") and collects subsequent non-heading lines
     under the corresponding section key.  Section names listed in SECTION_ALIASES
-    are normalised to the canonical heading before storage.
+    are normalized to the canonical heading before storage.
 
-    Only sections whose keys appear in SECTION_HEADINGS are collected; unrecognised
+    Only sections whose keys appear in SECTION_HEADINGS are collected; unrecognized
     headings are ignored.
 
     Args:
@@ -880,7 +880,7 @@ def append_hook_trace(
     """Append a structured trace record to the hook debug log.
 
     The trace log at ~/.agent/state/shared-repo-memory-hook-trace.jsonl is the
-    primary diagnostic tool when hooks run but produce unexpected behaviour.
+    primary diagnostic tool when hooks run but produce unexpected behavior.
     Each invocation of SessionStart and post-turn-notify.py appends one or more
     records covering start, success, error, noop, and bootstrapping phases.
 

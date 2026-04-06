@@ -2,7 +2,7 @@
 """claude.py -- Claude Code runtime adapter.
 
 Handles all Claude Code-specific concerns: environment detection, payload
-normalisation, response rendering, model resolution, installer wiring, and
+normalization, response rendering, model resolution, installer wiring, and
 subagent bootstrap command construction.
 """
 from __future__ import annotations

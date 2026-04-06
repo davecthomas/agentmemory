@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """post-compact.py -- PostCompact hook for the shared repo-memory system.
 
-Fires after Claude Code compacts (summarises) the context window.  Compaction
+Fires after Claude Code compacts (summarizes) the context window.  Compaction
 discards the full transcript, including the memory context injected by
 SessionStart.  Without this hook the agent loses awareness of ADRs and recent
 summaries for the remainder of the session.

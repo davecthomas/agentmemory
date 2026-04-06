@@ -123,7 +123,7 @@ def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
     """Derive a stable short identifier from a JSON payload hash.
 
     Used when the hook payload does not provide a thread_id or turn_id directly.
-    The SHA-1 of the serialised payload provides a deterministic, collision-
+    The SHA-1 of the serialized payload provides a deterministic, collision-
     resistant identifier that is stable across retries with the same payload.
 
     Args:

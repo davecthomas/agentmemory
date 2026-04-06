@@ -9,7 +9,7 @@ Or directly:
 
 What this installer does:
   1. Creates ~/.agent/shared-repo-memory/ and copies all helper scripts into it.
-  2. Creates ~/.agent/state/ and initialises shared_asset_refresh_state.json.
+  2. Creates ~/.agent/state/ and initializes shared_asset_refresh_state.json.
   3. Copies skills into ~/.agent/skills/ and creates per-agent symlinks under
      ~/.claude/skills/, ~/.codex/skills/, and ~/.gemini/skills/.
   4. Wires SessionStart and Stop (or AfterAgent) hooks for Claude Code, Codex,
@@ -131,7 +131,7 @@ class Installer:
     def __init__(
         self, repo_root: Path, dry_run: bool = False, force: bool = False
     ) -> None:
-        """Initialise the installer with the repo root and flags.
+        """Initialize the installer with the repo root and flags.
 
         Args:
             repo_root: Absolute path to the agentmemory repository root.
@@ -376,10 +376,10 @@ class Installer:
         if state_path.exists():
             return
         if self.dry_run:
-            log(f"[DRY-RUN] would initialise refresh state at {state_path}")
+            log(f"[DRY-RUN] would initialize refresh state at {state_path}")
             return
         self._save_json(state_path, {})
-        log(f"initialised refresh state at {state_path}")
+        log(f"initialized refresh state at {state_path}")
 
     # ------------------------------------------------------------------
     # Entry point
@@ -389,7 +389,7 @@ class Installer:
         """Execute the full installation sequence.
 
         Creates required directories, copies scripts, installs skills, wires all
-        three agents, and initialises the refresh state file.
+        three agents, and initializes the refresh state file.
         """
         # Create all required user-level directories before copying files.
         self._ensure_dir(self.install_root)
