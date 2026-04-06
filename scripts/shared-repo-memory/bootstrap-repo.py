@@ -14,6 +14,9 @@ What this script creates (all relative to the repo root):
   .codex/local/                           -- local catch-up state (never committed)
   .claude/local/                          -- Claude-specific local state
   .githooks/                              -- git hooks directory
+  .githooks/post-checkout                 -- rebuilds local catch-up after checkout
+  .githooks/post-merge                    -- rebuilds local catch-up after merge/pull
+  .githooks/post-rewrite                  -- rebuilds local catch-up after rebase/rewrite
   .codex/memory -> ../.agents/memory      -- Codex access-path symlink
   .agents/memory/adr/INDEX.md             -- empty ADR index table
   git config core.hooksPath = .githooks   -- points git at the hooks directory
@@ -43,6 +46,12 @@ _INDEX_INITIAL = """\
 |---|---|---|---|---|---|---|---|
 | - | None | - | - | - | - | - | - |
 """
+
+_GIT_HOOK_NAMES: tuple[str, ...] = (
+    "post-checkout",
+    "post-merge",
+    "post-rewrite",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -189,6 +198,55 @@ def ensure_gitignore(repo_root: Path, *, dry_run: bool) -> None:
         f.write(separator + "\n".join(missing) + "\n")
 
 
+def git_hook_text(str_hook_name: str) -> str:
+    """Return the canonical repo-local Git hook script for catch-up rebuilds.
+
+    Args:
+        str_hook_name: Git hook filename and trigger label. Supported values are
+            "post-checkout", "post-merge", and "post-rewrite".
+
+    Returns:
+        str: Full shell script text for the requested Git hook.
+    """
+    str_script = f"""#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" {str_hook_name} "$@"; then
+    echo "[shared-repo-memory] warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
+fi
+"""
+    return str_script  # Normal exit.
+
+
+def ensure_git_hooks(repo_root: Path, *, dry_run: bool) -> None:
+    """Create or repair the repo-local Git hook scripts used for catch-up rebuilds.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        dry_run: When True, log the action without modifying files.
+
+    Returns:
+        None: Hook files are updated in place when needed.
+    """
+    hooks_dir: Path = repo_root / ".githooks"
+
+    # Ensure each required Git hook exists with the shared catch-up command.
+    for str_hook_name in _GIT_HOOK_NAMES:
+        hook_path: Path = hooks_dir / str_hook_name
+        str_expected_text: str = git_hook_text(str_hook_name)
+        bool_needs_write: bool = True
+        if hook_path.exists():
+            str_current_text: str = hook_path.read_text(encoding="utf-8")
+            bool_needs_write = str_current_text != str_expected_text
+        if bool_needs_write:
+            log(f"writing Git hook {hook_path.relative_to(repo_root)}", dry_run=dry_run)
+            if not dry_run:
+                write_text(hook_path, str_expected_text)
+        if not dry_run and hook_path.exists():
+            hook_path.chmod(hook_path.stat().st_mode | 0o111)
+
+
 def main() -> int:
     """Bootstrap repo-local wiring.
 
@@ -233,6 +291,9 @@ def main() -> int:
 
     # Ensure .gitignore covers local-only paths that should never be committed.
     ensure_gitignore(repo_root, dry_run=dry_run)
+
+    # Install the repo-local catch-up hooks that rebuild local state after Git changes.
+    ensure_git_hooks(repo_root, dry_run=dry_run)
 
     # Point git at .githooks so post-checkout, post-merge, and post-rewrite fire.
     set_git_hooks_path(repo_root, ".githooks", dry_run=dry_run)

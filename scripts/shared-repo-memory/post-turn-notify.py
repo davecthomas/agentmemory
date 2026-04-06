@@ -320,6 +320,61 @@ def _diff_summary(repo_root: Path, files: list[str]) -> str:
         return ""
 
 
+def normalize_why_text(str_text: str) -> str:
+    """Collapse whitespace in candidate Why text and trim the result.
+
+    Args:
+        str_text: Raw candidate Why text collected from a prompt or diff summary.
+
+    Returns:
+        str: Normalized single-line text, or an empty string when no meaningful
+            content remains after normalization.
+    """
+    str_normalized_text: str = " ".join(str_text.split()).strip()
+    return str_normalized_text  # Normal exit.
+
+
+def is_useful_prompt_for_why(str_prompt: str) -> bool:
+    """Return True when a user prompt is strong enough to seed shard Why content.
+
+    Args:
+        str_prompt: Candidate user prompt text after extraction from the hook
+            payload or transcript.
+
+    Returns:
+        bool: True when the prompt is long enough to communicate a concrete task;
+            False when it is too short or empty to serve as durable memory.
+    """
+    str_normalized_prompt: str = normalize_why_text(str_prompt)
+    bool_is_useful: bool = len(str_normalized_prompt) >= 15
+    return bool_is_useful  # Normal exit.
+
+
+def build_why_lines(str_prompt: str | None, str_diff_summary: str) -> list[str]:
+    """Construct the shard Why section from high-signal inputs only.
+
+    Args:
+        str_prompt: Extracted user prompt text when available.
+        str_diff_summary: Compact Git diff summary describing the repo changes.
+
+    Returns:
+        list[str]: One bullet line for the shard Why section. The result prefers
+            a qualifying user task, otherwise a diff summary, otherwise a neutral
+            fallback describing that the repo changed during the turn.
+    """
+    list_str_why_lines: list[str] = []
+    if str_prompt and is_useful_prompt_for_why(str_prompt):
+        str_prompt_line: str = normalize_why_text(str_prompt)
+        list_str_why_lines.append(f"- {str_prompt_line}")
+        return list_str_why_lines  # Normal exit.
+    str_diff_line: str = normalize_why_text(str_diff_summary)
+    if str_diff_line:
+        list_str_why_lines.append(f"- {str_diff_line}")
+        return list_str_why_lines  # Normal exit.
+    list_str_why_lines.append("- Repo state changed during this agent turn.")
+    return list_str_why_lines  # Normal exit.
+
+
 def main() -> int:
     """Post-turn hook entry point.
 
@@ -471,27 +526,11 @@ def main() -> int:
         if transcript_path:
             prompt = extract_user_prompt_from_transcript(str(transcript_path))
 
-    assistant_text = find_first(payload, ASSISTANT_KEYS)
-
-    # Why: prefer the user prompt (the task that drove the change), but only if
-    # it reads like a task, not a conversational fragment.  Supplement or replace
-    # with a git diff summary so the shard describes what actually changed.
+    # Why: prefer the user prompt that drove the change. When prompt text is
+    # unavailable or too weak, fall back to a diff summary rather than assistant
+    # chatter so durable memory stays high-signal.
     diff_summary = _diff_summary(repo_root, files_touched)
-    why_lines = []
-    if prompt:
-        prompt_stripped = prompt.strip()
-        # Treat very short prompts or prompts with no verb-like content as noise;
-        # fall back to the diff summary in those cases.
-        if len(prompt_stripped) >= 15:
-            why_lines.append(f"- {prompt_stripped}")
-    if not why_lines and assistant_text:
-        first = assistant_text.strip().splitlines()[0]
-        if len(first) >= 15:
-            why_lines.append(f"- {first}")
-    if diff_summary and len(why_lines) == 0:
-        why_lines.append(f"- {diff_summary}")
-    if not why_lines:
-        why_lines.append("- Repo state changed during this agent turn.")
+    why_lines = build_why_lines(prompt, diff_summary)
 
     what_lines = [f"- Updated {path}" for path in files_touched] or [
         "- No tracked files were detected."

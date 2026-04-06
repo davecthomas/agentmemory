@@ -78,6 +78,9 @@ def test_bootstrap_initializes_directories(repo):
     repo_dir, _ = repo
     assert (repo_dir / ".agents" / "memory").exists()
     assert (repo_dir / ".codex" / "memory").is_symlink()
+    assert (repo_dir / ".githooks" / "post-checkout").is_file()
+    assert (repo_dir / ".githooks" / "post-merge").is_file()
+    assert (repo_dir / ".githooks" / "post-rewrite").is_file()
 
     result = subprocess.run(
         ["git", "config", "--get", "core.hooksPath"],
@@ -99,6 +102,7 @@ def test_post_turn_notify_creates_shard_and_summary(repo):
     payload = {
         "conversation_id": "test-thread",
         "turn_id": "test-turn-1",
+        "prompt": "Record this durable repo decision in shared memory for future sessions.",
         "last_assistant_message": "Treated this as a durable repo decision.",
         "model": "gpt-5.4",
     }
@@ -126,6 +130,45 @@ def test_post_turn_notify_creates_shard_and_summary(repo):
     summary_path = day_dir / "summary.md"
     assert summary_path.exists()
     assert "durable repo decision" in summary_path.read_text().lower()
+
+
+def test_post_turn_notify_ignores_assistant_chatter_for_why(repo):
+    repo_dir, home_dir = repo
+
+    tracked_file = repo_dir / "feature.py"
+    tracked_file.write_text("# noisy update\n")
+    subprocess.run(["git", "add", "feature.py"], cwd=repo_dir, check=True)
+
+    payload = {
+        "conversation_id": "test-thread",
+        "turn_id": "test-turn-2",
+        "last_assistant_message": "How's that look?",
+        "model": "gpt-5.4",
+    }
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    subprocess.run(
+        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        check=True,
+        env=env,
+    )
+
+    day_dir = next((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
+    shard_path = next((day_dir / "events").glob("*.md"))
+    shard_text = shard_path.read_text(encoding="utf-8")
+    summary_text = (day_dir / "summary.md").read_text(encoding="utf-8")
+
+    assert "How's that look?" not in shard_text
+    assert "How's that look?" not in summary_text
+    assert (
+        "Repo state changed during this agent turn." in shard_text
+        or "1 file changed" in shard_text
+    )
 
 
 def test_post_turn_notify_noops_outside_git_repo(non_repo):
@@ -236,11 +279,38 @@ Added automated tests.
 def test_build_catchup_generates_file(repo):
     repo_dir, home_dir = repo
 
-    # Setup: Create a mock summary
+    # Setup: Create a mock shard and summary with a real Markdown target.
     day_dir = repo_dir / ".agents" / "memory" / "daily" / "2026-03-30"
     day_dir.mkdir(parents=True, exist_ok=True)
+    events_dir = day_dir / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+    shard_path = (
+        events_dir
+        / "2026-03-30T12-00-00Z--test-user--thread_test-thread--turn_test-turn.md"
+    )
+    shard_path.write_text("# mock shard\n", encoding="utf-8")
     summary_path = day_dir / "summary.md"
-    summary_path.write_text("This is a mock daily summary.")
+    summary_path.write_text(
+        "\n".join(
+            [
+                "# 2026-03-30 summary",
+                "",
+                "## Active blockers",
+                "",
+                "- None",
+                "",
+                "## Next likely steps",
+                "",
+                "- Review the generated shard.",
+                "",
+                "## Relevant event shards",
+                "",
+                "- [2026-03-30 12:00:00 UTC by test-user](events/2026-03-30T12-00-00Z--test-user--thread_test-thread--turn_test-turn.md)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
@@ -258,4 +328,37 @@ def test_build_catchup_generates_file(repo):
     catchup_text = catchup_path.read_text()
     assert "# Local catch-up" in catchup_text
     assert "2026-03-30" in catchup_text
-    assert "summary.md" in catchup_text
+    assert (
+        "events/2026-03-30T12-00-00Z--test-user--thread_test-thread--turn_test-turn.md"
+        in catchup_text
+    )
+
+
+def test_prompt_guard_injects_one_time_news_nudge(repo):
+    repo_dir, home_dir = repo
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    payload = {"session_id": "prompt-guard-test", "hook_event_name": "UserPromptSubmit"}
+
+    first_result = subprocess.run(
+        ["python3", SCRIPT_DIR / "prompt-guard.py"],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    second_result = subprocess.run(
+        ["python3", SCRIPT_DIR / "prompt-guard.py"],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    assert "`news` skill" in first_result.stdout
+    assert second_result.stdout.strip() == ""

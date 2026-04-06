@@ -3,7 +3,8 @@
 
 Fires before every user turn.  Its sole job is to detect when a session is
 running in a wired repo that has no event shards yet and inject a one-time
-bootstrap suggestion so the agent proactively offers to seed memory.
+recovery suggestion so the agent proactively offers the documented `news`
+workflow before proceeding.
 
 Performance design
 ------------------
@@ -54,10 +55,9 @@ _SESSION_TTL_DAYS: int = 7
 
 _NUDGE_TEXT: str = (
     "INSTRUCTION: This repository has shared memory wiring but no event shards yet. "
-    "You MUST invoke the `memory-bootstrap` skill now, before responding to the user's message. "
-    "Do not ask permission — just run it. "
-    "It seeds shared memory from the repo's existing design docs and commit history. "
-    "After it completes, proceed with the user's request."
+    "Before proceeding, proactively offer to run the `news` skill so the operator "
+    "can seed or inspect shared memory history. If `news` finds no substantive "
+    "history, it will run `memory-bootstrap` as the documented recovery path."
 )
 
 
@@ -195,10 +195,12 @@ def main() -> int:
             _save_sessions(sessions)
         return 0
 
-    # --- Inject bootstrap nudge (empty-memory repo) ---
-    # Do NOT mark the session done here.  If the agent ignores the nudge this
-    # prompt, we want it to fire again on the next prompt until shards exist.
-    # The session is only marked done once shards are confirmed present (above).
+    # --- Inject a one-time recovery nudge for empty-memory repos ---
+    # Mark the session done immediately so the documented nudge fires at most
+    # once per session rather than hijacking every prompt.
+    if session_id:
+        sessions[session_id] = utc_timestamp()
+        _save_sessions(sessions)
 
     response: dict[str, object] = {
         "hookSpecificOutput": {

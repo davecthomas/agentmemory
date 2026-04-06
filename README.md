@@ -2,6 +2,8 @@
 
 A shared memory system for agentic development. Agents capture why decisions were made, what changed, and what comes next — and that context persists across sessions, branches, and collaborators.
 
+Current version: `0.2.0`
+
 ---
 
 ## What It Does

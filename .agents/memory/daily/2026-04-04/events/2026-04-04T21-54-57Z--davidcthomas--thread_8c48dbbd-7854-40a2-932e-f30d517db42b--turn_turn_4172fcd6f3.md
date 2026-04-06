@@ -28,7 +28,7 @@ verification:
 
 ## Why
 
-- Done. Here's what was done across both issues:
+- Align the shared-memory bootstrap, summary, and prompt recovery flow with the intended repo-wide behavior.
 
 ## Repo changes
 
