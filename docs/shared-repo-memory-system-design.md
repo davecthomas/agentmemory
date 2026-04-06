@@ -106,7 +106,7 @@ Give coding agents durable repo context so every new session starts from prior d
 | Hook event | Script | Claude Code | Gemini CLI | Codex |
 |---|---|---|---|---|
 | `SessionStart` / `SessionStart` | `session-start.py` | yes | yes | yes |
-| `Stop` / `AfterAgent` | `post-turn-notify.py` | `Stop` | `AfterAgent` | via notify-wrapper |
+| `Stop` / `AfterAgent` | `post-turn-notify.py` | `Stop` | `AfterAgent` | not provisioned |
 | `SubagentStop` | `post-turn-notify.py` | yes | — | — |
 | `UserPromptSubmit` / `BeforeAgent` | `prompt-guard.py` | `UserPromptSubmit` | `BeforeAgent` | — |
 | `PostCompact` | `post-compact.py` | yes | — (no equivalent) | — |
@@ -143,7 +143,7 @@ shared_repo_memory_configured = true
 }
 ```
 
-Post-turn capture uses `scripts/shared-repo-memory/notify-wrapper.sh` via the repo-local `notify` path.
+Codex is intentionally treated as a SessionStart-only supported runtime. `scripts/shared-repo-memory/notify-wrapper.sh` remains available as a manual smoke-test path for `post-turn-notify.py`, but it is not treated as a supported provisioned native post-turn integration.
 
 ### Gemini CLI — `~/.gemini/settings.json`
 
@@ -287,7 +287,7 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 
 ## Post-Turn Capture
 
-`post-turn-notify.py` runs after every agent turn via `Stop` or `SubagentStop` (Claude Code), `AfterAgent` (Gemini), or `notify-wrapper.sh` (Codex).
+`post-turn-notify.py` runs after every supported agent turn via `Stop` or `SubagentStop` (Claude Code) or `AfterAgent` (Gemini). `notify-wrapper.sh` remains a manual wrapper path and smoke test, not a supported native Codex post-turn integration.
 
 `SubagentStop` fires when a Task agent (spawned via the Agent tool) completes. Wiring `post-turn-notify.py` to `SubagentStop` ensures that significant work done inside subagents also produces event shards, not just main-agent turns.
 

@@ -2,7 +2,7 @@
 
 A shared memory system for agentic development. Agents capture why decisions were made, what changed, and what comes next — and that context persists across sessions, branches, and collaborators.
 
-Current version: `0.2.0`
+Current version: `0.2.2`
 
 ---
 
@@ -89,7 +89,7 @@ cd agentmemory
 The installer:
 
 1. Copies helper scripts to `~/.agent/shared-repo-memory/`
-2. Wires all hooks for each detected agent (see Agent Support below)
+2. Wires the supported hooks for each agent and reports the current support limits (see Agent Support below)
 3. Sets `shared_repo_memory_configured = true` in agent config files
 4. Initializes refresh state under `~/.agent/state/`
 5. Copies memory skills into `~/.agent/skills/` and symlinks each into `~/.claude/skills/`, `~/.codex/skills/`, and `~/.gemini/skills/`
@@ -112,12 +112,14 @@ Restart any open agent sessions. `SessionStart` validates and bootstraps repo-lo
 | Hook | Purpose | Claude Code | Gemini CLI | Codex |
 | ---- | ------- | ----------- | ---------- | ----- |
 | Session start | Validate wiring, inject memory context | `SessionStart` | `SessionStart` | `SessionStart` |
-| Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | `notify` command |
+| Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | Not provisioned |
 | Subagent capture | Write shard for Task agent turns | `SubagentStop` | — | — |
 | Pre-turn guard | Detect empty memory, offer bootstrap | `UserPromptSubmit` | `BeforeAgent` | — |
 | Post-compaction | Re-inject memory after context compaction | `PostCompact` | — | — |
 
-All hook scripts (`session-start.py`, `prompt-guard.py`, `post-compact.py`) emit a unified JSON schema accepted by all agents. `post-turn-notify.py` detects the calling agent from `hookEventName` to set AI attribution fields.
+Codex support is intentionally explicit: today the supported surface is `SessionStart` only. The repo keeps `notify-wrapper.sh` as a manual smoke-test path for `post-turn-notify.py`, but the installer does not claim native Codex post-turn parity.
+
+All hook scripts (`session-start.py`, `prompt-guard.py`, `post-compact.py`) emit a unified JSON schema accepted by all agents. `post-turn-notify.py` detects the calling agent from `hookEventName` to set AI attribution fields when the runtime exposes a supported post-turn event.
 
 ---
 
@@ -164,6 +166,8 @@ hooks_config_path = "~/.codex/hooks.json"
 shared_repo_memory_configured = true
 shared_agent_assets_repo_path = "/path/to/this/repo"
 ```
+
+Codex is wired for `SessionStart` only. This repo does not currently provision a native Codex post-turn hook path.
 
 **`~/.gemini/settings.json`** — Gemini CLI:
 
@@ -317,7 +321,7 @@ git config core.hooksPath     # should print .githooks
 ./scripts/shared-repo-memory/validate-notify.sh
 ```
 
-Writes one synthetic validation event through the same path a live agent turn uses.
+Writes one synthetic validation event through the manual `notify-wrapper.sh` path. This confirms the wrapper and `post-turn-notify.py` work together when invoked directly; it does not prove native Codex post-turn hook support.
 
 ### Check the hook trace log
 

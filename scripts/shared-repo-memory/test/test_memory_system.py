@@ -1,11 +1,39 @@
+import importlib.util
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 SCRIPT_DIR = Path(__file__).parent.parent.resolve()
+
+
+def load_script_module(script_path: Path, str_module_name: str) -> ModuleType:
+    """Load a Python script from disk as a module for direct helper-level testing.
+
+    Args:
+        script_path: Absolute path to the Python script file to import.
+        str_module_name: Synthetic module name used for the imported script.
+
+    Returns:
+        ModuleType: Imported module object with the script's globals and functions.
+
+    Raises:
+        ImportError: Raised when the import spec or loader cannot be created.
+    """
+    str_script_parent: str = str(script_path.parent)
+    if str_script_parent not in sys.path:
+        sys.path.insert(0, str_script_parent)
+    module_spec = importlib.util.spec_from_file_location(str_module_name, script_path)
+    if module_spec is None or module_spec.loader is None:
+        raise ImportError(f"Could not load module spec for {script_path}")
+    module = importlib.util.module_from_spec(module_spec)
+    sys.modules[str_module_name] = module
+    module_spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -214,6 +242,59 @@ def test_session_start_noops_outside_git_repo_with_json_stdout(non_repo):
     assert result.stdout.strip() == ""
     assert "invalid JSON" not in result.stderr
     assert not (work_dir / ".agents").exists()
+
+
+def test_session_start_releases_lock_when_auto_bootstrap_script_missing(
+    repo, monkeypatch, tmp_path
+):
+    """Ensure the legacy auto-bootstrap fallback never leaves a stale lock behind.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+        monkeypatch: Pytest fixture used to control environment variables and module
+            globals for this regression case.
+        tmp_path: Temporary directory used to point __file__ at a location that does
+            not contain auto-bootstrap.py.
+
+    Returns:
+        None: Assertions verify the fallback returns False and cleans up its lock.
+    """
+    repo_dir, _ = repo
+    session_start_module = load_script_module(
+        SCRIPT_DIR / "session-start.py", "session_start_test_module"
+    )
+    lock_path = repo_dir / ".agents" / "memory" / ".auto_bootstrap_running"
+    fake_script_path = tmp_path / "fake-session-start.py"
+    fake_script_path.write_text("# fake session-start path\n", encoding="utf-8")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(session_start_module, "__file__", str(fake_script_path))
+
+    spawned = session_start_module._spawn_auto_bootstrap(repo_dir)
+
+    assert spawned is False
+    assert not lock_path.exists()
+
+
+def test_agent_support_summary_marks_codex_session_start_only():
+    """Verify the canonical support summary does not overstate Codex support.
+
+    Returns:
+        None: Assertions verify the summary explicitly marks Codex as
+            SessionStart-only and keeps Claude and Gemini summaries present.
+    """
+    agent_support_module = load_script_module(
+        SCRIPT_DIR / "agent_support.py", "agent_support_test_module"
+    )
+
+    list_str_summary_lines = agent_support_module.support_summary_lines()
+
+    assert any("Claude Code:" in str_line for str_line in list_str_summary_lines)
+    assert any("Gemini CLI:" in str_line for str_line in list_str_summary_lines)
+    assert any(
+        "Codex CLI: SessionStart only." in str_line
+        for str_line in list_str_summary_lines
+    )
 
 
 def test_promote_adr_creates_adr_and_index(repo):

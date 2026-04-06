@@ -448,15 +448,22 @@ def _spawn_auto_bootstrap(repo_root: Path) -> bool:
         return False
     if not _acquire_lock(repo_root):
         return False
-    script = Path(__file__).parent / "auto-bootstrap.py"
+    script: Path = Path(__file__).parent / "auto-bootstrap.py"
     if not script.exists():
+        warn(f"SessionStart: auto-bootstrap fallback unavailable; missing {script}")
+        _release_lock(repo_root)
         return False
-    subprocess.Popen(
-        [sys.executable, str(script), "--repo-root", str(repo_root)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            [sys.executable, str(script), "--repo-root", str(repo_root)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        warn(f"SessionStart: auto-bootstrap launch failed: {error}")
+        _release_lock(repo_root)
+        return False
     return True
 
 

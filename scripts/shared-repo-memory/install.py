@@ -31,6 +31,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from agent_support import support_summary_lines
+
 # Scripts copied verbatim from scripts/shared-repo-memory/ into ~/.agent/shared-repo-memory/.
 # The order here is for readability; installation processes them in sequence.
 SCRIPTS = [
@@ -224,6 +226,18 @@ class Installer:
                 dst.chmod(dst.stat().st_mode | 0o111)
                 status: str = "updated" if changed else "unchanged"
                 log(f"script {name}: {status}")
+
+    def _log_agent_support_summary(self) -> None:
+        """Print the current supported hook surface for each agent runtime.
+
+        Returns:
+            None: Emits human-readable log lines so operators can see which
+                agents have full support and which have explicit limitations.
+        """
+        list_str_summary_lines: list[str] = support_summary_lines()
+        log("Agent support status:")
+        for str_summary_line in list_str_summary_lines:
+            log(f"  {str_summary_line}")
 
     # ------------------------------------------------------------------
     # Claude Code wiring (~/.claude/settings.json)
@@ -683,6 +697,7 @@ class Installer:
         self._wire_claude()
         self._wire_codex()
         self._wire_gemini()
+        self._log_agent_support_summary()
 
         log(f"installed helper files under {self.install_root}")
 
