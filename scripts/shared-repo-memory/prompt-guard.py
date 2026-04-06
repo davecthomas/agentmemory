@@ -45,7 +45,9 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+from adapters import detect_adapter_from_hook_event
 from common import append_hook_trace, safe_main, utc_now, utc_timestamp
+from models import HookResponse
 
 # Path to the per-session state file.
 _STATE_FILE: Path = Path.home() / ".agent" / "state" / "prompt-guard-sessions.json"
@@ -165,56 +167,61 @@ def main() -> int:
     except json.JSONDecodeError:
         payload = {}
 
-    session_id: str = str(payload.get("session_id", payload.get("sessionId", "")))
-    hook_event: str = str(
+    # Detect adapter and normalize the payload through it.
+    hook_event_raw: str = str(
         payload.get("hook_event_name", payload.get("hookEventName", ""))
     )
-    cwd: str = str(payload.get("cwd", ""))
+    adapter = detect_adapter_from_hook_event(hook_event_raw)
+    req = adapter.normalize_hook_request(payload)
 
     # --- Fast exit: session already processed ---
     # Load state once; if this session is already marked done, exit immediately
     # without touching the filesystem or spawning any subprocess.
     sessions: dict[str, str] = _load_sessions()
-    if session_id and session_id in sessions:
+    if req.session_id and req.session_id in sessions:
         return 0
 
     # --- Find repo root (pure Python, no subprocess) ---
-    repo_root: Path | None = _find_memory_root(cwd)
+    repo_root: Path | None = _find_memory_root(req.cwd)
     if repo_root is None:
         # Not in a wired repo.  Mark session done to skip this check next time.
-        if session_id:
-            sessions[session_id] = utc_timestamp()
+        if req.session_id:
+            sessions[req.session_id] = utc_timestamp()
             _save_sessions(sessions)
         return 0
 
     # --- Check for existing shards ---
     if _has_any_shards(repo_root):
         # Memory exists.  Mark session done so we never glob again this session.
-        if session_id:
-            sessions[session_id] = utc_timestamp()
+        if req.session_id:
+            sessions[req.session_id] = utc_timestamp()
             _save_sessions(sessions)
         return 0
 
     # --- Inject a one-time recovery nudge for empty-memory repos ---
     # Mark the session done immediately so the documented nudge fires at most
     # once per session rather than hijacking every prompt.
-    if session_id:
-        sessions[session_id] = utc_timestamp()
+    if req.session_id:
+        sessions[req.session_id] = utc_timestamp()
         _save_sessions(sessions)
 
-    response: dict[str, object] = {
-        "hookSpecificOutput": {
-            "hookEventName": hook_event or "UserPromptSubmit",
-            "additionalContext": _NUDGE_TEXT,
-        }
-    }
-    print(json.dumps(response, sort_keys=True))
+    hook_event: str = req.hook_event or "UserPromptSubmit"
+    resp = HookResponse(
+        status="ok",
+        extra={
+            "hookSpecificOutput": {
+                "hookEventName": hook_event,
+                "additionalContext": _NUDGE_TEXT,
+            }
+        },
+    )
+    print(adapter.render_hook_response(resp))
 
     append_hook_trace(
         "PromptGuard",
         "nudge_injected",
         repo_root=repo_root,
-        details={"session_id": session_id, "hook_event": hook_event},
+        details={"session_id": req.session_id, "hook_event": hook_event},
     )
     return 0
 
