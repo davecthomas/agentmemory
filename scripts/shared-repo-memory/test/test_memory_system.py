@@ -449,7 +449,7 @@ def test_prompt_guard_injects_one_time_news_nudge(repo):
         env=env,
     )
 
-    assert "`news` skill" in first_result.stdout
+    assert "`memory-bootstrap` skill" in first_result.stdout
     assert second_result.stdout.strip() == ""
 
 

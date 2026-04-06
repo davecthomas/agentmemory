@@ -168,14 +168,23 @@ class CodexAdapter:
 
         codex_config.write_text(text, encoding="utf-8")
 
-        # Write hooks.json with SessionStart command.
-        session_start_cmd = str(ctx.install_root / "session-start.py")
-        hooks_data = ctx.load_json(codex_hooks)
+        # Write hooks.json with SessionStart and UserPromptSubmit commands.
+        # Codex docs show explicit python3 interpreter prefix for all commands.
+        session_start_cmd: str = f"python3 {ctx.install_root / 'session-start.py'}"
+        prompt_guard_cmd: str = f"python3 {ctx.install_root / 'prompt-guard.py'}"
+        hooks_data: dict[str, object] = ctx.load_json(codex_hooks)
         hooks_data.setdefault("hooks", {})
         hooks_data["hooks"]["SessionStart"] = [
             {
                 "hooks": [
                     {"type": "command", "command": session_start_cmd, "timeout": 30}
+                ]
+            }
+        ]
+        hooks_data["hooks"]["UserPromptSubmit"] = [
+            {
+                "hooks": [
+                    {"type": "command", "command": prompt_guard_cmd, "timeout": 10}
                 ]
             }
         ]
