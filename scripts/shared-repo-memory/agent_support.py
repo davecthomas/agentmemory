@@ -36,6 +36,10 @@ class AgentSupport:
             memory after context compaction.
         str_post_turn_mode: Short label describing how post-turn capture is
             delivered today, such as "native" or "manual wrapper only".
+        bool_supports_shard_enrichment: True when the runtime can spawn a
+            subagent to semantically enrich raw shards after post-turn capture.
+        bool_supports_design_doc_inspection: True when the runtime can spawn a
+            subagent to inspect changed design docs for ADR-worthy decisions.
         str_notes: Operator-facing note about important support limitations.
     """
 
@@ -50,6 +54,8 @@ class AgentSupport:
     bool_supports_prompt_guard: bool
     bool_supports_post_compact: bool
     str_post_turn_mode: str
+    bool_supports_shard_enrichment: bool
+    bool_supports_design_doc_inspection: bool
     str_notes: str
 
 
@@ -80,6 +86,8 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_prompt_guard=True,
             bool_supports_post_compact=True,
             str_post_turn_mode="native",
+            bool_supports_shard_enrichment=True,
+            bool_supports_design_doc_inspection=True,
             str_notes="Primary runtime with the full supported hook surface.",
         ),
         AgentSupport(
@@ -98,6 +106,8 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_prompt_guard=True,
             bool_supports_post_compact=False,
             str_post_turn_mode="native",
+            bool_supports_shard_enrichment=True,
+            bool_supports_design_doc_inspection=True,
             str_notes=(
                 "Supported for SessionStart, prompt guard, and post-turn capture. "
                 "No subagent-stop or post-compact equivalent."
@@ -117,10 +127,14 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_prompt_guard=False,
             bool_supports_post_compact=False,
             str_post_turn_mode="manual wrapper only",
+            bool_supports_shard_enrichment=False,
+            bool_supports_design_doc_inspection=False,
             str_notes=(
                 "Supported for SessionStart only. Repo-local notify-wrapper "
                 "smoke tests exist, but native post-turn capture is not a "
-                "supported provisioned path."
+                "supported provisioned path. Shard enrichment and design doc "
+                "inspection are unavailable until post-turn hooks are confirmed "
+                "working in a future Codex release."
             ),
         ),
     ]
@@ -142,6 +156,8 @@ def support_summary_lines() -> list[str]:
         ("bool_supports_subagent_capture", "subagent capture"),
         ("bool_supports_prompt_guard", "prompt guard"),
         ("bool_supports_post_compact", "post-compact"),
+        ("bool_supports_shard_enrichment", "shard enrichment"),
+        ("bool_supports_design_doc_inspection", "design doc ADR inspection"),
     ]
 
     list_str_summary_lines: list[str] = []

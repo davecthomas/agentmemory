@@ -49,6 +49,7 @@ SCRIPTS = [
     "rebuild-summary.py",
     "build-catchup.py",
     "promote-adr.py",
+    "enrich-shard.py",
 ]
 
 # Adapter package files, installed under adapters/ subdirectory.

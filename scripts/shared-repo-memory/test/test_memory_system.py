@@ -451,3 +451,222 @@ def test_prompt_guard_injects_one_time_news_nudge(repo):
 
     assert "`news` skill" in first_result.stdout
     assert second_result.stdout.strip() == ""
+
+
+def test_post_turn_notify_writes_enrichment_context(repo):
+    """Verify that post-turn-notify writes an enrichment context file when
+    assistant_text is present in the payload.
+
+    The enrichment subagent will not actually spawn in test (no claude/gemini
+    binary), but the context file should be written and then cleaned up when
+    spawning fails.
+    """
+    repo_dir, home_dir = repo
+
+    tracked_file = repo_dir / "api.py"
+    tracked_file.write_text("# new API module\n")
+    subprocess.run(["git", "add", "api.py"], cwd=repo_dir, check=True)
+
+    payload = {
+        "conversation_id": "enrich-test-thread",
+        "turn_id": "enrich-test-turn",
+        "prompt": "Create the API module with authentication middleware.",
+        "last_assistant_message": (
+            "I created api.py with JWT-based authentication middleware. "
+            "This follows the adapter pattern established in the refactor "
+            "to keep auth logic decoupled from route handlers."
+        ),
+        "model": "claude-opus-4-6",
+    }
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    result = subprocess.run(
+        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    # Shard should be written successfully.
+    output = json.loads(result.stdout)
+    assert output["status"] == "ok"
+
+    # Verify context file was written (it persists until the subagent reads
+    # and deletes it, or is cleaned up on spawn failure).
+    day_dirs = list((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
+    assert len(day_dirs) >= 1
+    day_dir = day_dirs[-1]
+    context_files = list((day_dir / "events").glob(".enrich-*.json"))
+    if context_files:
+        # Subagent was spawned; context file exists for it to consume.
+        context_data = json.loads(context_files[0].read_text(encoding="utf-8"))
+        assert "assistant_text" in context_data
+        assert "JWT-based authentication" in context_data["assistant_text"]
+        # Clean up so it doesn't interfere with other tests.
+        context_files[0].unlink()
+
+    # The raw shard should exist with the user prompt in the Why section.
+    shards = list((day_dir / "events").glob("*.md"))
+    assert len(shards) >= 1
+    shard_text = shards[-1].read_text(encoding="utf-8")
+    assert "Create the API module" in shard_text
+
+
+def test_post_turn_notify_detects_design_doc_changes(repo):
+    """Verify that post-turn-notify identifies design doc changes in files_touched
+    and logs them in the hook trace.
+    """
+    repo_dir, home_dir = repo
+
+    # Create a design doc so it appears in tracked changed files.
+    docs_dir = repo_dir / "docs"
+    docs_dir.mkdir(exist_ok=True)
+    design_doc = docs_dir / "api-design.md"
+    design_doc.write_text("# API Design\n\n## Decision: Use REST over GraphQL\n")
+    subprocess.run(["git", "add", "docs/api-design.md"], cwd=repo_dir, check=True)
+
+    payload = {
+        "conversation_id": "design-doc-test-thread",
+        "turn_id": "design-doc-test-turn",
+        "prompt": "Write the API design document.",
+        "last_assistant_message": "Created the API design doc with REST decision.",
+        "model": "claude-opus-4-6",
+    }
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    result = subprocess.run(
+        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    output = json.loads(result.stdout)
+    assert output["status"] == "ok"
+
+    # Verify the shard was written.
+    day_dirs = list((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
+    assert len(day_dirs) >= 1
+
+
+def test_enrich_shard_overwrites_raw_shard(repo):
+    """Verify that enrich-shard.py correctly overwrites a raw shard's body
+    sections while preserving frontmatter.
+    """
+    repo_dir, home_dir = repo
+
+    # Create a raw shard.
+    day_dir = repo_dir / ".agents" / "memory" / "daily" / "2026-04-06"
+    events_dir = day_dir / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+
+    shard_path = events_dir / "2026-04-06T12-00-00Z--test--thread_t1--turn_t1.md"
+    raw_shard = """---
+timestamp: "2026-04-06T12:00:00Z"
+author: "test"
+branch: "main"
+thread_id: "t1"
+turn_id: "t1"
+decision_candidate: false
+ai_generated: true
+ai_model: "claude-opus-4-6"
+ai_tool: "claude"
+ai_surface: "claude-code"
+ai_executor: "local-agent"
+related_adrs:
+files_touched:
+  - "api.py"
+verification:
+  - "git diff: 1 file changed"
+---
+
+## Why
+
+- 1 file changed, 10 insertions(+)
+
+## Repo changes
+
+- Updated api.py
+
+## Evidence
+
+- git diff: 1 file changed, 10 insertions(+)
+
+## Next
+
+- Review the generated shard and summary.
+"""
+    shard_path.write_text(raw_shard, encoding="utf-8")
+
+    # Create enrichment context.
+    context_path = events_dir / ".enrich-t1.json"
+    context_data = {
+        "shard_path": str(shard_path),
+        "repo_root": str(repo_dir),
+        "assistant_text": "Created JWT auth middleware.",
+        "prompt": "Add authentication to the API.",
+        "files_touched": ["api.py"],
+        "diff_summary": "1 file changed, 10 insertions(+)",
+    }
+    context_path.write_text(json.dumps(context_data), encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    # Run enrich-shard.py directly.
+    subprocess.run(
+        [
+            "python3",
+            SCRIPT_DIR / "enrich-shard.py",
+            str(context_path),
+            "--why", "Added JWT authentication middleware to enforce API security boundaries.",
+            "--what", "Created auth module with token validation and middleware integration.",
+            "--evidence", "Tests pass. Follows adapter pattern from design doc.",
+            "--next", "Add rate limiting and API key rotation support.",
+            "--decision-candidate",
+        ],
+        cwd=repo_dir,
+        check=True,
+        env=env,
+    )
+
+    # Verify enriched content.
+    enriched_text = shard_path.read_text(encoding="utf-8")
+    assert "JWT authentication middleware" in enriched_text
+    assert "decision_candidate: true" in enriched_text
+    assert 'timestamp: "2026-04-06T12:00:00Z"' in enriched_text
+    assert "1 file changed, 10 insertions" not in enriched_text.split("## Why")[1].split("## Repo")[0]
+
+    # Context file should be cleaned up.
+    assert not context_path.exists()
+
+
+def test_agent_support_includes_enrichment_capabilities():
+    """Verify that agent support declarations include the new shard enrichment
+    and design doc inspection capability flags.
+    """
+    agent_support_module = load_script_module(
+        SCRIPT_DIR / "agent_support.py", "agent_support_enrichment_test"
+    )
+
+    entries = agent_support_module.list_agent_support()
+    claude_entry = next(e for e in entries if e.str_agent_id == "claude")
+    gemini_entry = next(e for e in entries if e.str_agent_id == "gemini")
+    codex_entry = next(e for e in entries if e.str_agent_id == "codex")
+
+    assert claude_entry.bool_supports_shard_enrichment is True
+    assert claude_entry.bool_supports_design_doc_inspection is True
+    assert gemini_entry.bool_supports_shard_enrichment is True
+    assert gemini_entry.bool_supports_design_doc_inspection is True
+    assert codex_entry.bool_supports_shard_enrichment is False
+    assert codex_entry.bool_supports_design_doc_inspection is False

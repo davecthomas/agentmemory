@@ -36,7 +36,7 @@ import sys
 from collections import OrderedDict
 from pathlib import Path
 
-from adapters import detect_adapter, detect_adapter_from_hook_event
+from adapters import ClaudeAdapter, detect_adapter, detect_adapter_from_hook_event
 from common import (
     append_hook_trace,
     author_slug,
@@ -317,6 +317,182 @@ def build_why_lines(str_prompt: str | None, str_diff_summary: str) -> list[str]:
         return list_str_why_lines  # Normal exit.
     list_str_why_lines.append("- Repo state changed during this agent turn.")
     return list_str_why_lines  # Normal exit.
+
+
+# ---------------------------------------------------------------------------
+# Design doc detection patterns
+# ---------------------------------------------------------------------------
+
+_DESIGN_DOC_PATTERNS: list[str] = [
+    "docs/",
+    "design",
+    "spec",
+    "arch",
+    "adr",
+]
+
+
+def _is_design_doc(file_path: str) -> bool:
+    """Return True if a file path looks like a design document.
+
+    Args:
+        file_path: Repo-relative file path.
+
+    Returns:
+        bool: True when the path matches any design doc pattern.
+    """
+    str_lower: str = file_path.lower()
+    return any(pattern in str_lower for pattern in _DESIGN_DOC_PATTERNS)
+
+
+# ---------------------------------------------------------------------------
+# Async subagent spawning: shard enrichment and ADR inspection
+# ---------------------------------------------------------------------------
+
+_ENRICH_SKILL_PROMPT: str = """You are a memory enrichment agent. Your job is to rewrite a raw event shard
+with semantically meaningful content.
+
+You will receive the path to a JSON context file. Read it. It contains:
+- assistant_text: the agent's response from the turn (the richest signal)
+- prompt: the user's task that drove the changes
+- files_touched: which files changed
+- diff_summary: compact git diff output
+- shard_path: the raw shard to overwrite
+- repo_root: absolute path to the repository
+
+Your task:
+1. Read the context JSON file.
+2. Distill the assistant_text and prompt into meaningful shard content.
+3. Call enrich-shard.py to overwrite the raw shard with enriched content.
+
+When calling enrich-shard.py, provide:
+- --why: 1-3 sentences about WHY this change matters architecturally. Not a restatement of the diff. Focus on intent, motivation, and significance.
+- --what: Semantic summary of what was done. Purpose and impact, not filenames.
+- --evidence: Concrete signals -- test results, design doc alignment, architectural choices made.
+- --next: Genuine follow-up work, unresolved issues, or architectural implications.
+- --decision-candidate: Include this flag ONLY if the turn involved a durable architectural decision (architecture boundaries, API contracts, tool choices, accepted tradeoffs, invariants).
+
+Example invocation:
+  python3 $HOME/.agent/shared-repo-memory/enrich-shard.py /path/to/context.json \\
+      --why "Extracted runtime-specific behavior into adapter modules to keep the core memory engine agent-neutral, following the design doc's separation of concerns." \\
+      --what "Introduced AgentAdapter protocol with concrete implementations for Claude, Gemini, and Codex. Moved payload normalization, response rendering, and hook wiring out of entrypoints into adapter modules." \\
+      --evidence "All 57 existing tests pass. Adapter pattern matches the target architecture in docs/agent-runtime-adapter-refactor-plan.md." \\
+      --next "prompt-guard.py still uses manual payload parsing. Design doc auto-generation from capability registry (step 5) not yet implemented." \\
+      --decision-candidate
+
+Keep each section concise (1-5 bullet points or sentences). Do not dump raw assistant text.
+"""
+
+
+def _open_enrichment_log(repo_root: Path) -> object:
+    """Open (or create) the enrichment log file for subprocess output.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        File handle for the enrichment log.
+    """
+    log_dir: Path = repo_root / ".agents" / "memory" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return open(log_dir / "enrichment.log", "a")  # noqa: SIM115
+
+
+def _spawn_enrichment(
+    adapter: type,
+    context_path: Path,
+    repo_root: Path,
+) -> bool:
+    """Fire-and-forget a subagent to enrich a raw shard with semantic content.
+
+    Uses the detected adapter's build_bootstrap_command() to spawn the subagent.
+    Falls back to ClaudeAdapter when the adapter cannot spawn subagents.
+
+    Args:
+        adapter: The detected runtime adapter class.
+        context_path: Absolute path to the enrichment context JSON file.
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        bool: True if a subprocess was launched, False if skipped.
+    """
+    task: str = f"Enrich the shard using context at: {context_path}"
+    cmd: list[str] | None = adapter.build_bootstrap_command(
+        _ENRICH_SKILL_PROMPT, task, repo_root
+    )
+    if cmd is None:
+        cmd = ClaudeAdapter.build_bootstrap_command(
+            _ENRICH_SKILL_PROMPT, task, repo_root
+        )
+    if cmd is None:
+        return False
+
+    log_file: object = _open_enrichment_log(repo_root)
+    try:
+        subprocess.Popen(
+            cmd,
+            cwd=str(repo_root),
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+        return True
+    except OSError:
+        warn(f"enrichment subagent launch failed for {adapter.agent_id()}")
+        return False
+
+
+def _spawn_adr_inspection(
+    adapter: type,
+    design_doc_paths: list[str],
+    repo_root: Path,
+) -> bool:
+    """Fire-and-forget a subagent to inspect design docs for ADR-worthy decisions.
+
+    Loads the adr-inspector skill and spawns the subagent via the adapter's CLI.
+
+    Args:
+        adapter: The detected runtime adapter class.
+        design_doc_paths: Repo-relative paths to changed design documents.
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        bool: True if a subprocess was launched, False if skipped.
+    """
+    skill_path: Path = Path.home() / ".agent" / "skills" / "adr-inspector" / "SKILL.md"
+    if not skill_path.exists():
+        warn("adr-inspector skill not installed; skipping design doc inspection")
+        return False
+
+    skill_content: str = skill_path.read_text(encoding="utf-8")
+    doc_list: str = "\n  ".join(design_doc_paths)
+    task: str = (
+        f"Inspect these changed design docs for ADR-worthy decisions:\n"
+        f"  {doc_list}\n"
+        f"Repo root: {repo_root}"
+    )
+
+    cmd: list[str] | None = adapter.build_bootstrap_command(
+        skill_content, task, repo_root
+    )
+    if cmd is None:
+        cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
+    if cmd is None:
+        return False
+
+    log_file: object = _open_enrichment_log(repo_root)
+    try:
+        subprocess.Popen(
+            cmd,
+            cwd=str(repo_root),
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+        return True
+    except OSError:
+        warn(f"ADR inspection subagent launch failed for {adapter.agent_id()}")
+        return False
 
 
 def _emit(adapter: type, status: str, message: str = "", **extra: object) -> None:
@@ -603,6 +779,45 @@ def main() -> int:
         repo_root,
         [shard_path.relative_to(repo_root), summary_path.relative_to(repo_root)],
     )
+
+    # --- Async Phase 2: shard enrichment via subagent ---
+    # Save enrichment context for the subagent to read, then fire-and-forget.
+    # The raw shard is already written and staged; enrichment improves it
+    # asynchronously without blocking the hook.
+    bool_enrichment_spawned: bool = False
+    assistant_text: str = req.assistant_text or ""
+    if assistant_text or prompt:
+        context_data: dict[str, object] = {
+            "shard_path": str(shard_path),
+            "repo_root": str(repo_root),
+            "assistant_text": assistant_text[:8000],
+            "prompt": prompt or "",
+            "files_touched": files_touched,
+            "diff_summary": diff_summary,
+        }
+        context_filename: str = f".enrich-{turn_id}.json"
+        context_path: Path = events_dir / context_filename
+        try:
+            write_text(context_path, json.dumps(context_data, indent=2, sort_keys=True) + "\n")
+            bool_enrichment_spawned = _spawn_enrichment(adapter, context_path, repo_root)
+            if bool_enrichment_spawned:
+                info(f"spawned enrichment subagent for {shard_path.name}")
+            elif context_path.exists():
+                # No subagent CLI available; clean up context file.
+                context_path.unlink(missing_ok=True)
+        except OSError as error:
+            warn(f"failed to write enrichment context: {error}")
+
+    # --- Async Phase 2b: design doc ADR inspection ---
+    # When the turn touched design docs, spawn a separate subagent to inspect
+    # them for ADR-worthy decisions.  Independent of shard enrichment.
+    design_docs: list[str] = [path for path in files_touched if _is_design_doc(path)]
+    bool_inspection_spawned: bool = False
+    if design_docs:
+        bool_inspection_spawned = _spawn_adr_inspection(adapter, design_docs, repo_root)
+        if bool_inspection_spawned:
+            info(f"spawned ADR inspection subagent for {len(design_docs)} design doc(s)")
+
     append_hook_trace(
         "Notify",
         "success",
@@ -614,6 +829,9 @@ def main() -> int:
             "summary_path": str(summary_path.relative_to(repo_root)),
             "thread_id": thread_id,
             "turn_id": turn_id,
+            "enrichment_spawned": bool_enrichment_spawned,
+            "adr_inspection_spawned": bool_inspection_spawned,
+            "design_docs_touched": design_docs,
         },
     )
     info(f"wrote {shard_path.relative_to(repo_root)}")
