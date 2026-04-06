@@ -36,7 +36,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+from adapters import ClaudeAdapter, detect_adapter
 from common import append_hook_trace, load_json, safe_main, warn
+from models import SessionResponse
 
 # Expected relative target for the .codex/memory -> .agents/memory symlink.
 # bootstrap-repo.sh creates this symlink; session-start.py validates it.
@@ -59,31 +61,21 @@ def emit_session_response(
     *,
     continue_session: bool = True,
 ) -> None:
-    """Print a SessionStart hook response in the schema accepted by all agents.
-
-    Claude Code, Codex CLI, and Gemini CLI all use the same hookSpecificOutput
-    schema for SessionStart responses, with additionalProperties: false.  Only
-    the fields below are permitted; any extra fields cause the hook to be
-    rejected with "invalid session start JSON output".
+    """Print a SessionStart hook response using the detected runtime adapter.
 
     Args:
         system_message: Short status text shown in the agent UI.
         additional_context: Memory text injected into the model context before
             the first turn.  Empty string omits the field.
         continue_session: When False, signals the agent to abort the session.
-            Use only for hard errors that make the session unusable.
     """
-    payload: dict[str, object] = {
-        "systemMessage": system_message,
-    }
-    if not continue_session:
-        payload["continue"] = False
-    if additional_context:
-        payload["hookSpecificOutput"] = {
-            "hookEventName": "SessionStart",
-            "additionalContext": additional_context,
-        }
-    print(json.dumps(payload, sort_keys=True))
+    adapter = detect_adapter()
+    resp = SessionResponse(
+        system_message=system_message,
+        additional_context=additional_context,
+        continue_session=continue_session,
+    )
+    print(adapter.render_session_response(resp))
 
 
 def load_toml(path: Path) -> dict:
@@ -350,28 +342,8 @@ def _open_bootstrap_log(repo_root: Path):
     return open(log_dir / "bootstrap.log", "a")  # noqa: SIM115
 
 
-def _detect_agent() -> str:
-    """Return the active agent identifier string.
-
-    Uses environment variables set by each agent runtime:
-      CLAUDECODE=1   -- Claude Code (most reliable signal)
-      GEMINI_CLI=1   -- Gemini CLI
-    Falls back to "claude" so that Codex sessions also attempt claude -p.
-    """
-    if os.environ.get("CLAUDECODE"):
-        return "claude"
-    if os.environ.get("GEMINI_CLI"):
-        return "gemini"
-    return "claude"
-
-
 def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
-    """Spawn a claude -p subagent (or gemini equivalent) to run memory bootstrap.
-
-    This replaces the old auto-bootstrap.py approach which required ANTHROPIC_API_KEY
-    in the hook environment -- an env var Claude Code does not expose to hooks because
-    it uses keychain auth instead.  Spawning ``claude -p`` inherits the running Claude
-    Code process's auth automatically, so no API key is needed.
+    """Spawn a subagent to run memory bootstrap using the detected runtime adapter.
 
     The subagent receives the full SKILL.md content as its system prompt and a short
     user message as the task.  It runs with a clean context (no conversation history),
@@ -379,9 +351,9 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
     instructions are injected into the main agent's context.
 
     Falls back to the legacy auto-bootstrap.py script when:
-      - The claude (or gemini) binary is not on PATH, or
-      - The SKILL.md file is not installed, or
-      - Running under Gemini and the ``gemini --prompt`` flag is unavailable.
+      - The adapter returns None for the bootstrap command, or
+      - The runtime binary is not on PATH, or
+      - The SKILL.md file is not installed.
 
     Returns True if a process was launched, False if skipped.
     """
@@ -389,47 +361,34 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
         return False
 
     skill_path = Path.home() / ".agent" / "skills" / "memory-bootstrap" / "SKILL.md"
-    agent = _detect_agent()
+    adapter = detect_adapter()
 
     if skill_path.exists():
         skill_content = skill_path.read_text(encoding="utf-8")
-        log_file = _open_bootstrap_log(repo_root)
         task = "Bootstrap shared repo memory from recent commits and design docs."
-        if agent == "gemini":
-            cmd = [
-                "gemini",
-                "--prompt",
-                task,
-                "--system-prompt",
-                skill_content,
-            ]
-        else:
-            # claude -p: non-interactive print mode; inherits Claude Code auth.
-            cmd = [
-                "claude",
-                "-p",
-                "--system",
-                skill_content,
-                "--cwd",
-                str(repo_root),
-                task,
-            ]
-        try:
-            subprocess.Popen(
-                cmd,
-                cwd=str(repo_root),
-                stdout=log_file,
-                stderr=log_file,
-                start_new_session=True,
-            )
-            return True
-        except OSError:
-            # Binary launch failed - release the lock before trying the legacy fallback.
-            warn(
-                f"SessionStart: {agent} CLI launch failed; falling back to auto-bootstrap.py"
-            )
-            log_file.close()
-            _release_lock(repo_root)
+        cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
+
+        # Codex cannot spawn subagents; fall back to Claude CLI for bootstrap.
+        if cmd is None:
+            cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
+
+        if cmd is not None:
+            log_file = _open_bootstrap_log(repo_root)
+            try:
+                subprocess.Popen(
+                    cmd,
+                    cwd=str(repo_root),
+                    stdout=log_file,
+                    stderr=log_file,
+                    start_new_session=True,
+                )
+                return True
+            except OSError:
+                warn(
+                    f"SessionStart: {adapter.agent_id()} CLI launch failed; falling back to auto-bootstrap.py"
+                )
+                log_file.close()
+                _release_lock(repo_root)
 
     # Legacy fallback: auto-bootstrap.py via direct API call (requires ANTHROPIC_API_KEY).
     _release_lock(repo_root)

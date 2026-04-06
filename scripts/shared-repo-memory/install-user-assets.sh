@@ -314,13 +314,13 @@ do
   fi
 done
 
-# Initialise refresh state file if absent (session-start.py requires it to exist).
+# Initialize refresh state file if absent (session-start.py requires it to exist).
 refresh_state="$HOME/.agent/state/shared_asset_refresh_state.json"
 if [ "$DRY_RUN" = true ]; then
-  log "[DRY-RUN] would initialise refresh state at $refresh_state"
+  log "[DRY-RUN] would initialize refresh state at $refresh_state"
 elif [ ! -f "$refresh_state" ]; then
   echo '{}' > "$refresh_state"
-  log "initialised refresh state at $refresh_state"
+  log "initialized refresh state at $refresh_state"
 fi
 
 # Install skills from the repo's skills/ directory.

@@ -79,9 +79,9 @@ Your task: analyze the repository context (recent commits and design-like docs)
 and identify the 3–7 most important durable architectural decisions.
 
 Selection criteria:
-- Favour: architecture boundaries, canonical data sources, API contracts,
+- Favor: architecture boundaries, canonical data sources, API contracts,
   tool/dependency choices, output conventions, invariants, accepted tradeoffs.
-- Reject: tasks, rollout sequencing, local optimisations, implementation trivia.
+- Reject: tasks, rollout sequencing, local optimizations, implementation trivia.
 - Cluster related commits/docs into one decision family rather than one shard
   per paragraph or commit.
 
@@ -234,7 +234,7 @@ def _call_api(context: str, api_key: str) -> dict:
                 {
                     "role": "user",
                     "content": (
-                        "Please analyse this repository context and produce the memory "
+                        "Please analyze this repository context and produce the memory "
                         "bootstrap JSON.\n\n" + context
                     ),
                 }
