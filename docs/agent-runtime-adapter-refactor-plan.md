@@ -100,6 +100,136 @@ The refactor should not change:
 
 Those are product contracts, not runtime adapter details.
 
+## Shard quality: two-phase enrichment via subagent
+
+### Problem
+
+Event shards produced by `post-turn-notify.py` are mechanically generated from `git diff` output and regex pattern matching. The resulting content restates what is already visible in the commit history and provides no architectural insight, no reasoning about *why* changes matter, and no useful context for future agents or developers. The `assistant_text` field is extracted from every hook payload but never used.
+
+Regex-based extraction cannot produce semantic understanding. Only an LLM can distill an agent's reasoning into meaningful, durable memory.
+
+### Architecture: two-phase shard write
+
+**Phase 1 (synchronous, in Stop/AfterAgent hook):** Write a raw shard with mechanical data (frontmatter, files_touched, user prompt) and save an enrichment context file containing assistant_text, prompt, diff summary, and shard path. Return immediately with zero added latency.
+
+**Phase 2 (async, fire-and-forget):** Spawn a subagent via the detected adapter's CLI as a background subprocess. The subagent reads the enrichment context, produces semantically enriched shard content, and overwrites the shard in place. Then rebuilds the daily summary and deletes the ephemeral context file.
+
+### Multi-runtime subagent enrichment
+
+Enrichment uses `adapter.build_bootstrap_command()` with the same fallback chain as memory bootstrap:
+
+| Runtime | Subagent command | Auth | Status |
+|---------|-----------------|------|--------|
+| Claude Code | `claude -p --system <skill> --cwd <repo> <task>` | Keychain/OAuth | Full support |
+| Gemini CLI | `gemini --prompt <task> --system-prompt <skill>` | Gemini auth | Full support |
+| Codex CLI | Falls back to Claude CLI | Keychain/OAuth | Degraded -- post-turn hooks not reliably firing as of Codex release 117; revisit when a future release improves hook support |
+
+When the detected adapter returns `None` from `build_bootstrap_command()`, the system falls back to `ClaudeAdapter.build_bootstrap_command()` before giving up.
+
+### What the enrichment subagent produces
+
+The subagent replaces the four body sections of the raw shard:
+
+- **Why**: 1-3 sentences distilling user intent and agent reasoning into *why this change matters* architecturally. Not a restatement of the diff.
+- **What changed**: Semantic summary of what was done -- purpose and impact, not filenames.
+- **Evidence**: Concrete signals -- test results, design doc alignment, specific architectural choices made.
+- **Next**: Genuine follow-up work, unresolved issues, or architectural implications.
+
+Frontmatter is preserved exactly. Only body sections change.
+
+### Graceful degradation
+
+- No subagent CLI available: raw shard stands (today's quality, no worse).
+- Enrichment subprocess fails or crashes: raw shard is untouched.
+- Empty assistant_text (Codex manual wrapper, truncated payloads): enrich from diff + prompt only, or skip enrichment entirely.
+- Summary is rebuilt twice (once after raw write, once after enrichment). Rebuild is deterministic and idempotent.
+
+### Enrichment-based decision candidate detection
+
+The current `decision_candidate()` function in `post-turn-notify.py` uses a regex gate:
+
+    pattern = r"\b(decision|policy|contract|standard|repo rule|adr|must read|governing)\b"
+
+This never fires in practice because developers do not narrate their architectural choices with these keywords during normal work. After four days of active development including a major platform refactor, zero shards were flagged as decision candidates.
+
+The enrichment subagent replaces this. When enriching a shard, the subagent evaluates whether the turn involved an architectural decision and sets `decision_candidate: true` or `false` in the enriched shard. The raw shard defaults to `false` as a safe pre-enrichment value.
+
+### Design constraints
+
+- No external API keys required. Subagent CLIs use their own auth (keychain, OAuth).
+- No latency added to the hook. Enrichment is fully asynchronous.
+- One enrichment attempt per shard. No retry loops.
+- Enrichment context files are ephemeral (dot-prefixed, deleted after use, never committed).
+- Adding a new runtime adapter automatically gets enrichment support through the adapter protocol.
+
+## ADR promotion: design doc inspection
+
+### Problem
+
+Design docs are the richest source of ADR-worthy decisions, but nothing inspects them. The existing ADR promotion pipeline depends entirely on event shards being flagged `decision_candidate: true`, which requires the regex gate described above. Since that gate never fires, no ADRs are ever promoted from live work. All six existing ADRs came from bootstrap.
+
+Even if the shard enrichment fix resolves the `decision_candidate` detection problem for turn-level work, it misses the most important ADR source: design docs themselves. When an agent writes or updates a document like `docs/agent-runtime-adapter-refactor-plan.md`, the decisions recorded there should be inspected for ADR promotion independently of the event shard pipeline.
+
+### Architecture: design doc ADR inspection
+
+When `post-turn-notify.py` detects that `files_touched` includes a design doc (matching patterns such as `docs/*`, `*design*`, `*spec*`, `*arch*`, `*adr*`), it spawns a separate async subagent task in addition to normal shard writing and enrichment.
+
+#### Skill: `adr-inspector`
+
+The inspection subagent is driven by a new skill installed at `~/.agent/skills/adr-inspector/SKILL.md`. The skill file serves as the system prompt for the subagent, following the same pattern as `memory-bootstrap`.
+
+`post-turn-notify.py` spawns the subagent via `adapter.build_bootstrap_command(skill_content, task, repo_root)` where:
+- `skill_content` is the contents of `adr-inspector/SKILL.md`
+- `task` identifies the changed design doc paths and the repo root
+
+The skill instructs the subagent to:
+
+1. Read the changed design doc(s) at the paths provided in the task.
+2. Read the existing ADR index (`.agents/memory/adr/INDEX.md`) and existing ADR files to understand what decisions are already captured.
+3. Identify decisions in the design doc that are ADR-worthy but not yet recorded.
+4. For each new decision: write a decision-candidate shard under `.agents/memory/daily/<today>/events/` with `decision_candidate: true` and rich semantic content derived from the design doc.
+5. Call `promote-adr.py` to promote each candidate shard to a full ADR.
+6. Stage the new shard(s) and ADR file(s) via `git add`.
+
+The skill source file lives in the repo at `skills/adr-inspector/SKILL.md` and is installed to `~/.agent/skills/adr-inspector/` by `install.py`, with per-agent symlinks under `~/.claude/skills/`, `~/.gemini/skills/`, and `~/.codex/skills/` (same installation pattern as all other skills).
+
+#### Trigger and independence
+
+Design doc inspection runs independently of shard enrichment. A single turn that changes a design doc fires both processes: shard enrichment (for the turn's own shard) and design doc inspection (for ADR candidates found in the document). The two subagent processes do not coordinate; they write to different files and do not conflict.
+
+### What makes a decision ADR-worthy
+
+The inspection subagent uses the same selection criteria proven by `auto-bootstrap.py`:
+
+Favor:
+- architecture boundaries and layer separation
+- canonical data sources and ownership
+- API contracts and interface decisions
+- tool and dependency choices with rationale
+- output conventions and format standards
+- accepted tradeoffs with explicit reasoning
+- invariants and constraints
+
+Reject:
+- tasks and rollout sequencing
+- local optimizations without systemic impact
+- implementation trivia
+
+### Multi-runtime support
+
+Design doc inspection uses the same `adapter.build_bootstrap_command()` pattern and fallback chain as shard enrichment and memory bootstrap.
+
+### Relationship to existing ADR promotion
+
+ADR-0005 established that ADR promotion is always explicit and separate from post-turn capture. Design doc inspection respects this boundary: it creates decision-candidate shards and promotes them through the existing `promote-adr.py` pathway rather than writing ADR files directly. The promotion step remains auditable and traceable through the shard-to-ADR link.
+
+## New files introduced by these changes
+
+| File | Purpose |
+|------|---------|
+| `scripts/shared-repo-memory/enrich-shard.py` | Standalone enrichment script invoked by subagent to rewrite raw shard body sections |
+| `skills/adr-inspector/SKILL.md` | Skill defining the system prompt for the design doc ADR inspection subagent |
+
 ## Suggested migration sequence
 
 1. Extract the capability registry into the shared core.
@@ -108,3 +238,8 @@ Those are product contracts, not runtime adapter details.
 4. Move payload parsing and hook response rendering into per-agent adapter modules.
 5. Convert docs and doctor output to render from the capability registry.
 6. Add adapter-specific test suites before removing the old mixed logic.
+7. Add two-phase shard enrichment via subagent to post-turn-notify.py.
+8. Replace regex-based decision candidate detection with enrichment-based semantic evaluation.
+9. Create `skills/adr-inspector/SKILL.md` and add design doc ADR inspection as an async subagent task triggered by design doc changes in post-turn-notify.py.
+10. Add shard enrichment and design doc inspection capability flags to agent_support.py.
+11. Update install.py to install enrich-shard.py and the adr-inspector skill.
