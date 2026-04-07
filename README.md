@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.2.6`
+Current version: `0.2.7`
 
 ---
 
@@ -35,8 +35,8 @@ Coding agents are productive inside a single session and fragile across time. Te
 │   │       ├── events/      # immutable event shards
 │   │       └── summary.md   # derived daily summary
 │   └── pending/             # local-only raw shard staging area (gitignored)
-├── .githooks/
-│   └── pre-commit           # blocks commits of pending/raw shards
+├── .githooks/               # generated repo-local hooks (gitignored)
+│   └── pre-commit           # blocks pending/raw shards, then runs optional project checks
 └── .codex/
     └── memory -> ../.agents/memory   # Codex access path (symlink)
 
@@ -108,7 +108,7 @@ The installer:
 
 ### After installation
 
-Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs required `.gitignore` entries when new local-only paths are introduced by an install upgrade, and restores the repo-local `pre-commit` guard when hook wiring drifts.
+Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs the agentmemory-managed `.gitignore` block when local-only paths change, and restores the generated repo-local hook files when hook wiring drifts. Generated hook files include a provenance header so developers can see that agentmemory created them, and the generated `pre-commit` hook delegates to `scripts/shared-repo-memory/project-pre-commit.sh` when a repo wants tracked project-specific checks such as linting or tests.
 
 ---
 

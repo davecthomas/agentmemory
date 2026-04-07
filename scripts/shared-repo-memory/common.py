@@ -47,14 +47,24 @@ SECTION_ALIASES = {
     "Repo changes": "What changed",
 }
 
+# Shared repo-memory system version embedded into generated repo-local artifacts.
+SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.2.7"
+
 # Repo-local state that must be ignored because it is derived or workstation-only.
 # bootstrap-repo.py appends these to each wired repository's .gitignore, and
 # session-start.py validates them so newly installed ignore rules are repaired.
+GITHOOKS_RELATIVE_DIR: str = ".githooks"
 PENDING_SHARDS_RELATIVE_DIR: str = ".agents/memory/pending"
 MEMORY_LOGS_RELATIVE_DIR: str = ".agents/memory/logs"
+PROJECT_PRE_COMMIT_RELATIVE_PATH: str = (
+    "scripts/shared-repo-memory/project-pre-commit.sh"
+)
 
 REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
-    "# Agent local state (never committed)",
+    "# agentmemory-managed local repo wiring and state",
+    "# Added by the shared repo-memory SessionStart/bootstrap flow.",
+    "# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.",
+    f"{GITHOOKS_RELATIVE_DIR}/",
     ".codex/local/",
     ".claude/local/",
     ".claude/settings.local.json",

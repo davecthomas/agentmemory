@@ -29,13 +29,14 @@ env/
 htmlcov/
 .tox/
 
-# Local state (never committed -- agent catch-up digests and debug payloads)
+# agentmemory-managed local repo wiring and state
+# Added by the shared repo-memory SessionStart/bootstrap flow.
+# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.
+.githooks/
 .codex/local/
 .claude/local/
 .claude/settings.local.json
 .agents/memory/pending/
-
-# Enrichment subagent logs (local debug output, never committed)
 .agents/memory/logs/
 
 # Environment variables (may contain secrets)
