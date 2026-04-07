@@ -35,13 +35,17 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import TextIO
 
 from adapters import ClaudeAdapter, detect_adapter
 from common import (
     append_hook_trace,
+    format_log_prefix,
     load_json,
     missing_gitignore_entries,
+    runtime_provider_version,
     safe_main,
+    set_runtime_log_context,
     warn,
 )
 from models import SessionResponse
@@ -77,6 +81,7 @@ def emit_session_response(
         continue_session: When False, signals the agent to abort the session.
     """
     adapter = detect_adapter()
+    set_runtime_log_context(adapter.agent_id())
     resp = SessionResponse(
         system_message=system_message,
         additional_context=additional_context,
@@ -355,7 +360,7 @@ def _release_lock(repo_root: Path) -> None:
     lock.unlink(missing_ok=True)
 
 
-def _open_bootstrap_log(repo_root: Path):
+def _open_bootstrap_log(repo_root: Path) -> TextIO:
     """Open (or create) the bootstrap log file and return the file object."""
     log_dir = repo_root / ".agents" / "memory" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -387,25 +392,42 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
         skill_content = skill_path.read_text(encoding="utf-8")
         task = "Bootstrap shared repo memory from recent commits and design docs."
         cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
+        str_launcher_agent_id: str = adapter.agent_id()
 
         # Codex cannot spawn subagents; fall back to Claude CLI for bootstrap.
         if cmd is None:
             cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
+            str_launcher_agent_id = ClaudeAdapter.agent_id()
 
         if cmd is not None:
-            log_file = _open_bootstrap_log(repo_root)
+            str_launcher_provider_version: str = runtime_provider_version(
+                str_launcher_agent_id
+            )
+            log_file: TextIO = _open_bootstrap_log(repo_root)
             try:
+                log_file.write(
+                    f"{format_log_prefix(str_launcher_agent_id, str_launcher_provider_version)} "
+                    f"starting bootstrap via {cmd[0]}\n"
+                )
+                log_file.flush()
                 subprocess.Popen(
                     cmd,
                     cwd=str(repo_root),
                     stdout=log_file,
                     stderr=log_file,
+                    env={
+                        **os.environ,
+                        "SHARED_REPO_MEMORY_AGENT_ID": str_launcher_agent_id,
+                        "SHARED_REPO_MEMORY_PROVIDER_VERSION": (
+                            str_launcher_provider_version
+                        ),
+                    },
                     start_new_session=True,
                 )
                 return True
             except OSError:
                 warn(
-                    f"SessionStart: {adapter.agent_id()} CLI launch failed; falling back to auto-bootstrap.py"
+                    f"SessionStart: {str_launcher_agent_id} CLI launch failed; falling back to auto-bootstrap.py"
                 )
                 log_file.close()
                 _release_lock(repo_root)
@@ -455,6 +477,9 @@ def main() -> int:
     Returns:
         int: 0 on success or graceful noop; 1 on error.
     """
+    adapter = detect_adapter()
+    set_runtime_log_context(adapter.agent_id())
+
     # Read and discard the stdin payload -- SessionStart does not consume it,
     # but we parse it here so malformed JSON surfaces as a visible warning rather
     # than a silent truncation error later.

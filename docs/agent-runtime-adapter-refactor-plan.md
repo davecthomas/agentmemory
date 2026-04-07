@@ -120,7 +120,7 @@ Enrichment uses `adapter.build_bootstrap_command()` with the same fallback chain
 
 | Runtime | Subagent command | Auth | Status |
 |---------|-----------------|------|--------|
-| Claude Code | `claude -p --system <skill> --cwd <repo> <task>` | Keychain/OAuth | Full support |
+| Claude Code | `claude -p --system-prompt <skill> --cwd <repo> <task>` | Keychain/OAuth | Full support |
 | Gemini CLI | `gemini --prompt <task> --system-prompt <skill>` | Gemini auth | Full support |
 | Codex CLI | Falls back to Claude CLI | Keychain/OAuth | Degraded -- post-turn hooks not reliably firing as of Codex release 117; revisit when a future release improves hook support |
 

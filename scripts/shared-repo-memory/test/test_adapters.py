@@ -31,6 +31,12 @@ from adapters import (  # noqa: E402
     detect_adapter,
     detect_adapter_from_hook_event,
 )
+from common import (  # noqa: E402
+    append_hook_trace,
+    clear_runtime_log_context,
+    format_log_prefix,
+    set_runtime_log_context,
+)
 from models import HookResponse, SessionResponse  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -314,7 +320,7 @@ class TestBuildBootstrapCommand:
         assert cmd is not None
         assert cmd[0] == "claude"
         assert "-p" in cmd
-        assert "--system" in cmd
+        assert "--system-prompt" in cmd
         assert "skill text" in cmd
         assert str(Path("/repo")) in cmd
         assert "Bootstrap." in cmd
@@ -333,3 +339,28 @@ class TestBuildBootstrapCommand:
             "skill text", "Bootstrap.", Path("/repo")
         )
         assert cmd is None
+
+
+class TestRuntimeLogMetadata:
+    def teardown_method(self):
+        clear_runtime_log_context()
+
+    def test_format_log_prefix_uses_explicit_context(self):
+        set_runtime_log_context("codex", "0.118.0")
+        assert (
+            format_log_prefix() == "[shared-repo-memory][agent=codex][version=0.118.0]"
+        )
+
+    def test_append_hook_trace_includes_runtime_metadata(self, tmp_path: Path):
+        with patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
+            set_runtime_log_context("gemini", "0.36.0")
+            append_hook_trace("Notify", "success")
+
+        trace_path: Path = (
+            tmp_path / ".agent" / "state" / "shared-repo-memory-hook-trace.jsonl"
+        )
+        payload: dict[str, object] = json.loads(
+            trace_path.read_text(encoding="utf-8").splitlines()[0]
+        )
+        assert payload["agent"] == "gemini"
+        assert payload["provider_version"] == "0.36.0"

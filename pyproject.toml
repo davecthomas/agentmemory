@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "agentmemory"
-version = "0.2.5"
+version = "0.2.6"
 description = "Collaborative shared repo memory for fast-moving software work — helps people, agents, and teams stay aligned by capturing why decisions were made, what changed, and what comes next in plain Markdown in Git."
 package-mode = false
 

@@ -33,11 +33,13 @@ from pathlib import Path
 
 from adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, InstallerContext
 from agent_support import support_summary_lines
+from common import format_log_prefix
 
 # Scripts copied verbatim from scripts/shared-repo-memory/ into ~/.agent/shared-repo-memory/.
 # The order here is for readability; installation processes them in sequence.
 SCRIPTS = [
     "common.py",
+    "runtime-log-prefix.sh",
     "models.py",
     "agent_support.py",
     "bootstrap-repo.py",
@@ -110,12 +112,12 @@ def print_banner(version: str) -> None:
 
 
 def log(message: str) -> None:
-    """Print a prefixed log message to stdout.
+    """Print an installer log line with runtime metadata.
 
     Args:
         message: Human-readable message text.
     """
-    print(f"[shared-repo-memory] {message}")
+    print(f"{format_log_prefix()} {message}")
 
 
 class Installer:

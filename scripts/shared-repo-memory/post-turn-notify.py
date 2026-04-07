@@ -35,11 +35,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
+from typing import TextIO
 
 from adapters import ClaudeAdapter, detect_adapter, detect_adapter_from_hook_event
 from common import (
@@ -52,9 +54,12 @@ from common import (
     ensure_dir,
     find_first,
     flatten_strings,
+    format_log_prefix,
     info,
     render_frontmatter,
+    runtime_provider_version,
     safe_main,
+    set_runtime_log_context,
     try_repo_root,
     utc_now,
     utc_timestamp,
@@ -496,7 +501,7 @@ def _is_design_doc(file_path: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _open_enrichment_log(repo_root: Path) -> object:
+def _open_enrichment_log(repo_root: Path) -> TextIO:
     """Open (or create) the enrichment log file for subprocess output.
 
     Args:
@@ -525,6 +530,90 @@ def _enrichment_context_dir(repo_root: Path) -> Path:
     return path_context_dir
 
 
+def _resolve_bootstrap_command(
+    adapter: type,
+    skill_content: str,
+    task: str,
+    repo_root: Path,
+) -> tuple[list[str] | None, str, str]:
+    """Resolve the concrete CLI command and runtime metadata for a subagent.
+
+    Args:
+        adapter: Requested runtime adapter for the current hook invocation.
+        skill_content: Full skill instructions provided to the subagent CLI.
+        task: User task string passed to the spawned subagent.
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        tuple[list[str] | None, str, str]: The CLI command to execute, the
+            launcher agent id, and the launcher provider version. When no
+            launch path exists, the command element is None and the metadata is
+            set to "unknown".
+    """
+    list_str_cmd: list[str] | None = adapter.build_bootstrap_command(
+        skill_content, task, repo_root
+    )
+    str_launcher_agent_id: str = adapter.agent_id()
+    if list_str_cmd is None:
+        list_str_cmd = ClaudeAdapter.build_bootstrap_command(
+            skill_content, task, repo_root
+        )
+        str_launcher_agent_id = ClaudeAdapter.agent_id()
+    if list_str_cmd is None:
+        return None, "unknown", "unknown"
+
+    str_launcher_provider_version: str = runtime_provider_version(str_launcher_agent_id)
+    return list_str_cmd, str_launcher_agent_id, str_launcher_provider_version
+
+
+def _subagent_env(
+    str_launcher_agent_id: str, str_launcher_provider_version: str
+) -> dict[str, str]:
+    """Build environment overrides for spawned enrichment-related subprocesses.
+
+    Args:
+        str_launcher_agent_id: Runtime that is launching the subagent, such as
+            "claude" or "gemini".
+        str_launcher_provider_version: Resolved CLI version for the launcher.
+
+    Returns:
+        dict[str, str]: Copy of os.environ plus explicit shared-memory runtime
+            metadata consumed by common.py log helpers in descendant processes.
+    """
+    dict_env: dict[str, str] = dict(os.environ)
+    dict_env["SHARED_REPO_MEMORY_AGENT_ID"] = str_launcher_agent_id
+    dict_env["SHARED_REPO_MEMORY_PROVIDER_VERSION"] = str_launcher_provider_version
+    return dict_env
+
+
+def _write_subagent_log_header(
+    log_file: TextIO,
+    *,
+    str_action: str,
+    str_launcher_agent_id: str,
+    str_launcher_provider_version: str,
+    cmd: list[str],
+) -> None:
+    """Write a prefixed header to enrichment.log before launching a subagent.
+
+    Args:
+        log_file: Open enrichment log file handle.
+        str_action: Short action label such as "enrichment" or "ADR inspection".
+        str_launcher_agent_id: Runtime used to launch the subagent.
+        str_launcher_provider_version: Resolved CLI version for that runtime.
+        cmd: Full subprocess command that will be executed.
+
+    Returns:
+        None: One header line is appended and flushed to the log file.
+    """
+    str_command_name: str = cmd[0] if cmd else "unknown"
+    str_prefix: str = format_log_prefix(
+        str_launcher_agent_id, str_launcher_provider_version
+    )
+    log_file.write(f"{str_prefix} starting {str_action} via {str_command_name}\n")
+    log_file.flush()
+
+
 def _spawn_enrichment(
     adapter: type,
     context_path: Path,
@@ -550,26 +639,34 @@ def _spawn_enrichment(
 
     skill_content: str = skill_path.read_text(encoding="utf-8")
     task: str = f"Enrich the shard using context at: {context_path}"
-    cmd: list[str] | None = adapter.build_bootstrap_command(
-        skill_content, task, repo_root
-    )
-    if cmd is None:
-        cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
+    (
+        cmd,
+        str_launcher_agent_id,
+        str_launcher_provider_version,
+    ) = _resolve_bootstrap_command(adapter, skill_content, task, repo_root)
     if cmd is None:
         return False
 
-    log_file: object = _open_enrichment_log(repo_root)
+    log_file: TextIO = _open_enrichment_log(repo_root)
     try:
+        _write_subagent_log_header(
+            log_file,
+            str_action="enrichment",
+            str_launcher_agent_id=str_launcher_agent_id,
+            str_launcher_provider_version=str_launcher_provider_version,
+            cmd=cmd,
+        )
         subprocess.Popen(
             cmd,
             cwd=str(repo_root),
             stdout=log_file,
             stderr=log_file,
+            env=_subagent_env(str_launcher_agent_id, str_launcher_provider_version),
             start_new_session=True,
         )
         return True
     except OSError:
-        warn(f"enrichment subagent launch failed for {adapter.agent_id()}")
+        warn(f"enrichment subagent launch failed for {str_launcher_agent_id}")
         return False
     finally:
         log_file.close()
@@ -605,26 +702,34 @@ def _spawn_adr_inspection(
         f"Repo root: {repo_root}"
     )
 
-    cmd: list[str] | None = adapter.build_bootstrap_command(
-        skill_content, task, repo_root
-    )
-    if cmd is None:
-        cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
+    (
+        cmd,
+        str_launcher_agent_id,
+        str_launcher_provider_version,
+    ) = _resolve_bootstrap_command(adapter, skill_content, task, repo_root)
     if cmd is None:
         return False
 
-    log_file: object = _open_enrichment_log(repo_root)
+    log_file: TextIO = _open_enrichment_log(repo_root)
     try:
+        _write_subagent_log_header(
+            log_file,
+            str_action="ADR inspection",
+            str_launcher_agent_id=str_launcher_agent_id,
+            str_launcher_provider_version=str_launcher_provider_version,
+            cmd=cmd,
+        )
         subprocess.Popen(
             cmd,
             cwd=str(repo_root),
             stdout=log_file,
             stderr=log_file,
+            env=_subagent_env(str_launcher_agent_id, str_launcher_provider_version),
             start_new_session=True,
         )
         return True
     except OSError:
-        warn(f"ADR inspection subagent launch failed for {adapter.agent_id()}")
+        warn(f"ADR inspection subagent launch failed for {str_launcher_agent_id}")
         return False
     finally:
         log_file.close()
@@ -657,6 +762,7 @@ def main() -> int:
         int: 0 on success or graceful noop; 1 on hard error.
     """
     args = parse_args()
+    set_runtime_log_context(detect_adapter().agent_id())
     payload_text = sys.stdin.read()
     try:
         payload = json.loads(payload_text or "{}")
@@ -670,6 +776,7 @@ def main() -> int:
     # Detect the adapter from the hook event in the payload.
     hook_event = find_first(payload, {"hook_event_name", "hookEventName"}) or ""
     adapter = detect_adapter_from_hook_event(hook_event)
+    set_runtime_log_context(adapter.agent_id())
 
     # Normalize the payload into a canonical request.
     req = adapter.normalize_hook_request(payload)

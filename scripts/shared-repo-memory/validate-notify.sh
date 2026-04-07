@@ -21,8 +21,14 @@
 #   1 -- validation failed; no new pending shard was created (check hook trace log)
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+log_prefix="$("$script_dir/runtime-log-prefix.sh")"
+
+log() {
+  echo "$log_prefix $*"
+}
 
 today="$(date +%F)"
 
@@ -50,11 +56,11 @@ if [ -d ".agents/memory/pending/$today" ]; then
 fi
 
 if [ "$after_count" -le "$before_count" ]; then
-  echo "[shared-repo-memory] notify-wrapper validation did not create a new pending shard" >&2
-  echo "[shared-repo-memory] check: do you have uncommitted tracked changes? (git status)" >&2
-  echo "[shared-repo-memory] check: tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl" >&2
+  log "notify-wrapper validation did not create a new pending shard" >&2
+  log "check: do you have uncommitted tracked changes? (git status)" >&2
+  log "check: tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl" >&2
   exit 1
 fi
 
-echo "[shared-repo-memory] notify-wrapper validation succeeded"
-echo "[shared-repo-memory] this confirms the manual wrapper path only; durable publication still requires enrichment"
+log "notify-wrapper validation succeeded"
+log "this confirms the manual wrapper path only; durable publication still requires enrichment"

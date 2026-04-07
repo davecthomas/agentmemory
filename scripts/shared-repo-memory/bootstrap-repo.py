@@ -37,6 +37,7 @@ from pathlib import Path
 from common import (
     REQUIRED_GITIGNORE_ENTRIES,
     ensure_dir,
+    format_log_prefix,
     missing_gitignore_entries,
     safe_main,
     try_repo_root,
@@ -88,14 +89,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def log(message: str, *, dry_run: bool = False) -> None:
-    """Print a prefixed log message to stdout.
+    """Print a repo-bootstrap log line with runtime metadata.
 
     Args:
         message: Human-readable action description.
         dry_run: When True, prefixes the message with "[DRY-RUN]".
     """
-    prefix = "[DRY-RUN] " if dry_run else ""
-    print(f"[shared-repo-memory] {prefix}{message}")
+    prefix: str = "[DRY-RUN] " if dry_run else ""
+    print(f"{format_log_prefix()} {prefix}{message}")
 
 
 def ensure_symlink(link_path: Path, target: str, *, dry_run: bool) -> None:
@@ -223,8 +224,9 @@ python3 "$HOME/.agent/shared-repo-memory/pre-commit-memory-guard.py" --repo-root
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
+log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[shared-repo-memory][agent=unknown][version=unknown]')"
 if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" {str_hook_name} "$@"; then
-    echo "[shared-repo-memory] warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
+    echo "$log_prefix warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
 fi
 """
     return str_script  # Normal exit.

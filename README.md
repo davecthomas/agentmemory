@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.2.5`
+Current version: `0.2.6`
 
 ---
 
@@ -338,6 +338,9 @@ tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl
 ```
 
 Every hook invocation appends a JSONL entry. If `SessionStart` fired successfully you will see `"status": "success"` entries.
+
+Shared-memory stderr logs and helper-script logs now include runtime metadata in
+their prefix, for example `[shared-repo-memory][agent=codex][version=0.118.0]`.
 
 ---
 

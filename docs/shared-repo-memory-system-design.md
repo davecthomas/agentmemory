@@ -267,7 +267,7 @@ Injecting a "please bootstrap" instruction into the main agent's context fails i
 
 | Agent | Command |
 |---|---|
-| Claude Code | `claude -p --system <SKILL.md content> --cwd <repo_root> "Bootstrap shared repo memory…"` |
+| Claude Code | `claude -p --system-prompt <SKILL.md content> --cwd <repo_root> "Bootstrap shared repo memory…"` |
 | Gemini CLI | `gemini --prompt "Bootstrap…" --system-prompt <SKILL.md content>` |
 | Codex (fallback) | same as Claude Code — `claude` binary used cross-agent |
 

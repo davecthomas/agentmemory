@@ -46,7 +46,15 @@ from datetime import timedelta
 from pathlib import Path
 
 from adapters import detect_adapter_from_hook_event
-from common import append_hook_trace, info, safe_main, utc_now, utc_timestamp, warn
+from common import (
+    append_hook_trace,
+    info,
+    safe_main,
+    set_runtime_log_context,
+    utc_now,
+    utc_timestamp,
+    warn,
+)
 
 # Path to the per-session state file.
 _STATE_FILE: Path = Path.home() / ".agent" / "state" / "prompt-guard-sessions.json"
@@ -157,6 +165,9 @@ def main() -> int:
     Returns:
         int: Always 0 -- this hook never blocks the turn.
     """
+    adapter = detect_adapter_from_hook_event("")
+    set_runtime_log_context(adapter.agent_id())
+
     payload_text: str = sys.stdin.read()
     try:
         payload: dict[str, object] = (
@@ -171,6 +182,7 @@ def main() -> int:
         payload.get("hook_event_name", payload.get("hookEventName", ""))
     )
     adapter = detect_adapter_from_hook_event(hook_event_raw)
+    set_runtime_log_context(adapter.agent_id())
     req = adapter.normalize_hook_request(payload)
     info(
         f"PromptGuard: fired ({adapter.agent_id()}, event={req.hook_event or 'unknown'}, session={req.session_id or 'none'})"

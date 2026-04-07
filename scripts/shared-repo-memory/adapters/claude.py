@@ -173,7 +173,7 @@ class ClaudeAdapter:
         return [
             "claude",
             "-p",
-            "--system",
+            "--system-prompt",
             skill_content,
             "--cwd",
             str(repo_root),
