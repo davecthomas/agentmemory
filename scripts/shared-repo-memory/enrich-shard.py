@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""enrich-shard.py -- Overwrite a raw shard with semantically enriched content.
+"""enrich-shard.py -- Publish an enriched shard from pending raw shard context.
 
 This script is invoked by a subagent (claude -p, gemini, etc.) after
-post-turn-notify.py writes a raw mechanical shard and saves an enrichment
-context file.  It reads the context, rewrites the four body sections of the
-shard with meaningful content, and rebuilds the daily summary.
+post-turn-notify.py writes a raw mechanical pending shard and saves an
+enrichment context file. It reads the context, rewrites the four body sections
+with meaningful content, publishes the final shard into the committed daily
+event namespace, and rebuilds the daily summary.
 
 The subagent provides the semantic reasoning -- this script handles the
 file I/O and format constraints.
 
 Enrichment context JSON schema:
   {
-    "shard_path":      "<absolute path to the raw shard>",
+    "shard_path":      "<absolute path to the raw pending shard>",
+    "published_shard_path": "<absolute path to the final published shard>",
     "repo_root":       "<absolute path to the repo root>",
     "assistant_text":  "<agent's response text from the turn>",
     "prompt":          "<user prompt that drove the turn>",
@@ -48,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace: Parsed arguments with context_path and section content.
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        description="Overwrite a raw shard with enriched content."
+        description="Publish an enriched shard from pending raw context."
     )
     parser.add_argument(
         "context_path",
@@ -111,6 +113,28 @@ def _load_context(context_path: Path) -> dict[str, object]:
         warn(f"enrichment context missing required keys: {missing_keys}")
         sys.exit(1)
     return context
+
+
+def _resolve_shard_paths(context: dict[str, object]) -> tuple[Path, Path]:
+    """Resolve the raw input shard path and the final published shard path.
+
+    Args:
+        context: Parsed enrichment context JSON with shard location fields.
+
+    Returns:
+        tuple[Path, Path]: Absolute paths for the raw input shard and the final
+            published shard. When `published_shard_path` is absent, the function
+            falls back to the legacy in-place overwrite behavior and returns the
+            same path twice.
+    """
+    path_raw_shard: Path = Path(str(context["shard_path"])).resolve()
+    str_published_value: str | None = None
+    if "published_shard_path" in context:
+        str_published_value = str(context["published_shard_path"])
+    path_published_shard: Path = (
+        Path(str_published_value).resolve() if str_published_value else path_raw_shard
+    )
+    return path_raw_shard, path_published_shard
 
 
 def _extract_frontmatter(shard_text: str) -> tuple[str, str]:
@@ -185,7 +209,7 @@ def _format_section_lines(raw_text: str) -> list[str]:
 
 
 def main() -> int:
-    """Entry point: read context, overwrite shard with enriched content, rebuild summary.
+    """Entry point: publish an enriched shard and rebuild the affected summary.
 
     Returns:
         int: 0 on success, 1 on error.
@@ -194,25 +218,29 @@ def main() -> int:
     context_path: Path = Path(args.context_path).resolve()
     context: dict[str, object] = _load_context(context_path)
 
-    shard_path: Path = Path(str(context["shard_path"])).resolve()
+    path_raw_shard: Path
+    path_published_shard: Path
+    path_raw_shard, path_published_shard = _resolve_shard_paths(context)
     repo_root: Path = Path(str(context["repo_root"])).resolve()
 
-    if not shard_path.exists():
-        warn(f"shard file not found: {shard_path}")
+    if not path_raw_shard.exists():
+        warn(f"shard file not found: {path_raw_shard}")
         return 1
 
     # Read the existing raw shard and preserve its frontmatter.
-    shard_text: str = shard_path.read_text(encoding="utf-8")
+    shard_text: str = path_raw_shard.read_text(encoding="utf-8")
     frontmatter: str
     _body: str
     frontmatter, _body = _extract_frontmatter(shard_text)
 
     if not frontmatter:
-        warn(f"shard has no valid frontmatter: {shard_path}")
+        warn(f"shard has no valid frontmatter: {path_raw_shard}")
         return 1
 
     # Update frontmatter boolean fields: mark as enriched and set decision_candidate.
-    frontmatter = _update_frontmatter_bool(frontmatter, "decision_candidate", args.decision_candidate)
+    frontmatter = _update_frontmatter_bool(
+        frontmatter, "decision_candidate", args.decision_candidate
+    )
     frontmatter = _update_frontmatter_bool(frontmatter, "enriched", True)
 
     # Build enriched body sections.
@@ -241,11 +269,13 @@ def main() -> int:
         *next_lines,
         "",
     ]
-    write_text(shard_path, "\n".join(enriched_body))
-    info(f"enriched {shard_path.relative_to(repo_root)}")
+    write_text(path_published_shard, "\n".join(enriched_body))
+    info(f"published {path_published_shard.relative_to(repo_root)}")
 
     # Rebuild the daily summary to reflect enriched content.
-    date_str: str = shard_path.parent.parent.name  # daily/<date>/events/<shard>
+    date_str: str = (
+        path_published_shard.parent.parent.name
+    )  # daily/<date>/events/<shard>
     try:
         subprocess.run(
             [
@@ -265,14 +295,16 @@ def main() -> int:
         warn(f"summary rebuild after enrichment failed: {error.stderr[:200]}")
 
     # Stage the enriched shard and rebuilt summary.
-    summary_path: Path = shard_path.parent.parent / "summary.md"
+    summary_path: Path = path_published_shard.parent.parent / "summary.md"
+    list_str_stage_paths: list[str] = [str(path_published_shard.relative_to(repo_root))]
+    if summary_path.exists():
+        list_str_stage_paths.append(str(summary_path.relative_to(repo_root)))
     try:
         subprocess.run(
             [
                 "git",
                 "add",
-                str(shard_path.relative_to(repo_root)),
-                str(summary_path.relative_to(repo_root)),
+                *list_str_stage_paths,
             ],
             cwd=str(repo_root),
             check=False,
@@ -286,6 +318,12 @@ def main() -> int:
         context_path.unlink()
     except OSError:
         pass  # Non-fatal.
+
+    if path_raw_shard != path_published_shard:
+        try:
+            path_raw_shard.unlink()
+        except OSError:
+            pass  # Non-fatal.
 
     return 0
 

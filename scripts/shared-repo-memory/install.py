@@ -41,6 +41,7 @@ SCRIPTS = [
     "models.py",
     "agent_support.py",
     "bootstrap-repo.py",
+    "pre-commit-memory-guard.py",
     "session-start.py",
     "post-turn-notify.py",
     "prompt-guard.py",

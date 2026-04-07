@@ -52,13 +52,16 @@ class TestDetectAdapter:
                 assert detect_adapter() is GeminiAdapter
 
     def test_fallback_is_codex(self):
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("CLAUDECODE", "GEMINI_CLI")}
+        env = {
+            k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "GEMINI_CLI")
+        }
         with patch.dict(os.environ, env, clear=True):
             assert detect_adapter() is CodexAdapter
 
     def test_claude_takes_priority_over_gemini(self):
-        with patch.dict(os.environ, {"CLAUDECODE": "1", "GEMINI_CLI": "1"}, clear=False):
+        with patch.dict(
+            os.environ, {"CLAUDECODE": "1", "GEMINI_CLI": "1"}, clear=False
+        ):
             assert detect_adapter() is ClaudeAdapter
 
 
@@ -77,8 +80,9 @@ class TestDetectAdapterFromHookEvent:
         assert detect_adapter_from_hook_event("SessionStart") is ClaudeAdapter
 
     def test_unknown_event_falls_back_to_env(self):
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("CLAUDECODE", "GEMINI_CLI")}
+        env = {
+            k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "GEMINI_CLI")
+        }
         with patch.dict(os.environ, env, clear=True):
             # No adapter claims empty string, falls back to env-based detection
             result = detect_adapter_from_hook_event("")
@@ -304,7 +308,9 @@ class TestTimeoutValue:
 
 class TestBuildBootstrapCommand:
     def test_claude_command(self):
-        cmd = ClaudeAdapter.build_bootstrap_command("skill text", "Bootstrap.", Path("/repo"))
+        cmd = ClaudeAdapter.build_bootstrap_command(
+            "skill text", "Bootstrap.", Path("/repo")
+        )
         assert cmd is not None
         assert cmd[0] == "claude"
         assert "-p" in cmd
@@ -314,12 +320,16 @@ class TestBuildBootstrapCommand:
         assert "Bootstrap." in cmd
 
     def test_gemini_command(self):
-        cmd = GeminiAdapter.build_bootstrap_command("skill text", "Bootstrap.", Path("/repo"))
+        cmd = GeminiAdapter.build_bootstrap_command(
+            "skill text", "Bootstrap.", Path("/repo")
+        )
         assert cmd is not None
         assert cmd[0] == "gemini"
         assert "--prompt" in cmd
         assert "--system-prompt" in cmd
 
     def test_codex_returns_none(self):
-        cmd = CodexAdapter.build_bootstrap_command("skill text", "Bootstrap.", Path("/repo"))
+        cmd = CodexAdapter.build_bootstrap_command(
+            "skill text", "Bootstrap.", Path("/repo")
+        )
         assert cmd is None

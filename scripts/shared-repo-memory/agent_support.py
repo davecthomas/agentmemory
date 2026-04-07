@@ -166,8 +166,12 @@ def support_summary_lines() -> list[str]:
 
     list_str_summary_lines: list[str] = []
     for agent in list_agent_support():
-        supported = [label for attr, label in _CAPABILITY_LABELS if getattr(agent, attr)]
-        unsupported = [label for attr, label in _CAPABILITY_LABELS if not getattr(agent, attr)]
+        supported = [
+            label for attr, label in _CAPABILITY_LABELS if getattr(agent, attr)
+        ]
+        unsupported = [
+            label for attr, label in _CAPABILITY_LABELS if not getattr(agent, attr)
+        ]
 
         if unsupported:
             str_line = (
@@ -177,12 +181,13 @@ def support_summary_lines() -> list[str]:
                 f"{'is' if len(unsupported) == 1 else 'are'} unavailable."
             )
         else:
-            str_line = (
-                f"{agent.str_agent_name}: {', '.join(supported)} are supported."
-            )
+            str_line = f"{agent.str_agent_name}: {', '.join(supported)} are supported."
 
         # Append post-turn mode note for non-native runtimes.
-        if agent.str_post_turn_mode != "native" and agent.bool_supports_post_turn is False:
+        if (
+            agent.str_post_turn_mode != "native"
+            and agent.bool_supports_post_turn is False
+        ):
             str_line += (
                 " Native post-turn capture is not provisioned;"
                 " notify-wrapper remains a manual smoke-test path."

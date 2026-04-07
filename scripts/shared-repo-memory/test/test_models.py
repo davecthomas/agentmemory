@@ -76,7 +76,9 @@ class TestSessionResponse:
 
 class TestShardAttribution:
     def test_fields(self):
-        attr = ShardAttribution(ai_tool="claude", ai_surface="claude-code", default_model="claude-unknown")
+        attr = ShardAttribution(
+            ai_tool="claude", ai_surface="claude-code", default_model="claude-unknown"
+        )
         assert attr.ai_tool == "claude"
         assert attr.ai_surface == "claude-code"
         assert attr.default_model == "claude-unknown"

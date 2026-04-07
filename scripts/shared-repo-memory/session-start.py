@@ -12,7 +12,7 @@ Execution path:
   2. Check shared_repo_memory_configured flag -- exit silently if disabled.
   3. Verify installed helper scripts and skills exist under ~/.agent/.
   4. Detect the current git repo root from the working directory.
-  5. Inspect repo wiring; call bootstrap-repo.sh to create any missing dirs or
+  5. Inspect repo wiring; call bootstrap-repo.py to create any missing dirs or
      symlinks.
   6. Load ADR index + recent daily summaries as a single memory_context string.
   7. Output in the format appropriate for the calling agent:
@@ -37,13 +37,20 @@ import tomllib
 from pathlib import Path
 
 from adapters import ClaudeAdapter, detect_adapter
-from common import append_hook_trace, load_json, safe_main, warn
+from common import (
+    append_hook_trace,
+    load_json,
+    missing_gitignore_entries,
+    safe_main,
+    warn,
+)
 from models import SessionResponse
 
 # Expected relative target for the .codex/memory -> .agents/memory symlink.
-# bootstrap-repo.sh creates this symlink; session-start.py validates it.
+# bootstrap-repo.py creates this symlink; session-start.py validates it.
 EXPECTED_MEMORY_TARGET = "../.agents/memory"
 REQUIRED_GIT_HOOKS: tuple[str, ...] = (
+    "pre-commit",
     "post-checkout",
     "post-merge",
     "post-rewrite",
@@ -167,16 +174,19 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
     Expected repo-local structure:
       .agents/memory/adr/       -- ADR storage directory
       .agents/memory/daily/     -- daily shard storage directory
+      .agents/memory/pending/   -- ignored raw shard staging directory
       .codex/local/             -- local catch-up state (not committed)
       .githooks/                -- git hooks directory
+      .githooks/pre-commit      -- blocks commits of raw/pending shards
       .githooks/post-checkout   -- rebuilds local catch-up after checkout
       .githooks/post-merge      -- rebuilds local catch-up after merge/pull
       .githooks/post-rewrite    -- rebuilds local catch-up after rebase/rewrite
       .agents/memory/adr/INDEX.md   -- ADR index file
       .codex/memory             -- symlink to ../.agents/memory
+      .gitignore                -- contains required local-state ignore entries
       git config core.hooksPath == ".githooks"
 
-    The session-start hook calls bootstrap-repo.sh to repair any gaps, then
+    The session-start hook calls bootstrap-repo.py to repair any gaps, then
     re-checks this list to confirm the bootstrap succeeded.
 
     Args:
@@ -190,6 +200,7 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
     repo_memory_root = repo_root / ".agents" / "memory"
     repo_memory_adr = repo_memory_root / "adr"
     repo_memory_daily = repo_memory_root / "daily"
+    repo_memory_pending = repo_memory_root / "pending"
     codex_local = repo_root / ".codex" / "local"
     githooks = repo_root / ".githooks"
     repo_memory_link = repo_root / ".codex" / "memory"
@@ -199,6 +210,8 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
         issues.append(str(repo_memory_adr))
     if not repo_memory_daily.is_dir():
         issues.append(str(repo_memory_daily))
+    if not repo_memory_pending.is_dir():
+        issues.append(str(repo_memory_pending))
     if not codex_local.is_dir():
         issues.append(str(codex_local))
     if not githooks.is_dir():
@@ -226,6 +239,13 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
     ).stdout.strip()
     if hooks_path != ".githooks":
         issues.append(f"{repo_root}/.git config core.hooksPath = .githooks")
+
+    list_str_missing_gitignore_entries: list[str] = missing_gitignore_entries(repo_root)
+    if list_str_missing_gitignore_entries:
+        issues.append(
+            f"{repo_root}/.gitignore missing shared repo-memory ignore entries: "
+            + ", ".join(list_str_missing_gitignore_entries)
+        )
 
     return issues
 
@@ -477,6 +497,7 @@ def main() -> int:
     required = [
         bootstrap_helper,
         home / ".agent" / "shared-repo-memory" / "post-turn-notify.py",
+        home / ".agent" / "shared-repo-memory" / "pre-commit-memory-guard.py",
         home / ".agent" / "shared-repo-memory" / "rebuild-summary.py",
         home / ".agent" / "shared-repo-memory" / "build-catchup.py",
         home / ".agent" / "shared-repo-memory" / "promote-adr.py",

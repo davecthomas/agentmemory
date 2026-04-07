@@ -84,11 +84,26 @@ $HOME/.agent/shared-repo-memory/promote-adr.py <shard-path> --repo-root <repo-ro
 
 The title should be a short imperative sentence summarizing the decision (e.g., "Use adapter pattern to decouple runtime-specific behavior from core memory engine").
 
-### 6. Stage the results
+### 6. Rebuild the affected daily summary
+
+After writing the candidate shard(s), rebuild the summary for that date before staging anything:
 
 ```bash
-git add .agents/memory/adr/ .agents/memory/daily/
+python3 $HOME/.agent/shared-repo-memory/rebuild-summary.py --repo-root <repo-root> --date <YYYY-MM-DD>
 ```
+
+If you wrote all candidate shards under today's date, rebuild today's summary exactly once after the shard-writing step completes.
+
+### 7. Stage only the intended memory artifacts
+
+```bash
+git add .agents/memory/daily/<YYYY-MM-DD>/events/<candidate-shard>.md
+git add .agents/memory/daily/<YYYY-MM-DD>/summary.md
+git add .agents/memory/adr/<new-adr-file>.md
+git add .agents/memory/adr/INDEX.md
+```
+
+Do not stage `.agents/memory/daily/` wholesale, and do not stage `.enrich-*.json` files or anything under `.agents/memory/logs/`.
 
 Do not commit. The developer commits explicitly.
 

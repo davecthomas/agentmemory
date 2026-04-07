@@ -44,6 +44,80 @@ def load_script_module(script_path: Path, str_module_name: str) -> ModuleType:
     return module
 
 
+def write_python_wrapper(path_wrapper: Path, path_source_script: Path) -> None:
+    """Write a small executable wrapper that delegates to a source Python script.
+
+    Args:
+        path_wrapper: Installed helper path to create under the synthetic HOME tree.
+        path_source_script: Real source script path inside the working repository.
+
+    Returns:
+        None: The wrapper is written in place and marked executable.
+    """
+    str_wrapper_text: str = "\n".join(
+        [
+            "#!/usr/bin/env python3",
+            "import subprocess",
+            "import sys",
+            (
+                "raise SystemExit(subprocess.run("
+                f"[sys.executable, {str(path_source_script)!r}, *sys.argv[1:]], "
+                "check=False).returncode)"
+            ),
+            "",
+        ]
+    )
+    path_wrapper.write_text(str_wrapper_text, encoding="utf-8")
+    path_wrapper.chmod(0o755)
+
+
+def install_minimal_session_start_assets(home_dir: Path) -> None:
+    """Create the minimal installed asset tree required by session-start.py tests.
+
+    Args:
+        home_dir: Synthetic HOME directory used by the temporary test runtime.
+
+    Returns:
+        None: The helper creates config, skill, state, and installed-script paths
+            in place under the provided home directory.
+    """
+    path_shared_root: Path = home_dir / ".agent" / "shared-repo-memory"
+    path_shared_root.mkdir(parents=True, exist_ok=True)
+    path_bootstrap_wrapper: Path = path_shared_root / "bootstrap-repo.py"
+    write_python_wrapper(path_bootstrap_wrapper, SCRIPT_DIR / "bootstrap-repo.py")
+    path_pre_commit_guard_wrapper: Path = (
+        path_shared_root / "pre-commit-memory-guard.py"
+    )
+    write_python_wrapper(
+        path_pre_commit_guard_wrapper, SCRIPT_DIR / "pre-commit-memory-guard.py"
+    )
+
+    for str_helper_name in (
+        "post-turn-notify.py",
+        "rebuild-summary.py",
+        "build-catchup.py",
+        "promote-adr.py",
+    ):
+        path_helper: Path = path_shared_root / str_helper_name
+        path_helper.write_text("# stub\n", encoding="utf-8")
+
+    path_codex_root: Path = home_dir / ".codex"
+    path_codex_root.mkdir(parents=True, exist_ok=True)
+    (path_codex_root / "config.toml").write_text(
+        "shared_repo_memory_configured = true\n",
+        encoding="utf-8",
+    )
+    (path_codex_root / "skills" / "memory-writer").mkdir(parents=True, exist_ok=True)
+    (path_codex_root / "skills" / "adr-promoter").mkdir(parents=True, exist_ok=True)
+
+    path_state_root: Path = home_dir / ".agent" / "state"
+    path_state_root.mkdir(parents=True, exist_ok=True)
+    (path_state_root / "shared_asset_refresh_state.json").write_text(
+        json.dumps({"last_successful_refresh_at": "2026-03-31T00:00:00Z"}),
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture
 def repo(tmp_path):
     """Sets up a temporary git repository for testing."""
@@ -61,16 +135,20 @@ def repo(tmp_path):
 
     # Mock global home directory so notify hook sees required files
     home_dir = tmp_path / "home"
-    (home_dir / ".codex" / "skills" / "memory-writer").mkdir(
-        parents=True, exist_ok=True
-    )
-    (home_dir / ".agent" / "state").mkdir(parents=True, exist_ok=True)
+    install_minimal_session_start_assets(home_dir)
 
     # Run bootstrap using sys.executable to ensure the correct Python version.
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
     subprocess.run(
         [sys.executable, SCRIPT_DIR / "bootstrap-repo.py"],
+        cwd=repo_dir,
+        check=True,
+        env=env,
+    )
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "bootstrap repo wiring"],
         cwd=repo_dir,
         check=True,
         env=env,
@@ -85,38 +163,16 @@ def non_repo(tmp_path):
     work_dir.mkdir()
 
     home_dir = tmp_path / "home"
-    (home_dir / ".codex" / "skills" / "memory-writer").mkdir(
-        parents=True, exist_ok=True
-    )
-    (home_dir / ".agent" / "state").mkdir(parents=True, exist_ok=True)
-    (home_dir / ".agent" / "shared-repo-memory").mkdir(parents=True, exist_ok=True)
-    (home_dir / ".codex").mkdir(parents=True, exist_ok=True)
-    (home_dir / ".codex" / "config.toml").write_text(
-        "shared_repo_memory_configured = true\n",
-        encoding="utf-8",
-    )
-    for helper in [
-        "bootstrap-repo.sh",
-        "post-turn-notify.py",
-        "rebuild-summary.py",
-        "build-catchup.py",
-        "promote-adr.py",
-    ]:
-        (home_dir / ".agent" / "shared-repo-memory" / helper).write_text(
-            "# stub\n", encoding="utf-8"
-        )
-    (home_dir / ".codex" / "skills" / "adr-promoter").mkdir(parents=True, exist_ok=True)
-    (home_dir / ".agent" / "state" / "shared_asset_refresh_state.json").write_text(
-        json.dumps({"last_successful_refresh_at": "2026-03-31T00:00:00Z"}),
-        encoding="utf-8",
-    )
+    install_minimal_session_start_assets(home_dir)
     return work_dir, home_dir
 
 
 def test_bootstrap_initializes_directories(repo):
-    repo_dir, _ = repo
+    repo_dir, home_dir = repo
     assert (repo_dir / ".agents" / "memory").exists()
+    assert (repo_dir / ".agents" / "memory" / "pending").is_dir()
     assert (repo_dir / ".codex" / "memory").is_symlink()
+    assert (repo_dir / ".githooks" / "pre-commit").is_file()
     assert (repo_dir / ".githooks" / "post-checkout").is_file()
     assert (repo_dir / ".githooks" / "post-merge").is_file()
     assert (repo_dir / ".githooks" / "post-rewrite").is_file()
@@ -128,9 +184,15 @@ def test_bootstrap_initializes_directories(repo):
         text=True,
     )
     assert ".githooks" in result.stdout
+    assert ".agents/memory/pending/" in (repo_dir / ".gitignore").read_text(
+        encoding="utf-8"
+    )
+    assert ".agents/memory/logs/" in (repo_dir / ".gitignore").read_text(
+        encoding="utf-8"
+    )
 
 
-def test_post_turn_notify_creates_shard_and_summary(repo):
+def test_post_turn_notify_creates_pending_shard_without_publish(repo):
     repo_dir, home_dir = repo
 
     # Stage a tracked file change so the meaningful-turn gate passes.
@@ -150,25 +212,43 @@ def test_post_turn_notify_creates_shard_and_summary(repo):
     env["HOME"] = str(home_dir)
 
     # Run notify script with payload piped to stdin
-    subprocess.run(
-        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+    result = subprocess.run(
+        [
+            sys.executable,
+            SCRIPT_DIR / "post-turn-notify.py",
+            "--repo-root",
+            str(repo_dir),
+        ],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
+        capture_output=True,
         check=True,
         env=env,
     )
 
-    daily_dirs = list((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
-    assert len(daily_dirs) == 1
-    day_dir = daily_dirs[0]
+    dict_output = json.loads(result.stdout)
+    assert dict_output["status"] == "ok"
 
-    shards = list((day_dir / "events").glob("*.md"))
-    assert len(shards) == 1
+    pending_dirs = list((repo_dir / ".agents" / "memory" / "pending").glob("202*"))
+    assert len(pending_dirs) == 1
+    pending_shards = list(pending_dirs[0].glob("*.md"))
+    assert len(pending_shards) == 1
+    assert (
+        "durable repo decision" in pending_shards[0].read_text(encoding="utf-8").lower()
+    )
 
-    summary_path = day_dir / "summary.md"
-    assert summary_path.exists()
-    assert "durable repo decision" in summary_path.read_text().lower()
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/events/*.md")) == []
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/summary.md")) == []
+
+    staged_paths_result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert staged_paths_result.stdout.strip() == "feature.py"
 
 
 def test_post_turn_notify_ignores_assistant_chatter_for_why(repo):
@@ -189,7 +269,12 @@ def test_post_turn_notify_ignores_assistant_chatter_for_why(repo):
     env["HOME"] = str(home_dir)
 
     subprocess.run(
-        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [
+            sys.executable,
+            SCRIPT_DIR / "post-turn-notify.py",
+            "--repo-root",
+            str(repo_dir),
+        ],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -197,17 +282,16 @@ def test_post_turn_notify_ignores_assistant_chatter_for_why(repo):
         env=env,
     )
 
-    day_dir = next((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
-    shard_path = next((day_dir / "events").glob("*.md"))
+    pending_dir = next((repo_dir / ".agents" / "memory" / "pending").glob("202*"))
+    shard_path = next(pending_dir.glob("*.md"))
     shard_text = shard_path.read_text(encoding="utf-8")
-    summary_text = (day_dir / "summary.md").read_text(encoding="utf-8")
 
     assert "How's that look?" not in shard_text
-    assert "How's that look?" not in summary_text
     assert (
         "Repo state changed during this agent turn." in shard_text
         or "1 file changed" in shard_text
     )
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/summary.md")) == []
 
 
 def test_post_turn_notify_noops_outside_git_repo(non_repo):
@@ -270,7 +354,7 @@ def test_session_start_releases_lock_when_auto_bootstrap_script_missing(
     Returns:
         None: Assertions verify the fallback returns False and cleans up its lock.
     """
-    repo_dir, _ = repo
+    repo_dir, home_dir = repo
     session_start_module = load_script_module(
         SCRIPT_DIR / "session-start.py", "session_start_test_module"
     )
@@ -486,7 +570,12 @@ def test_post_turn_notify_writes_enrichment_context(repo):
     env["HOME"] = str(home_dir)
 
     result = subprocess.run(
-        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [
+            sys.executable,
+            SCRIPT_DIR / "post-turn-notify.py",
+            "--repo-root",
+            str(repo_dir),
+        ],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -499,25 +588,68 @@ def test_post_turn_notify_writes_enrichment_context(repo):
     output = json.loads(result.stdout)
     assert output["status"] == "ok"
 
-    # Verify context file was written (it persists until the subagent reads
-    # and deletes it, or is cleaned up on spawn failure).
-    day_dirs = list((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
-    assert len(day_dirs) >= 1
-    day_dir = day_dirs[-1]
-    context_files = list((day_dir / "events").glob(".enrich-*.json"))
-    if context_files:
-        # Subagent was spawned; context file exists for it to consume.
-        context_data = json.loads(context_files[0].read_text(encoding="utf-8"))
-        assert "assistant_text" in context_data
-        assert "JWT-based authentication" in context_data["assistant_text"]
-        # Clean up so it doesn't interfere with other tests.
-        context_files[0].unlink()
+    # Context files live only under ignored local log state; because the shard
+    # enricher skill is not installed in this test fixture, the file should be
+    # cleaned up immediately after the spawn is skipped.
+    context_dir = repo_dir / ".agents" / "memory" / "logs" / "enrichment-context"
+    if context_dir.exists():
+        assert list(context_dir.glob(".enrich-*.json")) == []
 
-    # The raw shard should exist with the user prompt in the Why section.
-    shards = list((day_dir / "events").glob("*.md"))
-    assert len(shards) >= 1
-    shard_text = shards[-1].read_text(encoding="utf-8")
+    # The pending raw shard should exist with the user prompt in the Why section.
+    pending_dirs = list((repo_dir / ".agents" / "memory" / "pending").glob("202*"))
+    assert len(pending_dirs) == 1
+    shards = list(pending_dirs[0].glob("*.md"))
+    assert len(shards) == 1
+    shard_text = shards[0].read_text(encoding="utf-8")
     assert "Create the API module" in shard_text
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/events/*.md")) == []
+
+
+def test_post_turn_notify_contextless_turn_stays_pending_only(repo):
+    """Verify that a meaningful turn without semantic context never publishes a shard.
+
+    This regression covers the Codex manual-wrapper failure mode where the hook
+    payload can be effectively empty. The system should keep only a pending raw
+    shard and must not publish or stage a durable daily event shard.
+    """
+    repo_dir, home_dir = repo
+
+    tracked_file = repo_dir / "contextless.py"
+    tracked_file.write_text("# contextless change\n", encoding="utf-8")
+    subprocess.run(["git", "add", "contextless.py"], cwd=repo_dir, check=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            SCRIPT_DIR / "post-turn-notify.py",
+            "--repo-root",
+            str(repo_dir),
+        ],
+        cwd=repo_dir,
+        input=json.dumps({"conversation_id": "empty-thread", "turn_id": "empty-turn"}),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    output = json.loads(result.stdout)
+    assert output["status"] == "ok"
+
+    pending_dirs = list((repo_dir / ".agents" / "memory" / "pending").glob("202*"))
+    assert len(pending_dirs) == 1
+    assert len(list(pending_dirs[0].glob("*.md"))) == 1
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/events/*.md")) == []
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/summary.md")) == []
+
+    trace_path = home_dir / ".agent" / "state" / "shared-repo-memory-hook-trace.jsonl"
+    dict_trace_payload = json.loads(
+        trace_path.read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert dict_trace_payload["enrichment_spawned"] is False
 
 
 def test_post_turn_notify_detects_design_doc_changes(repo):
@@ -545,7 +677,12 @@ def test_post_turn_notify_detects_design_doc_changes(repo):
     env["HOME"] = str(home_dir)
 
     result = subprocess.run(
-        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [
+            sys.executable,
+            SCRIPT_DIR / "post-turn-notify.py",
+            "--repo-root",
+            str(repo_dir),
+        ],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -557,23 +694,310 @@ def test_post_turn_notify_detects_design_doc_changes(repo):
     output = json.loads(result.stdout)
     assert output["status"] == "ok"
 
-    # Verify the shard was written.
-    day_dirs = list((repo_dir / ".agents" / "memory" / "daily").glob("202*"))
-    assert len(day_dirs) >= 1
+    trace_path = home_dir / ".agent" / "state" / "shared-repo-memory-hook-trace.jsonl"
+    list_str_trace_lines = trace_path.read_text(encoding="utf-8").splitlines()
+    dict_trace_payload = json.loads(list_str_trace_lines[-1])
+    assert dict_trace_payload["design_docs_touched"] == ["docs/api-design.md"]
+
+    # Verify the pending shard was written while the durable daily namespace stays empty.
+    pending_dirs = list((repo_dir / ".agents" / "memory" / "pending").glob("202*"))
+    assert len(pending_dirs) == 1
+    assert len(list(pending_dirs[0].glob("*.md"))) == 1
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/events/*.md")) == []
 
 
-def test_enrich_shard_overwrites_raw_shard(repo):
-    """Verify that enrich-shard.py correctly overwrites a raw shard's body
-    sections while preserving frontmatter.
+def test_post_turn_notify_captures_untracked_design_doc_only(repo):
+    """Verify that a newly created untracked design doc is still a meaningful turn.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+
+    Returns:
+        None: Assertions verify the untracked design doc produces a shard and
+            reaches the ADR inspection trigger list.
     """
     repo_dir, home_dir = repo
 
-    # Create a raw shard.
+    docs_dir = repo_dir / "docs"
+    docs_dir.mkdir(exist_ok=True)
+    design_doc = docs_dir / "untracked-design.md"
+    design_doc.write_text(
+        "# API Design\n\n## Decision\n\nPrefer REST over GraphQL.\n",
+        encoding="utf-8",
+    )
+
+    payload = {
+        "conversation_id": "untracked-design-thread",
+        "turn_id": "untracked-design-turn",
+        "prompt": "Write the new API design document.",
+        "last_assistant_message": "Created docs/untracked-design.md with the API decision.",
+        "model": "claude-opus-4-6",
+    }
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            SCRIPT_DIR / "post-turn-notify.py",
+            "--repo-root",
+            str(repo_dir),
+        ],
+        cwd=repo_dir,
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    output = json.loads(result.stdout)
+    assert output["status"] == "ok"
+
+    trace_path = home_dir / ".agent" / "state" / "shared-repo-memory-hook-trace.jsonl"
+    list_str_trace_lines = trace_path.read_text(encoding="utf-8").splitlines()
+    dict_trace_payload = json.loads(list_str_trace_lines[-1])
+    assert dict_trace_payload["design_docs_touched"] == ["docs/untracked-design.md"]
+    assert "docs/untracked-design.md" in dict_trace_payload["files_touched"]
+
+    pending_dirs = list((repo_dir / ".agents" / "memory" / "pending").glob("202*"))
+    assert len(pending_dirs) == 1
+    list_path_shards = list(pending_dirs[0].glob("*.md"))
+    assert len(list_path_shards) == 1
+    assert list((repo_dir / ".agents" / "memory" / "daily").glob("*/events/*.md")) == []
+
+
+def test_pre_commit_hook_rejects_pending_raw_shards(repo):
+    """Verify that the repo-installed pre-commit hook blocks staged pending shards.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+
+    Returns:
+        None: Assertions verify that forcing a pending raw shard into the index
+            causes `git commit` to fail before the commit is created.
+    """
+    repo_dir, home_dir = repo
+
+    path_code_file: Path = repo_dir / "feature.py"
+    path_code_file.write_text("# code change\n", encoding="utf-8")
+    subprocess.run(["git", "add", "feature.py"], cwd=repo_dir, check=True)
+
+    path_pending_shard: Path = (
+        repo_dir / ".agents" / "memory" / "pending" / "2026-04-07" / "raw.md"
+    )
+    path_pending_shard.parent.mkdir(parents=True, exist_ok=True)
+    path_pending_shard.write_text("pending raw shard\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "-f", str(path_pending_shard.relative_to(repo_dir))],
+        cwd=repo_dir,
+        check=True,
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "should fail"],
+        cwd=repo_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ.copy(), "HOME": str(home_dir)},
+    )
+
+    assert result.returncode != 0
+    assert "pending raw shard" in f"{result.stdout}\n{result.stderr}"
+
+
+def test_pre_commit_hook_rejects_unenriched_daily_shards(repo):
+    """Verify that the pre-commit hook blocks staged daily shards marked raw.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+
+    Returns:
+        None: Assertions verify that staged event shards containing
+            `enriched: false` are rejected at commit time.
+    """
+    repo_dir, home_dir = repo
+
+    path_code_file: Path = repo_dir / "feature.py"
+    path_code_file.write_text("# code change\n", encoding="utf-8")
+    subprocess.run(["git", "add", "feature.py"], cwd=repo_dir, check=True)
+
+    path_day_dir: Path = repo_dir / ".agents" / "memory" / "daily" / "2026-04-07"
+    path_event_dir: Path = path_day_dir / "events"
+    path_event_dir.mkdir(parents=True, exist_ok=True)
+    path_raw_shard: Path = (
+        path_event_dir / "2026-04-07T12-00-00Z--test--thread_x--turn_y.md"
+    )
+    path_raw_shard.write_text(
+        "\n".join(
+            [
+                "---",
+                'timestamp: "2026-04-07T12:00:00Z"',
+                'author: "test"',
+                'branch: "main"',
+                'thread_id: "thread_x"',
+                'turn_id: "turn_y"',
+                "decision_candidate: false",
+                "enriched: false",
+                "ai_generated: true",
+                'ai_model: "gpt-5.4"',
+                'ai_tool: "codex"',
+                'ai_surface: "codex-cli"',
+                'ai_executor: "local-agent"',
+                "related_adrs:",
+                "files_touched:",
+                '  - "feature.py"',
+                "verification:",
+                '  - "raw shard fixture"',
+                "---",
+                "",
+                "## Why",
+                "",
+                "- Raw fixture.",
+                "",
+                "## What changed",
+                "",
+                "- Raw fixture.",
+                "",
+                "## Evidence",
+                "",
+                "- Raw fixture.",
+                "",
+                "## Next",
+                "",
+                "- Raw fixture.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", str(path_raw_shard.relative_to(repo_dir))],
+        cwd=repo_dir,
+        check=True,
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "should fail"],
+        cwd=repo_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ.copy(), "HOME": str(home_dir)},
+    )
+
+    assert result.returncode != 0
+    assert "enriched: false" in f"{result.stdout}\n{result.stderr}"
+
+
+def test_session_start_repairs_missing_gitignore_entries(repo):
+    """Verify SessionStart re-runs bootstrap when required .gitignore entries drift.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+
+    Returns:
+        None: Assertions verify SessionStart uses the installed bootstrap helper
+            to restore the shared local-state ignore entries.
+    """
+    repo_dir, home_dir = repo
+
+    path_gitignore = repo_dir / ".gitignore"
+    str_gitignore = path_gitignore.read_text(encoding="utf-8")
+    path_gitignore.write_text(
+        str_gitignore.replace(".agents/memory/pending/\n", "").replace(
+            ".agents/memory/logs/\n", ""
+        ),
+        encoding="utf-8",
+    )
+
     day_dir = repo_dir / ".agents" / "memory" / "daily" / "2026-04-06"
     events_dir = day_dir / "events"
     events_dir.mkdir(parents=True, exist_ok=True)
+    (events_dir / "fixture-shard.md").write_text(
+        "\n".join(
+            [
+                "---",
+                'timestamp: "2026-04-06T12:00:00Z"',
+                'author: "test"',
+                'branch: "main"',
+                'thread_id: "fixture-thread"',
+                'turn_id: "fixture-turn"',
+                "decision_candidate: false",
+                "enriched: false",
+                "ai_generated: true",
+                'ai_model: "gpt-5.4"',
+                'ai_tool: "codex"',
+                'ai_surface: "codex-cli"',
+                'ai_executor: "local-agent"',
+                "related_adrs:",
+                "files_touched:",
+                '  - "README.md"',
+                "verification:",
+                '  - "Fixture shard for SessionStart test."',
+                "---",
+                "",
+                "## Why",
+                "",
+                "- Fixture shard for session-start.",
+                "",
+                "## What changed",
+                "",
+                "- Added fixture shard.",
+                "",
+                "## Evidence",
+                "",
+                "- Fixture evidence.",
+                "",
+                "## Next",
+                "",
+                "- None.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
-    shard_path = events_dir / "2026-04-06T12-00-00Z--test--thread_t1--turn_t1.md"
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+
+    result = subprocess.run(
+        [sys.executable, SCRIPT_DIR / "session-start.py"],
+        cwd=repo_dir,
+        input=json.dumps({"hook_event_name": "SessionStart"}),
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    assert "Shared repo memory" in result.stdout
+    assert ".agents/memory/pending/" in path_gitignore.read_text(encoding="utf-8")
+    assert ".agents/memory/logs/" in path_gitignore.read_text(encoding="utf-8")
+
+
+def test_enrich_shard_publishes_from_pending_raw_shard(repo):
+    """Verify that enrich-shard.py publishes an enriched shard from pending raw state.
+
+    The publish step must write the final daily event shard, rebuild the summary,
+    stage only the published artifacts, and remove the pending raw input.
+    """
+    repo_dir, home_dir = repo
+
+    day_dir = repo_dir / ".agents" / "memory" / "daily" / "2026-04-06"
+    path_published_shard = (
+        day_dir / "events" / "2026-04-06T12-00-00Z--test--thread_t1--turn_t1.md"
+    )
+    path_pending_shard = (
+        repo_dir
+        / ".agents"
+        / "memory"
+        / "pending"
+        / "2026-04-06"
+        / "2026-04-06T12-00-00Z--test--thread_t1--turn_t1.md"
+    )
     raw_shard = """---
 timestamp: "2026-04-06T12:00:00Z"
 author: "test"
@@ -609,12 +1033,16 @@ verification:
 
 - Review the generated shard and summary.
 """
-    shard_path.write_text(raw_shard, encoding="utf-8")
+    path_pending_shard.parent.mkdir(parents=True, exist_ok=True)
+    path_pending_shard.write_text(raw_shard, encoding="utf-8")
 
     # Create enrichment context.
-    context_path = events_dir / ".enrich-t1.json"
+    context_dir = repo_dir / ".agents" / "memory" / "logs" / "enrichment-context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    context_path = context_dir / ".enrich-t1.json"
     context_data = {
-        "shard_path": str(shard_path),
+        "shard_path": str(path_pending_shard),
+        "published_shard_path": str(path_published_shard),
         "repo_root": str(repo_dir),
         "assistant_text": "Created JWT auth middleware.",
         "prompt": "Add authentication to the API.",
@@ -632,10 +1060,14 @@ verification:
             sys.executable,
             SCRIPT_DIR / "enrich-shard.py",
             str(context_path),
-            "--why", "Added JWT authentication middleware to enforce API security boundaries.",
-            "--what", "Created auth module with token validation and middleware integration.",
-            "--evidence", "Tests pass. Follows adapter pattern from design doc.",
-            "--next", "Add rate limiting and API key rotation support.",
+            "--why",
+            "Added JWT authentication middleware to enforce API security boundaries.",
+            "--what",
+            "Created auth module with token validation and middleware integration.",
+            "--evidence",
+            "Tests pass. Follows adapter pattern from design doc.",
+            "--next",
+            "Add rate limiting and API key rotation support.",
             "--decision-candidate",
         ],
         cwd=repo_dir,
@@ -644,14 +1076,35 @@ verification:
     )
 
     # Verify enriched content.
-    enriched_text = shard_path.read_text(encoding="utf-8")
+    enriched_text = path_published_shard.read_text(encoding="utf-8")
     assert "JWT authentication middleware" in enriched_text
     assert "decision_candidate: true" in enriched_text
+    assert "enriched: true" in enriched_text
     assert 'timestamp: "2026-04-06T12:00:00Z"' in enriched_text
-    assert "1 file changed, 10 insertions" not in enriched_text.split("## Why")[1].split("## Repo")[0]
+    assert (
+        "1 file changed, 10 insertions"
+        not in enriched_text.split("## Why")[1].split("## Repo")[0]
+    )
 
-    # Context file should be cleaned up.
+    summary_path = day_dir / "summary.md"
+    assert summary_path.exists()
+
+    staged_paths_result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert str(path_published_shard.relative_to(repo_dir)) in staged_paths_result.stdout
+    assert str(summary_path.relative_to(repo_dir)) in staged_paths_result.stdout
+    assert (
+        str(path_pending_shard.relative_to(repo_dir)) not in staged_paths_result.stdout
+    )
+
+    # Context and pending raw shard should be cleaned up.
     assert not context_path.exists()
+    assert not path_pending_shard.exists()
 
 
 def test_agent_support_includes_enrichment_capabilities():

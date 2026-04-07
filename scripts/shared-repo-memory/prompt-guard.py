@@ -172,7 +172,9 @@ def main() -> int:
     )
     adapter = detect_adapter_from_hook_event(hook_event_raw)
     req = adapter.normalize_hook_request(payload)
-    info(f"PromptGuard: fired ({adapter.agent_id()}, event={req.hook_event or 'unknown'}, session={req.session_id or 'none'})")
+    info(
+        f"PromptGuard: fired ({adapter.agent_id()}, event={req.hook_event or 'unknown'}, session={req.session_id or 'none'})"
+    )
 
     # --- Fast exit: session already processed ---
     # Load state once; if this session is already marked done, exit immediately

@@ -12,7 +12,7 @@ enrich, shard, memory, semantic, rewrite, decision candidate
 
 ## When to Use This Skill
 
-- An event shard was just written by the post-turn hook with mechanical placeholder content
+- A pending raw shard was just written by the post-turn hook with mechanical placeholder content
 - An enrichment context JSON file exists containing the assistant's reasoning text
 - You need to distill agent reasoning into durable, architecturally meaningful memory
 
@@ -32,7 +32,8 @@ Enrich the shard using context at: <absolute path to context JSON>
 
 The context file contains:
 
-- `shard_path`: absolute path to the raw shard to overwrite
+- `shard_path`: absolute path to the pending raw shard to read
+- `published_shard_path`: absolute path where the enriched published shard must be written
 - `repo_root`: absolute path to the repository
 - `assistant_text`: the agent's response from the turn (the richest signal)
 - `prompt`: the user's task that drove the changes
@@ -67,6 +68,7 @@ python3 $HOME/.agent/shared-repo-memory/enrich-shard.py <context-json-path> \
 - **--evidence**: Concrete signals -- test results, design doc alignment, architectural choices made.
 - **--next**: Genuine follow-up work, unresolved issues, or architectural implications.
 - **--decision-candidate**: Include this flag ONLY if the turn involved a durable architectural decision (architecture boundaries, API contracts, tool choices, accepted tradeoffs, invariants). Do not flag routine implementation work.
+- `enrich-shard.py` now publishes the final durable shard into `.agents/memory/daily/<date>/events/`, rebuilds `summary.md`, stages the published artifacts, and removes the pending raw shard. Pending raw files must never be committed.
 
 ## Example Invocation
 

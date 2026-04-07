@@ -9,12 +9,12 @@ Give coding agents durable repo context so every new session starts from prior d
 ## Core Principles
 
 - **Memory is plain Markdown in Git.** No external service, no database, no embedding pipeline.
-- **The repo owns the memory.** Canonical storage lives under `<repo>/.agents/memory/`, committed and versioned like code.
+- **The repo owns the memory.** Published storage lives under `<repo>/.agents/memory/daily/` and `<repo>/.agents/memory/adr/`, committed and versioned like code; pending and log subtrees under the same root stay local-only.
 - **Agent-facing paths are access paths, not storage.** `.codex/memory` is a symlink into `.agents/memory/` — it never holds a separate copy.
-- **Writes are immutable event shards.** Each meaningful agent turn produces one shard. Shards are never edited after creation.
+- **Raw capture and publication are separate phases.** Each meaningful agent turn produces one pending raw shard locally. Only enrichment may publish a committed event shard.
 - **Read models are derived.** Daily summaries are rebuilt deterministically from shards. They are never the write target.
 - **Durable decisions live only in ADRs.** ADR promotion is always explicit — never an automatic post-turn side effect.
-- **Memory is not collaborative until committed and pushed.** The system auto-stages memory artifacts but never auto-commits or auto-pushes.
+- **Memory is not collaborative until committed and pushed.** The system auto-stages only published memory artifacts; it never auto-commits or auto-pushes.
 
 ---
 
@@ -22,15 +22,18 @@ Give coding agents durable repo context so every new session starts from prior d
 
 ```
 <repo>/
-├── .agents/memory/                         # canonical shared memory — committed to Git
+├── .agents/memory/                         # shared memory root (published + local-only staging)
 │   ├── adr/
 │   │   ├── INDEX.md                        # ADR index table, rebuilt on every promotion
 │   │   └── ADR-NNNN-<slug>.md             # one file per architecture decision
-│   └── daily/
+│   ├── daily/
+│   │   └── YYYY-MM-DD/
+│   │       ├── events/
+│   │       │   └── <timestamp>--<author>--thread_<id>--turn_<id>.md
+│   │       └── summary.md                  # derived daily summary, rebuilt from shards
+│   └── pending/
 │       └── YYYY-MM-DD/
-│           ├── events/
-│           │   └── <timestamp>--<author>--thread_<id>--turn_<id>.md
-│           └── summary.md                  # derived daily summary, rebuilt from shards
+│           └── <timestamp>--<author>--thread_<id>--turn_<id>.md
 ├── .codex/
 │   ├── memory -> ../.agents/memory         # symlink — Codex access path only
 │   └── local/
@@ -39,6 +42,7 @@ Give coding agents durable repo context so every new session starts from prior d
 ├── .claude/
 │   └── local/                              # Claude-specific local continuity state
 └── .githooks/
+    ├── pre-commit                          # blocks commits of pending/raw shards
     ├── post-checkout                        # triggers catch-up rebuild
     ├── post-merge                           # triggers catch-up rebuild
     └── post-rewrite                         # triggers catch-up rebuild
@@ -47,6 +51,7 @@ Give coding agents durable repo context so every new session starts from prior d
 ├── shared-repo-memory/                      # installed helper scripts
 │   ├── common.py
 │   ├── bootstrap-repo.py
+│   ├── pre-commit-memory-guard.py
 │   ├── session-start.py
 │   ├── post-turn-notify.py
 │   ├── prompt-guard.py
@@ -54,7 +59,7 @@ Give coding agents durable repo context so every new session starts from prior d
 │   ├── rebuild-summary.py
 │   ├── build-catchup.py
 │   ├── promote-adr.py
-│   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
+    │   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
 └── state/
     └── shared_asset_refresh_state.json
 
@@ -88,14 +93,15 @@ Give coding agents durable repo context so every new session starts from prior d
 
 `bootstrap-repo.py` creates the repo-local layout:
 
-- `.agents/memory/adr/` and `.agents/memory/daily/`
+- `.agents/memory/adr/`, `.agents/memory/daily/`, and `.agents/memory/pending/`
 - `.codex/local/` and `.claude/local/`
-- `.githooks/` with `post-checkout`, `post-merge`, `post-rewrite`
+- `.githooks/` with `pre-commit`, `post-checkout`, `post-merge`, `post-rewrite`
 - `.codex/memory → ../.agents/memory` symlink
 - Empty `INDEX.md`
+- Required local-state ignore entries in `.gitignore`
 - `git config core.hooksPath .githooks`
 
-`SessionStart` calls this automatically on every session open when any wiring is incomplete. You do not need to run it manually.
+`SessionStart` calls this automatically on every session open when any wiring is incomplete, including missing required `.gitignore` entries. You do not need to run it manually.
 
 ---
 
@@ -106,9 +112,9 @@ Give coding agents durable repo context so every new session starts from prior d
 | Hook event | Script | Claude Code | Gemini CLI | Codex |
 |---|---|---|---|---|
 | `SessionStart` / `SessionStart` | `session-start.py` | yes | yes | yes |
-| `Stop` / `AfterAgent` | `post-turn-notify.py` | `Stop` | `AfterAgent` | not provisioned |
-| `SubagentStop` | `post-turn-notify.py` | yes | — | — |
-| `UserPromptSubmit` / `BeforeAgent` | `prompt-guard.py` | `UserPromptSubmit` | `BeforeAgent` | — |
+| `Stop` / `AfterAgent` | `post-turn-notify.py` | writes pending shard + spawns publish flow | writes pending shard + spawns publish flow | not provisioned |
+| `SubagentStop` | `post-turn-notify.py` | writes pending shard + spawns publish flow | — | — |
+| `UserPromptSubmit` / `BeforeAgent` | `prompt-guard.py` | `UserPromptSubmit` | `BeforeAgent` | `UserPromptSubmit` |
 | `PostCompact` | `post-compact.py` | yes | — (no equivalent) | — |
 
 ### Claude Code — `~/.claude/settings.json`
@@ -138,12 +144,13 @@ shared_repo_memory_configured = true
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/session-start.py" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/session-start.py" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/prompt-guard.py" }] }]
   }
 }
 ```
 
-Codex is intentionally treated as a SessionStart-only supported runtime. `scripts/shared-repo-memory/notify-wrapper.sh` remains available as a manual smoke-test path for `post-turn-notify.py`, but it is not treated as a supported provisioned native post-turn integration.
+Codex is intentionally treated as a limited supported runtime: `SessionStart` and `UserPromptSubmit` are provisioned, but `scripts/shared-repo-memory/notify-wrapper.sh` remains only a manual smoke-test path for `post-turn-notify.py`, not a supported native post-turn integration.
 
 ### Gemini CLI — `~/.gemini/settings.json`
 
@@ -213,9 +220,9 @@ Gemini CLI has no `PostCompact` equivalent — `PreCompress` fires before compre
 
 ## UserPromptSubmit / BeforeAgent Hook
 
-`prompt-guard.py` runs before every user turn (`UserPromptSubmit` on Claude Code, `BeforeAgent` on Gemini CLI).
+`prompt-guard.py` runs before every user turn (`UserPromptSubmit` on Claude Code and Codex, `BeforeAgent` on Gemini CLI).
 
-Fires only when needed: if the repo has memory wiring but no event shards yet. Injects a one-time instruction into the agent's context telling it to proactively offer to run the `news` skill before proceeding. Tracks which sessions have already received the nudge in `~/.agent/state/prompt-guard-sessions.json` — the nudge fires at most once per session.
+Fires only when needed: if the repo has memory wiring but no event shards yet. Injects a one-time instruction into the agent's context telling it to proactively offer to run the `memory-bootstrap` skill before proceeding. Tracks which sessions have already received the nudge in `~/.agent/state/prompt-guard-sessions.json` — the nudge fires at most once per session.
 
 This is the recovery path for sessions where memory was deleted or never bootstrapped. It fires mid-session, unlike `SessionStart` which only fires at session open.
 
@@ -289,11 +296,11 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 
 `post-turn-notify.py` runs after every supported agent turn via `Stop` or `SubagentStop` (Claude Code) or `AfterAgent` (Gemini). `notify-wrapper.sh` remains a manual wrapper path and smoke test, not a supported native Codex post-turn integration.
 
-`SubagentStop` fires when a Task agent (spawned via the Agent tool) completes. Wiring `post-turn-notify.py` to `SubagentStop` ensures that significant work done inside subagents also produces event shards, not just main-agent turns.
+`SubagentStop` fires when a Task agent (spawned via the Agent tool) completes. Wiring `post-turn-notify.py` to `SubagentStop` ensures that significant work done inside subagents also produces pending shards, not just main-agent turns.
 
 ### Meaningful turn gate
 
-**A shard is written only if `files_touched` is non-empty.** Turns with no tracked file changes produce no shard.
+**A pending raw shard is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no shard.
 
 ### What is captured
 
@@ -304,10 +311,10 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 | `branch` | `git rev-parse --abbrev-ref HEAD` |
 | `thread_id` | payload field or stable hash of payload |
 | `turn_id` | payload field or stable hash of payload |
-| `decision_candidate` | payload strings contain: decision, policy, contract, standard, repo rule, adr, must read, governing |
+| `decision_candidate` | `false` on the pending raw shard; may be flipped to `true` during enrichment or explicit ADR inspection |
 | `ai_model` | `CLAUDE_MODEL` env var → payload `model` field → `claude-unknown` |
 | `ai_tool` | `claude` / `gemini` / `codex` per agent detection |
-| `files_touched` | `git status --porcelain` excluding `.agents/memory/` and `.codex/local/` |
+| `files_touched` | `git status --porcelain` including newly created repo files, excluding `.agents/memory/`, `.codex/local/`, and other local-only paths |
 | `verification` | payload strings matching: pass, fail, error, warning, test, lint, build, verified |
 
 ### Shard filename
@@ -316,7 +323,7 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 <timestamp>--<author>--thread_<thread_id>--turn_<turn_id>.md
 ```
 
-If a shard for the same thread and turn already exists, the existing file is kept (idempotent).
+If a shard for the same thread and turn already exists, the existing timestamp is reused (idempotent) across both pending and published paths.
 
 ### Shard format
 
@@ -328,6 +335,7 @@ branch: "main"
 thread_id: "abc123"
 turn_id: "turn_def456"
 decision_candidate: false
+enriched: true
 ai_generated: true
 ai_model: "claude-sonnet-4-6"
 ai_tool: "claude"
@@ -361,10 +369,12 @@ bootstrapped_at: "2026-04-03T14:22:00Z"
 - <blocker or next-step matches from payload>
 ```
 
-### After writing
+### After capture
 
-1. Calls `rebuild-summary.py` to regenerate today's `summary.md`
-2. Auto-stages the shard and rebuilt summary via `git add`
+1. `post-turn-notify.py` writes the raw shard under `.agents/memory/pending/<date>/`
+2. If semantic context is available and enrichment succeeds, `enrich-shard.py` publishes the final shard under `.agents/memory/daily/<date>/events/`
+3. The publish step rebuilds `summary.md`, stages only the published shard plus summary, and removes the pending raw shard
+4. `.githooks/pre-commit` rejects commits that stage pending shards or any daily event shard still marked `enriched: false`
 
 ---
 
@@ -400,7 +410,7 @@ Also writes `.codex/local/sync_state.json` with `last_seen_head`, last ADR/summa
 
 ### Automatic triggers
 
-`.githooks/post-checkout`, `post-merge`, and `post-rewrite` each call `scripts/shared-repo-memory/run-catchup.sh`. A normal `git pull`, branch switch, or rebase automatically rebuilds the local digest.
+`.githooks/post-checkout`, `post-merge`, and `post-rewrite` each call `scripts/shared-repo-memory/run-catchup.sh`. A normal `git pull`, branch switch, or rebase automatically rebuilds the local digest. `.githooks/pre-commit` separately protects the publication boundary by rejecting raw shared-memory artifacts.
 
 ---
 
@@ -484,7 +494,8 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 
 ```
 agent turn completes
-    → shard written + summary rebuilt + both auto-staged
+    → pending raw shard written locally
+    → if enrichment succeeds: published shard + summary auto-staged
 
 developer commits (same commit as the code change)
     → memory is in Git history on the current branch

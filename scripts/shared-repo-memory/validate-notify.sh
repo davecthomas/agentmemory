@@ -2,7 +2,7 @@
 # validate-notify.sh -- Smoke-test the manual post-turn notify wrapper path.
 #
 # Sends a synthetic hook payload through notify-wrapper.sh and verifies that a
-# new event shard was created under .agents/memory/daily/<today>/events/.
+# new pending raw shard was created under .agents/memory/pending/<today>/.
 #
 # Use this script to confirm that post-turn-notify.py works when invoked
 # directly through the wrapper, or when troubleshooting missing shards.
@@ -17,8 +17,8 @@
 #   ./scripts/shared-repo-memory/validate-notify.sh
 #
 # Exit codes:
-#   0 -- validation succeeded; at least one new shard was created
-#   1 -- validation failed; no new shard was created (check hook trace log)
+#   0 -- validation succeeded; at least one new pending shard was created
+#   1 -- validation failed; no new pending shard was created (check hook trace log)
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -26,10 +26,10 @@ cd "$repo_root"
 
 today="$(date +%F)"
 
-# Count shards that exist before the validation run.
+# Count pending shards that exist before the validation run.
 before_count=0
-if [ -d ".agents/memory/daily/$today/events" ]; then
-  before_count="$(find ".agents/memory/daily/$today/events" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+if [ -d ".agents/memory/pending/$today" ]; then
+  before_count="$(find ".agents/memory/pending/$today" -maxdepth 1 -type f | wc -l | tr -d ' ')"
 fi
 
 # Build a synthetic payload that mimics what a real agent hook sends.
@@ -43,18 +43,18 @@ EOF
 # Pipe the payload through notify-wrapper.sh to exercise the manual wrapper path.
 printf '%s' "$payload" | ./scripts/shared-repo-memory/notify-wrapper.sh
 
-# Count shards after the run; a successful notify increases the count by at least one.
+# Count pending shards after the run; a successful notify increases the count by at least one.
 after_count=0
-if [ -d ".agents/memory/daily/$today/events" ]; then
-  after_count="$(find ".agents/memory/daily/$today/events" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+if [ -d ".agents/memory/pending/$today" ]; then
+  after_count="$(find ".agents/memory/pending/$today" -maxdepth 1 -type f | wc -l | tr -d ' ')"
 fi
 
 if [ "$after_count" -le "$before_count" ]; then
-  echo "[shared-repo-memory] notify-wrapper validation did not create a new event shard" >&2
+  echo "[shared-repo-memory] notify-wrapper validation did not create a new pending shard" >&2
   echo "[shared-repo-memory] check: do you have uncommitted tracked changes? (git status)" >&2
   echo "[shared-repo-memory] check: tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl" >&2
   exit 1
 fi
 
 echo "[shared-repo-memory] notify-wrapper validation succeeded"
-echo "[shared-repo-memory] this confirms the manual wrapper path only, not native Codex post-turn hook support"
+echo "[shared-repo-memory] this confirms the manual wrapper path only; durable publication still requires enrichment"

@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from collections import OrderedDict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,28 @@ SECTION_HEADINGS = [
 SECTION_ALIASES = {
     "Repo changes": "What changed",
 }
+
+# Repo-local state that must be ignored because it is derived or workstation-only.
+# bootstrap-repo.py appends these to each wired repository's .gitignore, and
+# session-start.py validates them so newly installed ignore rules are repaired.
+PENDING_SHARDS_RELATIVE_DIR: str = ".agents/memory/pending"
+MEMORY_LOGS_RELATIVE_DIR: str = ".agents/memory/logs"
+
+REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
+    "# Agent local state (never committed)",
+    ".codex/local/",
+    ".claude/local/",
+    ".claude/settings.local.json",
+    f"{PENDING_SHARDS_RELATIVE_DIR}/",
+    f"{MEMORY_LOGS_RELATIVE_DIR}/",
+)
+
+_LOCAL_STATE_PREFIXES: tuple[str, ...] = (
+    ".agents/memory/",
+    ".codex/local/",
+    ".claude/local/",
+)
+_LOCAL_STATE_FILES: tuple[str, ...] = (".claude/settings.local.json",)
 
 
 # ---------------------------------------------------------------------------
@@ -228,16 +251,50 @@ def current_branch(repo_root_path: str | Path) -> str:
     return branch or "HEAD"
 
 
-def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
-    """Return a deduplicated, sorted list of tracked files with uncommitted changes.
+def missing_gitignore_entries(
+    repo_root_path: str | Path,
+    required_entries: Sequence[str] | None = None,
+) -> list[str]:
+    """Return required shared-memory .gitignore entries that are absent in a repo.
+
+    Args:
+        repo_root_path: Absolute path to the repository root.
+        required_entries: Optional override list of required .gitignore entries.
+            When omitted, uses REQUIRED_GITIGNORE_ENTRIES.
+
+    Returns:
+        list[str]: Missing .gitignore lines in canonical order. The list is empty
+            when the repository already contains every required entry.
+    """
+    path_gitignore: Path = Path(repo_root_path) / ".gitignore"
+    tuple_required_entries: Sequence[str] = (
+        required_entries if required_entries is not None else REQUIRED_GITIGNORE_ENTRIES
+    )
+    str_existing_text: str = ""
+    if path_gitignore.exists():
+        str_existing_text = path_gitignore.read_text(encoding="utf-8")
+    set_existing_lines: set[str] = set(str_existing_text.splitlines())
+    list_str_missing_entries: list[str] = [
+        str_entry
+        for str_entry in tuple_required_entries
+        if str_entry not in set_existing_lines
+    ]
+    return list_str_missing_entries
+
+
+def changed_repo_files(repo_root_path: str | Path) -> list[str]:
+    """Return a deduplicated, sorted list of changed repo files, including new files.
 
     Excludes:
-      - Untracked files (they have not been added to the index yet).
       - Anything under .agents/memory/ (to avoid circular shard references).
       - Anything under .codex/local/ (ephemeral local state, never committed).
+      - Anything under .claude/local/ or .claude/settings.local.json (local-only).
 
     Rename entries ("old -> new") are normalised to the destination path only.
     The null-delimiter format (-z) avoids problems with spaces or newlines in paths.
+    Untracked files are intentionally included because new repo files are a
+    meaningful outcome of an agent turn and design doc creation must reach the
+    ADR inspection trigger.
 
     Args:
         repo_root_path: Absolute path to the repository root.
@@ -246,7 +303,7 @@ def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
         list[str]: Sorted, deduplicated POSIX paths relative to the repo root.
     """
     result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=no"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=str(repo_root_path),
         check=True,
         capture_output=True,
@@ -264,12 +321,27 @@ def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
             continue
         # Skip memory and local state paths -- they are managed by this system
         # and should not appear as "code changes" in shard metadata.
-        if normalized.startswith(".agents/memory/") or normalized.startswith(
-            ".codex/local/"
+        if (
+            normalized.startswith(_LOCAL_STATE_PREFIXES)
+            or normalized in _LOCAL_STATE_FILES
         ):
             continue
         changed.append(normalized)
     return sorted(dict.fromkeys(changed))
+
+
+def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
+    """Return changed repo files for compatibility with older callers.
+
+    Args:
+        repo_root_path: Absolute path to the repository root.
+
+    Returns:
+        list[str]: Same value returned by changed_repo_files(), which now
+            includes new untracked repo files in addition to tracked edits.
+    """
+    list_str_changed_files: list[str] = changed_repo_files(repo_root_path)
+    return list_str_changed_files
 
 
 def stage_paths(repo_root_path: str | Path, paths: list[str | Path]) -> None:
@@ -867,7 +939,6 @@ def info(message: str) -> None:
         message: Human-readable info text (no trailing newline needed).
     """
     print(f"[shared-repo-memory] {message}", file=sys.stderr)
-
 
 
 def append_hook_trace(

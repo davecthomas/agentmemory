@@ -32,6 +32,8 @@ htmlcov/
 # Local state (never committed -- agent catch-up digests and debug payloads)
 .codex/local/
 .claude/local/
+.claude/settings.local.json
+.agents/memory/pending/
 
 # Enrichment subagent logs (local debug output, never committed)
 .agents/memory/logs/

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """post-turn-notify.py -- Post-turn hook for the shared repo-memory system.
 
-This script fires after every agent turn.  Its job is to decide whether the
-turn was meaningful and, if so, write a permanent event shard capturing what
-changed, why, and what comes next.
+This script fires after every agent turn. Its job is to decide whether the turn
+was meaningful and, if so, write a local pending shard capturing the mechanical
+facts needed for semantic publication later.
 
 The "meaningful turn" gate
 --------------------------
-A shard is written only when tracked files changed in the working tree
+A pending raw shard is written only when repo files changed in the working tree
 (files_touched is non-empty).  Conversational turns with no repo changes --
 even long discussions that mention ADRs or decisions -- produce no shard.
 This prevents the memory from filling up with noise and false-positive
@@ -18,9 +18,14 @@ Triggered by:
   - Gemini CLI:   AfterAgent hook (hookEventName == "AfterAgent")
   - Codex CLI:    Invoked directly via scripts/shared-repo-memory/notify-wrapper.sh
 
-After writing the shard, this script:
-  1. Calls rebuild-summary.py to regenerate today's summary.md from all shards.
-  2. Stages the shard and rebuilt summary via git add (never commits).
+After writing the pending shard, this script may:
+  1. Save enrichment context and spawn an async subagent to publish an enriched
+     shard into `.agents/memory/daily/<date>/events/`.
+  2. Spawn an ADR inspection subagent when changed design docs were touched.
+
+The raw pending shard is local-only and must never be committed. Publication,
+summary rebuild, and staging happen only inside enrich-shard.py after semantic
+content is available.
 
 Install location after `./install.sh`:
   ~/.agent/shared-repo-memory/post-turn-notify.py
@@ -38,8 +43,10 @@ from pathlib import Path
 
 from adapters import ClaudeAdapter, detect_adapter, detect_adapter_from_hook_event
 from common import (
+    PENDING_SHARDS_RELATIVE_DIR,
     append_hook_trace,
     author_slug,
+    changed_repo_files,
     collect_matches,
     current_branch,
     ensure_dir,
@@ -47,10 +54,7 @@ from common import (
     flatten_strings,
     info,
     render_frontmatter,
-    run,
     safe_main,
-    stage_paths,
-    tracked_changed_files,
     try_repo_root,
     utc_now,
     utc_timestamp,
@@ -139,7 +143,6 @@ def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
     return f"{prefix}_{digest[:10]}"
 
 
-
 # ---------------------------------------------------------------------------
 # Diff-hash deduplication
 # ---------------------------------------------------------------------------
@@ -147,20 +150,66 @@ def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
 _DIFF_STATE_FILE = ".codex/local/last-shard-diff-state.json"
 
 
-def _diff_hash(repo_root: Path, files: list[str]) -> str:
-    """Return an MD5 of 'git diff HEAD -- <files>' for the given file list.
+def _file_is_tracked(repo_root: Path, str_path: str) -> bool:
+    """Return True when a path is already tracked by Git in the given repo.
 
-    An empty diff (all changes already staged/committed) produces a hash of
-    the empty string, which is still a valid stable value to compare against.
+    Args:
+        repo_root: Absolute path to the repository root.
+        str_path: Repo-relative file path to check.
+
+    Returns:
+        bool: True when git ls-files resolves the path; False for untracked files
+            or any lookup error.
     """
     try:
-        result = subprocess.run(
+        result: subprocess.CompletedProcess[bytes] = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", str_path],
+            cwd=str(repo_root),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def _diff_hash(repo_root: Path, files: list[str]) -> str:
+    """Return a stable hash of the current change content for the given files.
+
+    The hash includes both tracked Git diff output and the raw bytes of any
+    untracked files. This prevents new-file turns from collapsing to the same
+    empty-diff hash and preserves deduplication behavior across tracked and
+    untracked changes.
+    """
+    try:
+        digest = hashlib.md5()
+        result_unstaged = subprocess.run(
             ["git", "diff", "HEAD", "--"] + files,
             cwd=str(repo_root),
             capture_output=True,
             check=False,
         )
-        return hashlib.md5(result.stdout).hexdigest()
+        result_staged = subprocess.run(
+            ["git", "diff", "--cached", "--"] + files,
+            cwd=str(repo_root),
+            capture_output=True,
+            check=False,
+        )
+        digest.update(result_unstaged.stdout)
+        digest.update(result_staged.stdout)
+        for str_path in files:
+            if _file_is_tracked(repo_root, str_path):
+                continue
+            path_file: Path = repo_root / str_path
+            digest.update(b"\0UNTRACKED\0")
+            digest.update(str_path.encode("utf-8", errors="replace"))
+            if path_file.is_file():
+                digest.update(path_file.read_bytes())
+            elif path_file.is_dir():
+                digest.update(b"<directory>")
+            else:
+                digest.update(b"<missing>")
+        return digest.hexdigest()
     except Exception:
         return ""
 
@@ -202,6 +251,9 @@ def _diff_summary(repo_root: Path, files: list[str]) -> str:
     full diff as supporting detail.  Returns empty string on any failure.
     """
     try:
+        list_str_untracked_files: list[str] = [
+            str_path for str_path in files if not _file_is_tracked(repo_root, str_path)
+        ]
         stat = subprocess.run(
             ["git", "diff", "HEAD", "--stat", "--"] + files,
             cwd=str(repo_root),
@@ -218,6 +270,14 @@ def _diff_summary(repo_root: Path, files: list[str]) -> str:
                 text=True,
                 check=False,
             ).stdout.strip()
+        if not stat and list_str_untracked_files:
+            list_str_preview_paths: list[str] = list_str_untracked_files[:3]
+            str_preview: str = ", ".join(list_str_preview_paths)
+            if len(list_str_untracked_files) > len(list_str_preview_paths):
+                str_preview += ", ..."
+            count: int = len(list_str_untracked_files)
+            noun: str = "file" if count == 1 else "files"
+            stat = f"{count} new untracked {noun}: {str_preview}"
         # Pull a few representative added lines from the diff
         diff_text = subprocess.run(
             ["git", "diff", "HEAD", "-U0", "--"] + files,
@@ -295,6 +355,101 @@ def build_why_lines(str_prompt: str | None, str_diff_summary: str) -> list[str]:
     return list_str_why_lines  # Normal exit.
 
 
+def parse_timestamp_from_shard_name(str_shard_name: str) -> str:
+    """Return the canonical ISO timestamp encoded in a shard filename.
+
+    Args:
+        str_shard_name: Basename such as
+            `2026-04-07T18-42-00Z--alice--thread_x--turn_y.md`.
+
+    Returns:
+        str: Timestamp in the form `YYYY-MM-DDTHH:MM:SSZ`.
+    """
+    str_raw_timestamp: str = str_shard_name.split("--", 1)[0]
+    str_date_part: str
+    str_time_part: str
+    str_date_part, str_time_part = str_raw_timestamp.split("T", 1)
+    str_timestamp: str = f"{str_date_part}T{str_time_part.replace('-', ':')}"
+    return str_timestamp
+
+
+def find_existing_turn_artifact(
+    repo_root: Path, thread_id: str, turn_id: str
+) -> Path | None:
+    """Return an existing pending or published shard for the current thread+turn.
+
+    Published daily shards take precedence over pending raw shards so retries use
+    the already-published timestamp when both somehow exist.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        thread_id: Stable thread identifier for the current turn.
+        turn_id: Stable turn identifier for the current turn.
+
+    Returns:
+        Path | None: Existing artifact path when one already exists, or None when
+            this is the first capture for the thread+turn combination.
+    """
+    str_pattern: str = f"*--thread_{thread_id}--turn_{turn_id}.md"
+    path_daily_root: Path = repo_root / ".agents" / "memory" / "daily"
+    list_path_published_matches: list[Path] = sorted(
+        path_daily_root.glob(f"*/events/{str_pattern}")
+    )
+    if list_path_published_matches:
+        path_existing_published: Path = list_path_published_matches[0]
+        return path_existing_published
+
+    path_pending_root: Path = repo_root / PENDING_SHARDS_RELATIVE_DIR
+    list_path_pending_matches: list[Path] = sorted(
+        path_pending_root.glob(f"*/{str_pattern}")
+    )
+    if list_path_pending_matches:
+        path_existing_pending: Path = list_path_pending_matches[0]
+        return path_existing_pending
+
+    return None
+
+
+def published_shard_path(repo_root: Path, timestamp: str, basename: str) -> Path:
+    """Return the durable published shard path for one shard basename.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        timestamp: Canonical UTC timestamp for the shard.
+        basename: Shard filename stem without the `.md` suffix.
+
+    Returns:
+        Path: Absolute path under `.agents/memory/daily/<date>/events/`.
+    """
+    path_published_shard: Path = (
+        repo_root
+        / ".agents"
+        / "memory"
+        / "daily"
+        / timestamp[:10]
+        / "events"
+        / f"{basename}.md"
+    )
+    return path_published_shard
+
+
+def pending_shard_path(repo_root: Path, timestamp: str, basename: str) -> Path:
+    """Return the ignored pending shard path for one shard basename.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        timestamp: Canonical UTC timestamp for the shard.
+        basename: Shard filename stem without the `.md` suffix.
+
+    Returns:
+        Path: Absolute path under `.agents/memory/pending/<date>/`.
+    """
+    path_pending_shard: Path = (
+        repo_root / PENDING_SHARDS_RELATIVE_DIR / timestamp[:10] / f"{basename}.md"
+    )
+    return path_pending_shard
+
+
 # ---------------------------------------------------------------------------
 # Design doc detection patterns
 # ---------------------------------------------------------------------------
@@ -340,6 +495,7 @@ def _is_design_doc(file_path: str) -> bool:
 # Async subagent spawning: shard enrichment and ADR inspection
 # ---------------------------------------------------------------------------
 
+
 def _open_enrichment_log(repo_root: Path) -> object:
     """Open (or create) the enrichment log file for subprocess output.
 
@@ -352,6 +508,21 @@ def _open_enrichment_log(repo_root: Path) -> object:
     log_dir: Path = repo_root / ".agents" / "memory" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return open(log_dir / "enrichment.log", "a")  # noqa: SIM115
+
+
+def _enrichment_context_dir(repo_root: Path) -> Path:
+    """Return the ignored directory used for ephemeral enrichment context files.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        Path: Absolute path to the local-only enrichment context directory.
+    """
+    path_context_dir: Path = ensure_dir(
+        repo_root / ".agents" / "memory" / "logs" / "enrichment-context"
+    )
+    return path_context_dir
 
 
 def _spawn_enrichment(
@@ -383,9 +554,7 @@ def _spawn_enrichment(
         skill_content, task, repo_root
     )
     if cmd is None:
-        cmd = ClaudeAdapter.build_bootstrap_command(
-            skill_content, task, repo_root
-        )
+        cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
     if cmd is None:
         return False
 
@@ -471,14 +640,18 @@ def _emit(adapter: type, status: str, message: str = "", **extra: object) -> Non
         **extra: Additional key-value pairs merged into the response.
     """
     filtered = {k: v for k, v in extra.items() if v is not None}
-    print(adapter.render_hook_response(HookResponse(status=status, message=message, extra=filtered)))
+    print(
+        adapter.render_hook_response(
+            HookResponse(status=status, message=message, extra=filtered)
+        )
+    )
 
 
 def main() -> int:
     """Post-turn hook entry point.
 
     Reads the hook payload from stdin, evaluates whether the turn was meaningful,
-    writes a shard if so, and rebuilds the daily summary.
+    writes a pending shard if so, and optionally spawns async publication work.
 
     Returns:
         int: 0 on success or graceful noop; 1 on hard error.
@@ -507,7 +680,11 @@ def main() -> int:
     cwd_override = req.cwd or args.repo_root
     repo_root = try_repo_root(cwd_override)
     if repo_root is None:
-        _emit(adapter, "noop", message="current working directory is not inside a Git repository")
+        _emit(
+            adapter,
+            "noop",
+            message="current working directory is not inside a Git repository",
+        )
         return 0
 
     append_hook_trace("Notify", "started", repo_root=repo_root)
@@ -519,7 +696,7 @@ def main() -> int:
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
     )
 
-    # Canonical memory directory must exist; it is created by bootstrap-repo.sh
+    # Canonical memory directory must exist; it is created by bootstrap-repo.py
     # which SessionStart calls on every session open.
     if not (repo_root / ".agents" / "memory").is_dir():
         append_hook_trace(
@@ -529,14 +706,18 @@ def main() -> int:
             details={"reason": "missing_agents_memory_dir"},
         )
         warn(
-            "missing .agents/memory/; run bootstrap-repo.sh or re-open Claude to trigger SessionStart"
+            "missing .agents/memory/; run bootstrap-repo.py or re-open Claude to trigger SessionStart"
         )
-        _emit(adapter, "error", message="missing .agents/memory/ directory; repo not bootstrapped")
+        _emit(
+            adapter,
+            "error",
+            message="missing .agents/memory/ directory; repo not bootstrapped",
+        )
         return 1
 
     # Collect evidence and metadata from the payload.
     strings = flatten_strings(payload)
-    files_touched = tracked_changed_files(repo_root)
+    files_touched = changed_repo_files(repo_root)
     verification = collect_matches(
         strings,
         r"\b(pass(ed)?|fail(ed|ure)?|error|warning|test|lint|build|verified?)\b",
@@ -544,19 +725,25 @@ def main() -> int:
     blockers = collect_matches(
         strings, r"\b(blocked|blocker|waiting on|cannot|can't|stuck)\b"
     )
-    # Meaningful turn gate: a shard is ONLY written when tracked files changed.
+    # Meaningful turn gate: a shard is ONLY written when repo files changed.
     # Decision keyword matches alone are insufficient -- every discussion of this
     # system's own design would match, producing shards with no real content.
     if not files_touched:
         append_hook_trace(
             "Notify", "noop", repo_root=repo_root, details={"reason": "not_meaningful"}
         )
-        _emit(adapter, "noop", message="notify payload was not meaningful; no shard written")
+        _emit(
+            adapter,
+            "noop",
+            message="notify payload was not meaningful; no shard written",
+        )
         return 0
 
     # Build shard identity fields from the normalised request.
     # Fall back to stable hash-based identifiers when the payload lacks explicit IDs.
-    thread_id = (req.thread_id or stable_identifier("thread", payload)).replace(" ", "_")
+    thread_id = (req.thread_id or stable_identifier("thread", payload)).replace(
+        " ", "_"
+    )
     model = adapter.resolve_model(payload)
 
     # Diff-hash deduplication gate: git status is sticky -- once a file is
@@ -571,7 +758,11 @@ def main() -> int:
             repo_root=repo_root,
             details={"reason": "diff_unchanged_since_last_shard"},
         )
-        _emit(adapter, "noop", message="diff unchanged since last shard for this thread; skipping duplicate")
+        _emit(
+            adapter,
+            "noop",
+            message="diff unchanged since last shard for this thread; skipping duplicate",
+        )
         return 0
 
     now = utc_now()
@@ -588,11 +779,11 @@ def main() -> int:
         "hookEventName",
     }
     payload_for_turn_hash = {k: v for k, v in payload.items() if k not in volatile_keys}
-    turn_id = (
-        req.turn_id or stable_identifier("turn", payload_for_turn_hash)
-    ).replace(" ", "_")
+    turn_id = (req.turn_id or stable_identifier("turn", payload_for_turn_hash)).replace(
+        " ", "_"
+    )
 
-    # Extract "why" text: prefer the user's prompt, fall back to the assistant response.
+    # Extract "why" seed text from the user task, optionally via transcript fallback.
     prompt = req.prompt
     if not prompt and req.transcript_path:
         prompt = extract_user_prompt_from_transcript(req.transcript_path)
@@ -604,16 +795,16 @@ def main() -> int:
     why_lines = build_why_lines(prompt, diff_summary)
 
     what_lines = [f"- Updated {path}" for path in files_touched] or [
-        "- No tracked files were detected."
+        "- No repo files were detected."
     ]
     # Evidence: include the git diff summary as a concrete signal when available.
     evidence_lines = verification[:]
     if diff_summary:
         evidence_lines.insert(0, f"- git diff: {diff_summary}")
     if not evidence_lines:
-        evidence_lines = ["- Tracked repo changes were detected in the working tree."]
+        evidence_lines = ["- Repo changes were detected in the working tree."]
     next_lines = blockers or [
-        "- Review the generated shard and summary, then explicitly commit and push them with the related code changes if ready."
+        "- Wait for enrichment to publish a durable shard before committing shared memory artifacts."
     ]
 
     # Scan the payload for any ADR cross-references so we can link them in the shard.
@@ -621,28 +812,23 @@ def main() -> int:
         set(re.findall(r"\bADR-\d{4}\b", "\n".join(strings), re.IGNORECASE))
     )
 
-    # Determine the shard output path.
-    day_dir = ensure_dir(repo_root / ".agents/memory" / "daily" / timestamp[:10])
-    events_dir = ensure_dir(day_dir / "events")
-
-    # Idempotency: if a shard for this thread+turn already exists, keep it.
-    existing_shards: list[Path] = list(
-        events_dir.glob(f"*--thread_{thread_id}--turn_{turn_id}.md")
+    # Determine stable pending and published paths for this thread+turn.
+    path_existing_artifact: Path | None = find_existing_turn_artifact(
+        repo_root, thread_id, turn_id
     )
-    if existing_shards:
-        shard_path = existing_shards[0]
-        # Preserve the original timestamp from the filename so re-runs don't drift.
-        # Shard filenames use dashes instead of colons in the time portion
-        # (e.g. "2026-04-02T23-27-09Z") for filesystem safety; reconstruct the
-        # canonical ISO-8601 form by restoring colons in the time part only.
-        raw_ts: str = shard_path.name.split("--")[0]
-        date_str: str
-        time_str: str
-        date_str, time_str = raw_ts.split("T", 1)
-        timestamp = f"{date_str}T{time_str.replace('-', ':')}"
+    if path_existing_artifact is not None:
+        timestamp = parse_timestamp_from_shard_name(path_existing_artifact.name)
+        str_basename: str = path_existing_artifact.stem
     else:
-        basename = f"{timestamp.replace(':', '-')}--{author}--thread_{thread_id}--turn_{turn_id}"
-        shard_path = events_dir / f"{basename}.md"
+        str_basename = (
+            f"{timestamp.replace(':', '-')}"
+            f"--{author}--thread_{thread_id}--turn_{turn_id}"
+        )
+
+    path_pending_shard: Path = pending_shard_path(repo_root, timestamp, str_basename)
+    path_published_shard: Path = published_shard_path(
+        repo_root, timestamp, str_basename
+    )
 
     # Assign agent attribution from the detected adapter.
     attribution = adapter.shard_attribution()
@@ -691,70 +877,22 @@ def main() -> int:
         *next_lines,
         "",
     ]
-    write_text(shard_path, "\n".join(body_lines))
-
-    # Rebuild today's summary from the full shard set (including the new shard).
-    try:
-        run(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("rebuild-summary.py")),
-                "--repo-root",
-                str(repo_root),
-                "--date",
-                timestamp[:10],
-            ],
-            cwd=repo_root,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        # Log the actual error so it's diagnosable -- previously swallowed.
-        warn(f"rebuild-summary.py failed (exit {exc.returncode})")
-        if exc.stdout:
-            warn(f"  stdout: {exc.stdout.strip()}")
-        if exc.stderr:
-            warn(f"  stderr: {exc.stderr.strip()}")
-        append_hook_trace(
-            "Notify",
-            "error",
-            repo_root=repo_root,
-            details={
-                "reason": "rebuild_summary_failed",
-                "exit_code": exc.returncode,
-                "stderr": (exc.stderr or "")[:1000],
-            },
-        )
-        # Shard was already written; degrade gracefully rather than aborting.
-        _emit(adapter, "error", message=f"shard written but summary rebuild failed: {(exc.stderr or '').strip()[:200]}")
-        return 1
-
-    summary_path = day_dir / "summary.md"
-    if not summary_path.exists():
-        warn("summary rebuild did not produce summary.md")
-        _emit(adapter, "error", message="summary rebuild did not produce summary.md")
-        return 1
+    write_text(path_pending_shard, "\n".join(body_lines))
 
     # Persist the diff hash so subsequent turns can detect unchanged diffs and
-    # skip writing duplicate shards for the same working-tree state.
+    # skip writing duplicate pending shards for the same working-tree state.
     _save_diff_state(repo_root, thread_id, current_diff_hash)
-
-    # Stage the shard and rebuilt summary so they are ready to commit alongside
-    # the code changes.  The developer must commit explicitly -- this system
-    # never auto-commits.
-    stage_paths(
-        repo_root,
-        [shard_path.relative_to(repo_root), summary_path.relative_to(repo_root)],
-    )
 
     # --- Async Phase 2: shard enrichment via subagent ---
     # Save enrichment context for the subagent to read, then fire-and-forget.
-    # The raw shard is already written and staged; enrichment improves it
-    # asynchronously without blocking the hook.
+    # The pending shard is local-only. Publication into the committed daily
+    # namespace happens only if enrich-shard.py runs successfully.
     bool_enrichment_spawned: bool = False
     assistant_text: str = req.assistant_text or ""
     if assistant_text or prompt:
         context_data: dict[str, object] = {
-            "shard_path": str(shard_path),
+            "shard_path": str(path_pending_shard),
+            "published_shard_path": str(path_published_shard),
             "repo_root": str(repo_root),
             "assistant_text": assistant_text[:8000],
             "prompt": prompt or "",
@@ -762,12 +900,17 @@ def main() -> int:
             "diff_summary": diff_summary,
         }
         context_filename: str = f".enrich-{turn_id}.json"
-        context_path: Path = events_dir / context_filename
+        path_context_dir: Path = _enrichment_context_dir(repo_root)
+        context_path: Path = path_context_dir / context_filename
         try:
-            write_text(context_path, json.dumps(context_data, indent=2, sort_keys=True) + "\n")
-            bool_enrichment_spawned = _spawn_enrichment(adapter, context_path, repo_root)
+            write_text(
+                context_path, json.dumps(context_data, indent=2, sort_keys=True) + "\n"
+            )
+            bool_enrichment_spawned = _spawn_enrichment(
+                adapter, context_path, repo_root
+            )
             if bool_enrichment_spawned:
-                info(f"spawned enrichment subagent for {shard_path.name}")
+                info(f"spawned enrichment subagent for {path_published_shard.name}")
             elif context_path.exists():
                 # No subagent CLI available; clean up context file.
                 context_path.unlink(missing_ok=True)
@@ -782,7 +925,9 @@ def main() -> int:
     if design_docs:
         bool_inspection_spawned = _spawn_adr_inspection(adapter, design_docs, repo_root)
         if bool_inspection_spawned:
-            info(f"spawned ADR inspection subagent for {len(design_docs)} design doc(s)")
+            info(
+                f"spawned ADR inspection subagent for {len(design_docs)} design doc(s)"
+            )
 
     append_hook_trace(
         "Notify",
@@ -790,8 +935,8 @@ def main() -> int:
         repo_root=repo_root,
         details={
             "files_touched": files_touched,
-            "shard_path": str(shard_path.relative_to(repo_root)),
-            "summary_path": str(summary_path.relative_to(repo_root)),
+            "pending_shard_path": str(path_pending_shard.relative_to(repo_root)),
+            "published_shard_path": str(path_published_shard.relative_to(repo_root)),
             "thread_id": thread_id,
             "turn_id": turn_id,
             "enrichment_spawned": bool_enrichment_spawned,
@@ -799,12 +944,12 @@ def main() -> int:
             "design_docs_touched": design_docs,
         },
     )
-    info(f"wrote {shard_path.relative_to(repo_root)}")
+    info(f"wrote pending shard {path_pending_shard.relative_to(repo_root)}")
     _emit(
         adapter,
         "ok",
-        shard_path=str(shard_path.relative_to(repo_root)),
-        summary_path=str(summary_path.relative_to(repo_root)),
+        pending_shard_path=str(path_pending_shard.relative_to(repo_root)),
+        published_shard_path=str(path_published_shard.relative_to(repo_root)),
     )
     return 0
 
