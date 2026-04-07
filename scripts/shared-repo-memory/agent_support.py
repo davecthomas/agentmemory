@@ -36,10 +36,12 @@ class AgentSupport:
             memory after context compaction.
         str_post_turn_mode: Short label describing how post-turn capture is
             delivered today, such as "native" or "manual wrapper only".
-        bool_supports_shard_enrichment: True when the runtime can spawn a
-            subagent to semantically enrich raw shards after post-turn capture.
-        bool_supports_design_doc_inspection: True when the runtime can spawn a
-            subagent to inspect changed design docs for ADR-worthy decisions.
+        bool_supports_shard_enrichment: True when the runtime can automatically
+            spawn a subagent to semantically enrich raw shards after post-turn
+            capture.  Requires working post-turn hooks.
+        bool_supports_design_doc_inspection: True when the runtime can inspect
+            design docs for ADR-worthy decisions, either automatically via
+            post-turn hooks or manually via the adr-inspector skill.
         str_notes: Operator-facing note about important support limitations.
     """
 
@@ -129,13 +131,14 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_post_compact=False,
             str_post_turn_mode="manual wrapper only",
             bool_supports_shard_enrichment=False,
-            bool_supports_design_doc_inspection=False,
+            bool_supports_design_doc_inspection=True,
             str_notes=(
-                "Supported for SessionStart only. Repo-local notify-wrapper "
-                "smoke tests exist, but native post-turn capture is not a "
-                "supported provisioned path. Shard enrichment and design doc "
-                "inspection are unavailable until post-turn hooks are confirmed "
-                "working in a future Codex release."
+                "Supported for SessionStart and prompt guard. Repo-local "
+                "notify-wrapper smoke tests exist, but native post-turn "
+                "capture is not a supported provisioned path. Shard "
+                "enrichment requires post-turn hooks and is unavailable. "
+                "Design doc ADR inspection is available via manual "
+                "invocation of the adr-inspector skill."
             ),
         ),
     ]

@@ -672,4 +672,4 @@ def test_agent_support_includes_enrichment_capabilities():
     assert gemini_entry.bool_supports_shard_enrichment is True
     assert gemini_entry.bool_supports_design_doc_inspection is True
     assert codex_entry.bool_supports_shard_enrichment is False
-    assert codex_entry.bool_supports_design_doc_inspection is False
+    assert codex_entry.bool_supports_design_doc_inspection is True
