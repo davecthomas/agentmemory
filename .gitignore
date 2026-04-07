@@ -33,6 +33,9 @@ htmlcov/
 .codex/local/
 .claude/local/
 
+# Enrichment subagent logs (local debug output, never committed)
+.agents/memory/logs/
+
 # Environment variables (may contain secrets)
 .env
 *.env

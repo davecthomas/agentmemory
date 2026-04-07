@@ -137,23 +137,22 @@ def _extract_frontmatter(shard_text: str) -> tuple[str, str]:
     return frontmatter_block, body
 
 
-def _update_decision_candidate(frontmatter: str, is_candidate: bool) -> str:
-    """Update the decision_candidate field in frontmatter YAML.
+def _update_frontmatter_bool(frontmatter: str, field: str, value: bool) -> str:
+    """Update a boolean field in frontmatter YAML.
 
     Args:
         frontmatter: The frontmatter block including --- delimiters.
-        is_candidate: Whether this shard should be flagged as a decision candidate.
+        field: The YAML field name to update (e.g., "decision_candidate").
+        value: The new boolean value to set.
 
     Returns:
-        str: Updated frontmatter with the decision_candidate field set.
+        str: Updated frontmatter with the field set.
     """
-    old_value: str = "decision_candidate: false"
-    new_value: str = f"decision_candidate: {'true' if is_candidate else 'false'}"
-    if old_value in frontmatter:
-        return frontmatter.replace(old_value, new_value, 1)
-    old_true: str = "decision_candidate: true"
-    if old_true in frontmatter:
-        return frontmatter.replace(old_true, new_value, 1)
+    new_line: str = f"{field}: {'true' if value else 'false'}"
+    for old_val in ("true", "false"):
+        old_line: str = f"{field}: {old_val}"
+        if old_line in frontmatter:
+            return frontmatter.replace(old_line, new_line, 1)
     return frontmatter
 
 
@@ -206,8 +205,9 @@ def main() -> int:
         warn(f"shard has no valid frontmatter: {shard_path}")
         return 1
 
-    # Update decision_candidate in frontmatter if enrichment says so.
-    frontmatter = _update_decision_candidate(frontmatter, args.decision_candidate)
+    # Update frontmatter boolean fields: mark as enriched and set decision_candidate.
+    frontmatter = _update_frontmatter_bool(frontmatter, "decision_candidate", args.decision_candidate)
+    frontmatter = _update_frontmatter_bool(frontmatter, "enriched", True)
 
     # Build enriched body sections.
     why_lines: list[str] = _format_section_lines(args.why)

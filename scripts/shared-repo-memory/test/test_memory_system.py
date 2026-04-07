@@ -66,11 +66,14 @@ def repo(tmp_path):
     )
     (home_dir / ".agent" / "state").mkdir(parents=True, exist_ok=True)
 
-    # Run bootstrap
+    # Run bootstrap using sys.executable to ensure the correct Python version.
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
     subprocess.run(
-        [SCRIPT_DIR / "bootstrap-repo.sh"], cwd=repo_dir, check=True, env=env
+        [sys.executable, SCRIPT_DIR / "bootstrap-repo.py"],
+        cwd=repo_dir,
+        check=True,
+        env=env,
     )
 
     return repo_dir, home_dir
@@ -148,7 +151,7 @@ def test_post_turn_notify_creates_shard_and_summary(repo):
 
     # Run notify script with payload piped to stdin
     subprocess.run(
-        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -186,7 +189,7 @@ def test_post_turn_notify_ignores_assistant_chatter_for_why(repo):
     env["HOME"] = str(home_dir)
 
     subprocess.run(
-        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -214,7 +217,7 @@ def test_post_turn_notify_noops_outside_git_repo(non_repo):
     env["HOME"] = str(home_dir)
 
     result = subprocess.run(
-        ["python3", SCRIPT_DIR / "post-turn-notify.py"],
+        [sys.executable, SCRIPT_DIR / "post-turn-notify.py"],
         cwd=work_dir,
         input=json.dumps({"hook_event_name": "AfterAgent", "prompt": "test"}),
         text=True,
@@ -237,7 +240,7 @@ def test_session_start_noops_outside_git_repo_with_json_stdout(non_repo):
     env["HOME"] = str(home_dir)
 
     result = subprocess.run(
-        ["python3", SCRIPT_DIR / "session-start.py"],
+        [sys.executable, SCRIPT_DIR / "session-start.py"],
         cwd=work_dir,
         input=json.dumps({"hook_event_name": "SessionStart"}),
         text=True,
@@ -345,7 +348,7 @@ Added automated tests.
     # Run promote-adr.py
     subprocess.run(
         [
-            "python3",
+            sys.executable,
             SCRIPT_DIR / "promote-adr.py",
             "--repo-root",
             str(repo_dir),
@@ -406,7 +409,7 @@ def test_build_catchup_generates_file(repo):
 
     # Run build-catchup.py
     subprocess.run(
-        ["python3", SCRIPT_DIR / "build-catchup.py", "--repo-root", str(repo_dir)],
+        [sys.executable, SCRIPT_DIR / "build-catchup.py", "--repo-root", str(repo_dir)],
         cwd=repo_dir,
         check=True,
         env=env,
@@ -431,7 +434,7 @@ def test_prompt_guard_injects_one_time_news_nudge(repo):
     payload = {"session_id": "prompt-guard-test", "hook_event_name": "UserPromptSubmit"}
 
     first_result = subprocess.run(
-        ["python3", SCRIPT_DIR / "prompt-guard.py"],
+        [sys.executable, SCRIPT_DIR / "prompt-guard.py"],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -440,7 +443,7 @@ def test_prompt_guard_injects_one_time_news_nudge(repo):
         env=env,
     )
     second_result = subprocess.run(
-        ["python3", SCRIPT_DIR / "prompt-guard.py"],
+        [sys.executable, SCRIPT_DIR / "prompt-guard.py"],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -483,7 +486,7 @@ def test_post_turn_notify_writes_enrichment_context(repo):
     env["HOME"] = str(home_dir)
 
     result = subprocess.run(
-        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -542,7 +545,7 @@ def test_post_turn_notify_detects_design_doc_changes(repo):
     env["HOME"] = str(home_dir)
 
     result = subprocess.run(
-        ["python3", SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
+        [sys.executable, SCRIPT_DIR / "post-turn-notify.py", "--repo-root", str(repo_dir)],
         cwd=repo_dir,
         input=json.dumps(payload),
         text=True,
@@ -626,7 +629,7 @@ verification:
     # Run enrich-shard.py directly.
     subprocess.run(
         [
-            "python3",
+            sys.executable,
             SCRIPT_DIR / "enrich-shard.py",
             str(context_path),
             "--why", "Added JWT authentication middleware to enforce API security boundaries.",

@@ -140,30 +140,6 @@ def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
 
 
 
-def decision_candidate(strings: list[str]) -> bool:
-    """Return True if any string in the payload suggests an architectural decision was made.
-
-    Scans for keywords associated with deliberate design choices: "decision",
-    "policy", "contract", "standard", "repo rule", "adr", "must read", "governing".
-
-    Note: This is used only to annotate the shard's decision_candidate field.
-    It is NOT used as a gate for whether a shard is written -- that gate is
-    files_touched.  This prevents conversational mentions of these keywords
-    from generating false-positive shards with no real content.
-
-    Args:
-        strings: Pre-flattened string values from the hook payload.
-
-    Returns:
-        bool: True if any string contains a decision keyword.
-    """
-    pattern = re.compile(
-        r"\b(decision|policy|contract|standard|repo rule|adr|must read|governing)\b",
-        re.IGNORECASE,
-    )
-    return any(pattern.search(value) for value in strings)
-
-
 # ---------------------------------------------------------------------------
 # Diff-hash deduplication
 # ---------------------------------------------------------------------------
@@ -349,41 +325,6 @@ def _is_design_doc(file_path: str) -> bool:
 # Async subagent spawning: shard enrichment and ADR inspection
 # ---------------------------------------------------------------------------
 
-_ENRICH_SKILL_PROMPT: str = """You are a memory enrichment agent. Your job is to rewrite a raw event shard
-with semantically meaningful content.
-
-You will receive the path to a JSON context file. Read it. It contains:
-- assistant_text: the agent's response from the turn (the richest signal)
-- prompt: the user's task that drove the changes
-- files_touched: which files changed
-- diff_summary: compact git diff output
-- shard_path: the raw shard to overwrite
-- repo_root: absolute path to the repository
-
-Your task:
-1. Read the context JSON file.
-2. Distill the assistant_text and prompt into meaningful shard content.
-3. Call enrich-shard.py to overwrite the raw shard with enriched content.
-
-When calling enrich-shard.py, provide:
-- --why: 1-3 sentences about WHY this change matters architecturally. Not a restatement of the diff. Focus on intent, motivation, and significance.
-- --what: Semantic summary of what was done. Purpose and impact, not filenames.
-- --evidence: Concrete signals -- test results, design doc alignment, architectural choices made.
-- --next: Genuine follow-up work, unresolved issues, or architectural implications.
-- --decision-candidate: Include this flag ONLY if the turn involved a durable architectural decision (architecture boundaries, API contracts, tool choices, accepted tradeoffs, invariants).
-
-Example invocation:
-  python3 $HOME/.agent/shared-repo-memory/enrich-shard.py /path/to/context.json \\
-      --why "Extracted runtime-specific behavior into adapter modules to keep the core memory engine agent-neutral, following the design doc's separation of concerns." \\
-      --what "Introduced AgentAdapter protocol with concrete implementations for Claude, Gemini, and Codex. Moved payload normalization, response rendering, and hook wiring out of entrypoints into adapter modules." \\
-      --evidence "All 57 existing tests pass. Adapter pattern matches the target architecture in docs/agent-runtime-adapter-refactor-plan.md." \\
-      --next "prompt-guard.py still uses manual payload parsing. Design doc auto-generation from capability registry (step 5) not yet implemented." \\
-      --decision-candidate
-
-Keep each section concise (1-5 bullet points or sentences). Do not dump raw assistant text.
-"""
-
-
 def _open_enrichment_log(repo_root: Path) -> object:
     """Open (or create) the enrichment log file for subprocess output.
 
@@ -405,7 +346,7 @@ def _spawn_enrichment(
 ) -> bool:
     """Fire-and-forget a subagent to enrich a raw shard with semantic content.
 
-    Uses the detected adapter's build_bootstrap_command() to spawn the subagent.
+    Loads the shard-enricher skill and spawns the subagent via the adapter's CLI.
     Falls back to ClaudeAdapter when the adapter cannot spawn subagents.
 
     Args:
@@ -416,13 +357,19 @@ def _spawn_enrichment(
     Returns:
         bool: True if a subprocess was launched, False if skipped.
     """
+    skill_path: Path = Path.home() / ".agent" / "skills" / "shard-enricher" / "SKILL.md"
+    if not skill_path.exists():
+        warn("shard-enricher skill not installed; skipping enrichment")
+        return False
+
+    skill_content: str = skill_path.read_text(encoding="utf-8")
     task: str = f"Enrich the shard using context at: {context_path}"
     cmd: list[str] | None = adapter.build_bootstrap_command(
-        _ENRICH_SKILL_PROMPT, task, repo_root
+        skill_content, task, repo_root
     )
     if cmd is None:
         cmd = ClaudeAdapter.build_bootstrap_command(
-            _ENRICH_SKILL_PROMPT, task, repo_root
+            skill_content, task, repo_root
         )
     if cmd is None:
         return False
@@ -440,6 +387,8 @@ def _spawn_enrichment(
     except OSError:
         warn(f"enrichment subagent launch failed for {adapter.agent_id()}")
         return False
+    finally:
+        log_file.close()
 
 
 def _spawn_adr_inspection(
@@ -493,6 +442,8 @@ def _spawn_adr_inspection(
     except OSError:
         warn(f"ADR inspection subagent launch failed for {adapter.agent_id()}")
         return False
+    finally:
+        log_file.close()
 
 
 def _emit(adapter: type, status: str, message: str = "", **extra: object) -> None:
@@ -578,8 +529,6 @@ def main() -> int:
     blockers = collect_matches(
         strings, r"\b(blocked|blocker|waiting on|cannot|can't|stuck)\b"
     )
-    is_decision_candidate = decision_candidate(strings)
-
     # Meaningful turn gate: a shard is ONLY written when tracked files changed.
     # Decision keyword matches alone are insufficient -- every discussion of this
     # system's own design would match, producing shards with no real content.
@@ -695,7 +644,8 @@ def main() -> int:
             ("branch", branch),
             ("thread_id", thread_id),
             ("turn_id", turn_id),
-            ("decision_candidate", is_decision_candidate),
+            ("decision_candidate", False),
+            ("enriched", False),
             ("ai_generated", True),
             ("ai_model", model),
             ("ai_tool", ai_tool),
@@ -732,6 +682,7 @@ def main() -> int:
     try:
         run(
             [
+                sys.executable,
                 str(Path(__file__).with_name("rebuild-summary.py")),
                 "--repo-root",
                 str(repo_root),
@@ -823,7 +774,6 @@ def main() -> int:
         "success",
         repo_root=repo_root,
         details={
-            "decision_candidate": is_decision_candidate,
             "files_touched": files_touched,
             "shard_path": str(shard_path.relative_to(repo_root)),
             "summary_path": str(summary_path.relative_to(repo_root)),
