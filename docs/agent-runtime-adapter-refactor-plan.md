@@ -135,7 +135,7 @@ The subagent replaces the four body sections of the raw shard:
 - **Evidence**: Concrete signals -- test results, design doc alignment, specific architectural choices made.
 - **Next**: Genuine follow-up work, unresolved issues, or architectural implications.
 
-Frontmatter is preserved exactly. Only body sections change.
+Existing frontmatter is otherwise preserved, but enrichment may update system-managed frontmatter fields such as `decision_candidate` and `enriched`. The substantive content change is limited to the four body sections above.
 
 ### Graceful degradation
 

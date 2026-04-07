@@ -299,8 +299,9 @@ def build_why_lines(str_prompt: str | None, str_diff_summary: str) -> list[str]:
 # Design doc detection patterns
 # ---------------------------------------------------------------------------
 
+_DOC_EXTENSIONS: set[str] = {".md", ".rst", ".mdx", ".txt"}
+
 _DESIGN_DOC_PATTERNS: list[str] = [
-    "docs/",
     "design",
     "spec",
     "arch",
@@ -311,14 +312,28 @@ _DESIGN_DOC_PATTERNS: list[str] = [
 def _is_design_doc(file_path: str) -> bool:
     """Return True if a file path looks like a design document.
 
+    A file qualifies when it lives under docs/ with a doc extension, or when
+    its path contains a design-related keyword AND has a doc extension.  This
+    avoids false positives on code files whose paths happen to contain
+    substrings like "spec" or "adr" (e.g., skills/adr-inspector/SKILL.md
+    is a skill, not a design doc).
+
     Args:
         file_path: Repo-relative file path.
 
     Returns:
-        bool: True when the path matches any design doc pattern.
+        bool: True when the path matches design doc heuristics.
     """
     str_lower: str = file_path.lower()
-    return any(pattern in str_lower for pattern in _DESIGN_DOC_PATTERNS)
+    ext: str = Path(str_lower).suffix
+    if ext not in _DOC_EXTENSIONS:
+        return False
+    # Files under docs/ are always design docs.
+    if str_lower.startswith("docs/"):
+        return True
+    # Files with design-related keywords in the filename (not directory) qualify.
+    filename: str = Path(str_lower).stem
+    return any(pattern in filename for pattern in _DESIGN_DOC_PATTERNS)
 
 
 # ---------------------------------------------------------------------------

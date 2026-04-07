@@ -3,8 +3,8 @@
 
 Fires before every user turn.  Its sole job is to detect when a session is
 running in a wired repo that has no event shards yet and inject a one-time
-recovery suggestion so the agent proactively offers the documented `news`
-workflow before proceeding.
+recovery suggestion so the agent proactively offers to run the
+`memory-bootstrap` skill before proceeding.
 
 Performance design
 ------------------

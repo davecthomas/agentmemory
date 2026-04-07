@@ -133,12 +133,12 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_shard_enrichment=False,
             bool_supports_design_doc_inspection=True,
             str_notes=(
-                "Supported for SessionStart and prompt guard. Repo-local "
-                "notify-wrapper smoke tests exist, but native post-turn "
-                "capture is not a supported provisioned path. Shard "
-                "enrichment requires post-turn hooks and is unavailable. "
-                "Design doc ADR inspection is available via manual "
-                "invocation of the adr-inspector skill."
+                "SessionStart and prompt guard are supported. Native "
+                "post-turn capture is not a supported provisioned path; "
+                "repo-local notify-wrapper smoke tests exist but are "
+                "manual only. Shard enrichment requires post-turn hooks "
+                "and is unavailable. Design doc ADR inspection is "
+                "available via manual invocation of the adr-inspector skill."
             ),
         ),
     ]

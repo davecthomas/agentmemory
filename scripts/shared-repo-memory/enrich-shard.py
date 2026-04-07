@@ -153,6 +153,11 @@ def _update_frontmatter_bool(frontmatter: str, field: str, value: bool) -> str:
         old_line: str = f"{field}: {old_val}"
         if old_line in frontmatter:
             return frontmatter.replace(old_line, new_line, 1)
+    # Field not present in frontmatter; insert before the closing --- delimiter.
+    lines: list[str] = frontmatter.split("\n")
+    for idx in range(len(lines) - 1, -1, -1):
+        if lines[idx].strip() == "---":
+            return "\n".join(lines[:idx] + [new_line] + lines[idx:])
     return frontmatter
 
 
@@ -171,11 +176,12 @@ def _format_section_lines(raw_text: str) -> list[str]:
     str_stripped: str = raw_text.strip()
     if not str_stripped:
         return ["- No content provided."]
-    lines: list[str] = str_stripped.split("\n")
+    lines: list[str] = [line for line in str_stripped.split("\n") if line.strip()]
     has_bullets: bool = any(line.strip().startswith("-") for line in lines)
     if has_bullets:
-        return [line for line in lines if line.strip()]
-    return [f"- {str_stripped}"]
+        return lines
+    # No bullets detected; prefix each non-empty line so the shard stays consistent.
+    return [f"- {line.strip()}" for line in lines]
 
 
 def main() -> int:
