@@ -11,10 +11,24 @@ Give coding agents durable repo context so every new session starts from prior d
 - **Memory is plain Markdown in Git.** No external service, no database, no embedding pipeline.
 - **The repo owns the memory.** Published storage lives under `<repo>/.agents/memory/daily/` and `<repo>/.agents/memory/adr/`, committed and versioned like code; pending and log subtrees under the same root stay local-only.
 - **Agent-facing paths are access paths, not storage.** `.codex/memory` is a symlink into `.agents/memory/` — it never holds a separate copy.
-- **Raw capture and publication are separate phases.** Each meaningful agent turn produces one pending local-only capture. Only trusted checkpoint publication may write a committed event shard.
+- **Raw capture and publication are separate phases.** Each file-changing agent turn may produce one pending local-only capture. Durable shared memory is synthesized later from a workstream episode, not written directly from a single turn.
 - **Read models are derived.** Daily summaries are rebuilt deterministically from shards. They are never the write target.
 - **Durable decisions live only in ADRs.** ADR promotion is always explicit — never an automatic post-turn side effect.
 - **Memory is not collaborative until committed and pushed.** The system auto-stages only published memory artifacts; it never auto-commits or auto-pushes.
+
+---
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| `turn` | One prompt-response interaction or hook invocation. A turn is provenance metadata, not the durable memory unit. |
+| `file-changing turn` | A turn whose working-tree effects include at least one repo file change. Only these turns may produce pending captures. |
+| `pending capture` | Local-only mechanical record created from one file-changing turn. It contains no raw prompt or raw assistant text and must never be committed. |
+| `workstream episode` | A bounded, semantically related collection of pending captures evaluated together so the system can infer the broader effort. |
+| `workstream checkpoint` | Durable published memory synthesized from a workstream episode after validation. |
+| `daily summary` | Deterministic read model rebuilt from published checkpoints for one day. |
+| `ADR` | Architecture Decision Record promoted explicitly from a decision-candidate checkpoint. |
 
 ---
 
@@ -35,7 +49,7 @@ Give coding agents durable repo context so every new session starts from prior d
 │       └── YYYY-MM-DD/
 │           └── <timestamp>--<author>--thread_<id>--turn_<id>.md
 │   └── logs/
-│       └── checkpoint-context/             # local-only workstream bundle manifests
+│       └── checkpoint-context/             # local-only workstream episode manifests
 ├── .codex/
 │   ├── memory -> ../.agents/memory         # symlink — Codex access path only
 │   └── local/
@@ -302,9 +316,11 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 
 `SubagentStop` fires when a Task agent (spawned via the Agent tool) completes. Wiring `post-turn-notify.py` to `SubagentStop` ensures that significant work done inside subagents also produces pending shards, not just main-agent turns.
 
-### Meaningful turn gate
+### File-changing turn capture gate
 
-**A pending local-only capture is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no shard.
+**A pending local-only capture is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no pending capture.
+
+This is only a capture gate. Durable memory is published later from a workstream episode: a bounded, semantically related collection of pending captures evaluated together.
 
 ### What is captured
 
@@ -388,8 +404,8 @@ bootstrapped_at: "2026-04-03T14:22:00Z"
 ### After capture
 
 1. `post-turn-notify.py` writes a privacy-safe pending capture under `.agents/memory/pending/<date>/`
-2. `post-turn-notify.py` writes a local checkpoint context manifest under `.agents/memory/logs/checkpoint-context/` with the bounded workstream bundle and supporting repo paths
-3. The `memory-checkpointer` background subagent inspects the bundle and either skips publication or calls `publish-checkpoint.py` with structured checkpoint fields
+2. `post-turn-notify.py` writes a local checkpoint context manifest under `.agents/memory/logs/checkpoint-context/` with the bounded workstream episode bundle and supporting repo paths
+3. The `memory-checkpointer` background subagent inspects the episode bundle and either skips publication or calls `publish-checkpoint.py` with structured checkpoint fields
 4. `publish-checkpoint.py` validates gestalt, privacy, and anti-mechanical rules before writing the final shard under `.agents/memory/daily/<date>/events/`
 5. The publish step rebuilds `summary.md`, stages only the published shard plus summary, and removes the consumed pending captures
 6. `.githooks/pre-commit` rejects commits that stage pending captures or any daily event shard still marked `enriched: false`
@@ -501,7 +517,7 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 
 | Skill | Purpose |
 |---|---|
-| `memory-writer` | Delegate a manual runtime path to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
+| `memory-writer` | Delegate a manual runtime path to `post-turn-notify.py` so a file-changing turn becomes a pending capture instead of a directly published shard |
 | `memory-checkpointer` | Evaluate a bounded pending-capture bundle and publish one durable checkpoint only when it passes trust validation |
 | `memory-bootstrap` | Seed initial decision candidates and ADRs from existing repo history |
 | `adr-promoter` | Promote a decision-candidate shard into a permanent ADR |
@@ -512,9 +528,9 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 ## Collaboration Model
 
 ```
-agent turn completes
+agent completes a file-changing turn
     → pending capture written locally
-    → background checkpoint evaluation inspects the bounded local workstream bundle
+    → background checkpoint evaluation inspects the bounded local workstream episode
     → if validation succeeds: published shard + summary auto-staged
 
 developer commits (same commit as the code change)

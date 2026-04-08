@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.3.0`
+Current version: `0.3.1`
 
 ---
 
@@ -16,9 +16,11 @@ Coding agents are productive inside a single session and fragile across time. Te
 
 | Concept | What it is |
 | ------- | ---------- |
-| **Meaningful turn** | An agent turn that changed at least one repo file in the working tree, including newly created files. Only meaningful turns produce pending captures; conversational turns with no file changes are silently skipped. |
-| **Pending capture** | Local-only mechanical capture for a meaningful turn. Lives under `.agents/memory/pending/YYYY-MM-DD/`, contains no raw prompt or raw assistant text, and must never be committed. |
-| **Workstream checkpoint** | Durable published memory synthesized from a bounded bundle of related pending captures plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
+| **Turn** | One prompt-response interaction or hook event. Turns remain provenance and traceability metadata; they are not the durable memory unit. |
+| **File-changing turn** | A turn that changed at least one repo file in the working tree, including newly created files. Only file-changing turns may produce pending captures; conversational turns with no repo changes are silently skipped. |
+| **Pending capture** | Local-only mechanical capture for one file-changing turn. Lives under `.agents/memory/pending/YYYY-MM-DD/`, contains no raw prompt or raw assistant text, and must never be committed. |
+| **Workstream episode** | A bounded, semantically related collection of pending captures evaluated together so the system can infer the broader effort rather than over-trusting a single turn. |
+| **Workstream checkpoint** | Durable published memory synthesized from a workstream episode plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
 | **Daily summary** | Derived read model rebuilt deterministically from that day's published checkpoints. Never edited directly. |
 | **ADR** | Architecture Decision Record. Promoted explicitly from decision-candidate checkpoints. The only location for durable repo decisions. |
 | **Local catch-up** | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran. |
@@ -57,9 +59,10 @@ SessionStart hook
 
 Agent turn completes
     → Stop / AfterAgent hook fires post-turn-notify.py
-    → meaningful turn? → one privacy-safe pending capture written under .agents/memory/pending/
-    → local workstream bundle manifest written under .agents/memory/logs/
-    → background memory-checkpointer subagent evaluates the bundle
+    → file-changing turn? → one privacy-safe pending capture written under .agents/memory/pending/
+    → bounded local workstream episode assembled from related pending captures
+    → local workstream episode manifest written under .agents/memory/logs/
+    → background memory-checkpointer subagent evaluates the episode bundle
     → only if the candidate passes validation: published checkpoint written under daily/events/
     → summary rebuilt from the published checkpoint set
     → published checkpoint + summary auto-staged
@@ -243,8 +246,8 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 | Skill | Invoke when |
 | ----- | ----------- |
-| `memory-writer` | After a meaningful turn from a manual runtime path such as Codex notify-wrapper testing — delegates to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
-| `memory-checkpointer` | A background workstream bundle should be evaluated for durable publication without blocking the user turn |
+| `memory-writer` | After a file-changing turn from a manual runtime path such as Codex notify-wrapper testing — delegates to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
+| `memory-checkpointer` | A background workstream episode should be evaluated for durable publication without blocking the user turn |
 | `memory-bootstrap` | First time in a repo with existing history — mines design docs and commits to seed initial decision candidates and promote foundational ADRs |
 | `adr-promoter` | A decision-candidate shard should become a permanent ADR |
 | `news` | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
@@ -261,8 +264,8 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 3. Agent turn ends
    └── Stop/AfterAgent hook runs post-turn-notify.py
-   └── Meaningful turn? → pending capture written
-   └── Background checkpoint evaluation runs from a bounded local workstream bundle
+   └── File-changing turn? → pending capture written
+   └── Background checkpoint evaluation runs from a bounded local workstream episode
    └── Validation succeeds? → published checkpoint + day summary auto-staged
 
 4. Review staged memory files alongside code changes
@@ -357,5 +360,5 @@ their prefix, for example `[shared-repo-memory][agent=codex][version=0.118.0]`.
 | Hook trace shows `skipped` with `shared_repo_memory_disabled` | `shared_repo_memory_configured` is not `true`. Re-run `./install.sh`.                                    |
 | Hook trace shows `error` with `missing_required_paths`        | Re-run `./install.sh` to reinstall helper scripts and refresh state.                                     |
 | `.codex/memory` is a real directory, not a symlink            | Delete it and re-run `./install.sh`.                                                                     |
-| No shard written after a turn                                 | The turn was not meaningful: no repo files changed in the working tree. Check `git status` — only turns that modify or create repo files produce shards. |
+| No pending capture written after a turn                       | The turn was not file-changing: no repo files changed in the working tree. Check `git status` — only turns that modify or create repo files produce pending captures. |
 | `Permission denied` on `install.sh`                           | `chmod +x install.sh && ./install.sh`                                                                    |

@@ -48,7 +48,7 @@ SECTION_ALIASES = {
 }
 
 # Shared repo-memory system version embedded into generated repo-local artifacts.
-SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.3.0"
+SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.3.1"
 
 # Repo-local state that must be ignored because it is derived or workstation-only.
 # bootstrap-repo.py appends these to each wired repository's .gitignore, and
@@ -70,6 +70,7 @@ REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
     ".claude/settings.local.json",
     f"{PENDING_SHARDS_RELATIVE_DIR}/",
     f"{MEMORY_LOGS_RELATIVE_DIR}/",
+    ".agents/memory/.auto_bootstrap_running",
 )
 
 _LOCAL_STATE_PREFIXES: tuple[str, ...] = (

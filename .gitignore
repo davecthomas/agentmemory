@@ -38,6 +38,7 @@ htmlcov/
 .claude/settings.local.json
 .agents/memory/pending/
 .agents/memory/logs/
+.agents/memory/.auto_bootstrap_running
 
 # Environment variables (may contain secrets)
 .env

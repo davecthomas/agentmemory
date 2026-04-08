@@ -129,6 +129,21 @@ Published memory must be:
 This changes the model from **turn enrichment** to **workstream checkpoint
 publication**.
 
+### Terminology
+
+To avoid repeating the old mistake in new code and docs, the unit names should
+stay explicit:
+
+- `turn`: one prompt-response interaction or hook event; useful provenance only
+- `file-changing turn`: a turn whose working-tree effects touched repo files
+- `pending capture`: one local-only mechanical record written from one file-changing turn
+- `workstream episode`: a bounded, semantically related set of pending captures
+- `checkpoint`: the durable published memory synthesized from a workstream episode
+
+Durable memory should be described in terms of episodes and checkpoints, not as
+single-turn memory. A single turn can be mechanically important enough to
+capture without being semantically whole enough to publish.
+
 ### Architecture: three-phase checkpoint pipeline
 
 **Phase 1 (synchronous, in Stop/AfterAgent hook):** Write a local-only pending
@@ -138,11 +153,11 @@ raw user prompt text. Do not persist raw assistant text. Do not rebuild
 summaries in this phase.
 
 **Phase 2 (async, fire-and-forget):** Build an ephemeral checkpoint context
-manifest that references a bounded series of related pending captures plus
+manifest that references a bounded workstream episode plus
 supporting repo context such as touched design docs, ADR index, and recent
 summaries. Spawn a background subagent via the detected adapter's CLI. The
-subagent reads the referenced files, decides whether the series represents a
-meaningful durable checkpoint, and if so produces structured checkpoint fields.
+subagent reads the referenced files, decides whether the episode supports a
+durable checkpoint, and if so produces structured checkpoint fields.
 
 **Phase 3 (local publish/validate):** A local publisher script validates the
 structured checkpoint output. Only valid checkpoints are written to
@@ -150,9 +165,9 @@ structured checkpoint output. Only valid checkpoints are written to
 artifacts are staged, and the consumed pending captures are deleted. When
 validation fails or the subagent returns `publish: false`, nothing is published.
 
-### What counts as a workstream
+### What counts as a workstream episode
 
-A workstream bundle is a bounded set of related pending captures. The current
+A workstream episode is a bounded set of related pending captures. The current
 bundle selection rules should stay simple and deterministic:
 
 - current pending capture is always included
@@ -161,7 +176,8 @@ bundle selection rules should stay simple and deterministic:
 - include only a small recent window (for example, 3-7 pending captures)
 
 This is a local-only read model used to give the subagent enough context to infer
-the broader effort. It is not a committed artifact.
+the broader effort. It is not a committed artifact, and it is the semantic unit
+that durable checkpoints are built from.
 
 ### Multi-runtime background checkpointing
 
@@ -234,7 +250,7 @@ text and raw assistant text in the pending capture or checkpoint context at all.
 ### Decision candidate detection moves to the checkpoint level
 
 `decision_candidate` should no longer be inferred from a single turn's keyword
-matches. Instead, the checkpoint subagent evaluates the whole workstream bundle
+matches. Instead, the checkpoint subagent evaluates the whole workstream episode
 and marks the published checkpoint as a decision candidate only when it captures
 an actual durable architectural decision.
 
