@@ -22,7 +22,9 @@ import re
 import subprocess
 import sys
 from collections import OrderedDict
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,212 @@ SECTION_HEADINGS = [
 SECTION_ALIASES = {
     "Repo changes": "What changed",
 }
+
+# Shared repo-memory system version embedded into generated repo-local artifacts.
+SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.3.1"
+
+# Repo-local state that must be ignored because it is derived or workstation-only.
+# bootstrap-repo.py appends these to each wired repository's .gitignore, and
+# session-start.py validates them so newly installed ignore rules are repaired.
+GITHOOKS_RELATIVE_DIR: str = ".githooks"
+PENDING_SHARDS_RELATIVE_DIR: str = ".agents/memory/pending"
+MEMORY_LOGS_RELATIVE_DIR: str = ".agents/memory/logs"
+PROJECT_PRE_COMMIT_RELATIVE_PATH: str = (
+    "scripts/shared-repo-memory/project-pre-commit.sh"
+)
+
+REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
+    "# agentmemory-managed local repo wiring and state",
+    "# Added by the shared repo-memory SessionStart/bootstrap flow.",
+    "# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.",
+    f"{GITHOOKS_RELATIVE_DIR}/",
+    ".codex/local/",
+    ".claude/local/",
+    ".claude/settings.local.json",
+    f"{PENDING_SHARDS_RELATIVE_DIR}/",
+    f"{MEMORY_LOGS_RELATIVE_DIR}/",
+    ".agents/memory/.auto_bootstrap_running",
+)
+
+_LOCAL_STATE_PREFIXES: tuple[str, ...] = (
+    ".agents/memory/",
+    ".codex/local/",
+    ".claude/local/",
+)
+_LOCAL_STATE_FILES: tuple[str, ...] = (".claude/settings.local.json",)
+
+_RUNTIME_VERSION_COMMANDS: dict[str, list[str]] = {
+    "claude": ["claude", "--version"],
+    "gemini": ["gemini", "--version"],
+    "codex": ["codex", "--version"],
+}
+_LOG_CONTEXT_AGENT_ID: str | None = None
+_LOG_CONTEXT_PROVIDER_VERSION: str | None = None
+
+
+def set_runtime_log_context(
+    str_agent_id: str, str_provider_version: str | None = None
+) -> None:
+    """Pin runtime metadata for future log lines emitted by this process.
+
+    Hook entrypoints call this after they determine the active runtime so later
+    warn()/info() messages and hook-trace records use the exact launcher agent
+    rather than relying on environment heuristics alone.
+
+    Args:
+        str_agent_id: Short runtime identifier such as "claude", "gemini",
+            "codex", or "unknown".
+        str_provider_version: Optional explicit CLI version string for the
+            active runtime. When omitted, later log calls probe it lazily.
+
+    Returns:
+        None: The module-level logging context is updated in place.
+    """
+    global _LOG_CONTEXT_AGENT_ID, _LOG_CONTEXT_PROVIDER_VERSION
+
+    str_clean_agent_id: str = str_agent_id.strip() or "unknown"
+    str_clean_provider_version: str | None = None
+    if str_provider_version:
+        str_clean_provider_version = str_provider_version.strip() or None
+
+    _LOG_CONTEXT_AGENT_ID = str_clean_agent_id
+    _LOG_CONTEXT_PROVIDER_VERSION = str_clean_provider_version
+
+
+def clear_runtime_log_context() -> None:
+    """Clear any explicit runtime metadata override used by log helpers.
+
+    This is primarily useful in tests that need deterministic log-prefix
+    assertions without leaking state across cases.
+
+    Returns:
+        None: The module-level logging override state is reset.
+    """
+    global _LOG_CONTEXT_AGENT_ID, _LOG_CONTEXT_PROVIDER_VERSION
+
+    _LOG_CONTEXT_AGENT_ID = None
+    _LOG_CONTEXT_PROVIDER_VERSION = None
+
+
+def detect_runtime_agent_id() -> str:
+    """Return the best-known runtime agent identifier for the current process.
+
+    Resolution order is:
+      1. Explicit override set by set_runtime_log_context().
+      2. Shared subagent-launch env override passed through by this system.
+      3. Native runtime env vars or Codex desktop heuristics.
+      4. "unknown" when no trustworthy signal exists.
+
+    Returns:
+        str: One of "claude", "gemini", "codex", or "unknown".
+    """
+    str_bundle_id: str = os.environ.get("__CFBundleIdentifier", "")
+    if _LOG_CONTEXT_AGENT_ID:
+        return _LOG_CONTEXT_AGENT_ID
+    if os.environ.get("SHARED_REPO_MEMORY_AGENT_ID"):
+        return os.environ["SHARED_REPO_MEMORY_AGENT_ID"].strip() or "unknown"
+    if os.environ.get("CLAUDECODE"):
+        return "claude"
+    if os.environ.get("GEMINI_CLI"):
+        return "gemini"
+    if (
+        os.environ.get("CODEX_THREAD_ID")
+        or os.environ.get("CODEX_SHELL")
+        or os.environ.get("CODEX_CI")
+        or os.environ.get("CODEX_INTERNAL_ORIGINATOR_OVERRIDE")
+        or str_bundle_id == "com.openai.codex"
+    ):
+        return "codex"
+    return "unknown"
+
+
+@cache
+def _probe_provider_version(str_agent_id: str) -> str:
+    """Probe the locally installed CLI version for one supported runtime.
+
+    The probe runs at most once per agent id per process thanks to the cache.
+    Version strings are extracted from stdout/stderr using a permissive semantic
+    version regex because each CLI formats `--version` output differently.
+
+    Args:
+        str_agent_id: Runtime identifier to probe, such as "claude" or "codex".
+
+    Returns:
+        str: Parsed version string like "0.118.0", or "unknown" when the CLI
+            is unavailable or its output cannot be parsed.
+    """
+    list_str_command: list[str] | None = _RUNTIME_VERSION_COMMANDS.get(str_agent_id)
+    if list_str_command is None:
+        return "unknown"
+    try:
+        completed_process: subprocess.CompletedProcess[str] = run(
+            list_str_command, check=False
+        )
+    except OSError:
+        return "unknown"
+
+    list_str_output_parts: list[str] = [
+        str_part
+        for str_part in (
+            completed_process.stdout.strip(),
+            completed_process.stderr.strip(),
+        )
+        if str_part
+    ]
+    str_output: str = "\n".join(list_str_output_parts)
+    match_version: re.Match[str] | None = re.search(
+        r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", str_output
+    )
+    if match_version is None:
+        match_version = re.search(r"(\d+\.\d+)", str_output)
+    if match_version is None:
+        return "unknown"
+    return match_version.group(1)
+
+
+def runtime_provider_version(str_agent_id: str | None = None) -> str:
+    """Return the provider version string that should appear in log metadata.
+
+    Args:
+        str_agent_id: Optional explicit runtime identifier. When omitted, the
+            current runtime is detected from the process context.
+
+    Returns:
+        str: Provider version string for the resolved runtime, or "unknown"
+            when it cannot be determined.
+    """
+    str_resolved_agent_id: str = str_agent_id or detect_runtime_agent_id()
+    if _LOG_CONTEXT_PROVIDER_VERSION and _LOG_CONTEXT_AGENT_ID == str_resolved_agent_id:
+        return _LOG_CONTEXT_PROVIDER_VERSION
+    if os.environ.get("SHARED_REPO_MEMORY_PROVIDER_VERSION"):
+        return os.environ["SHARED_REPO_MEMORY_PROVIDER_VERSION"].strip() or "unknown"
+    return _probe_provider_version(str_resolved_agent_id)
+
+
+def format_log_prefix(
+    str_agent_id: str | None = None, str_provider_version: str | None = None
+) -> str:
+    """Render the canonical shared-memory log prefix with runtime metadata.
+
+    Args:
+        str_agent_id: Optional explicit runtime identifier. When omitted, the
+            current runtime is detected automatically.
+        str_provider_version: Optional explicit version string. When omitted,
+            the version is resolved from overrides, env vars, or CLI probing.
+
+    Returns:
+        str: Prefix in the form
+            "[shared-repo-memory][agent=<id>][version=<version>]".
+    """
+    str_resolved_agent_id: str = str_agent_id or detect_runtime_agent_id()
+    str_resolved_provider_version: str = (
+        str_provider_version or runtime_provider_version(str_resolved_agent_id)
+    )
+    return (
+        "[shared-repo-memory]"
+        f"[agent={str_resolved_agent_id}]"
+        f"[version={str_resolved_provider_version}]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -228,16 +436,50 @@ def current_branch(repo_root_path: str | Path) -> str:
     return branch or "HEAD"
 
 
-def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
-    """Return a deduplicated, sorted list of tracked files with uncommitted changes.
+def missing_gitignore_entries(
+    repo_root_path: str | Path,
+    required_entries: Sequence[str] | None = None,
+) -> list[str]:
+    """Return required shared-memory .gitignore entries that are absent in a repo.
+
+    Args:
+        repo_root_path: Absolute path to the repository root.
+        required_entries: Optional override list of required .gitignore entries.
+            When omitted, uses REQUIRED_GITIGNORE_ENTRIES.
+
+    Returns:
+        list[str]: Missing .gitignore lines in canonical order. The list is empty
+            when the repository already contains every required entry.
+    """
+    path_gitignore: Path = Path(repo_root_path) / ".gitignore"
+    tuple_required_entries: Sequence[str] = (
+        required_entries if required_entries is not None else REQUIRED_GITIGNORE_ENTRIES
+    )
+    str_existing_text: str = ""
+    if path_gitignore.exists():
+        str_existing_text = path_gitignore.read_text(encoding="utf-8")
+    set_existing_lines: set[str] = set(str_existing_text.splitlines())
+    list_str_missing_entries: list[str] = [
+        str_entry
+        for str_entry in tuple_required_entries
+        if str_entry not in set_existing_lines
+    ]
+    return list_str_missing_entries
+
+
+def changed_repo_files(repo_root_path: str | Path) -> list[str]:
+    """Return a deduplicated, sorted list of changed repo files, including new files.
 
     Excludes:
-      - Untracked files (they have not been added to the index yet).
       - Anything under .agents/memory/ (to avoid circular shard references).
       - Anything under .codex/local/ (ephemeral local state, never committed).
+      - Anything under .claude/local/ or .claude/settings.local.json (local-only).
 
     Rename entries ("old -> new") are normalised to the destination path only.
     The null-delimiter format (-z) avoids problems with spaces or newlines in paths.
+    Untracked files are intentionally included because new repo files are a
+    meaningful outcome of an agent turn and design doc creation must reach the
+    ADR inspection trigger.
 
     Args:
         repo_root_path: Absolute path to the repository root.
@@ -246,7 +488,7 @@ def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
         list[str]: Sorted, deduplicated POSIX paths relative to the repo root.
     """
     result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=no"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=str(repo_root_path),
         check=True,
         capture_output=True,
@@ -264,12 +506,27 @@ def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
             continue
         # Skip memory and local state paths -- they are managed by this system
         # and should not appear as "code changes" in shard metadata.
-        if normalized.startswith(".agents/memory/") or normalized.startswith(
-            ".codex/local/"
+        if (
+            normalized.startswith(_LOCAL_STATE_PREFIXES)
+            or normalized in _LOCAL_STATE_FILES
         ):
             continue
         changed.append(normalized)
     return sorted(dict.fromkeys(changed))
+
+
+def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
+    """Return changed repo files for compatibility with older callers.
+
+    Args:
+        repo_root_path: Absolute path to the repository root.
+
+    Returns:
+        list[str]: Same value returned by changed_repo_files(), which now
+            includes new untracked repo files in addition to tracked edits.
+    """
+    list_str_changed_files: list[str] = changed_repo_files(repo_root_path)
+    return list_str_changed_files
 
 
 def stage_paths(repo_root_path: str | Path, paths: list[str | Path]) -> None:
@@ -849,7 +1106,7 @@ def safe_main(main_fn: Any, hook_name: str) -> int:
 
 
 def warn(message: str) -> None:
-    """Write a warning message to stderr, prefixed with the system identifier.
+    """Write a warning message to stderr with shared-memory runtime metadata.
 
     Messages written here appear in the agent's hook output stream but do not
     affect the hook response payload read by the agent.
@@ -857,17 +1114,16 @@ def warn(message: str) -> None:
     Args:
         message: Human-readable warning text (no trailing newline needed).
     """
-    print(f"[shared-repo-memory] {message}", file=sys.stderr)
+    print(f"{format_log_prefix()} {message}", file=sys.stderr)
 
 
 def info(message: str) -> None:
-    """Write an informational message to stderr, prefixed with the system identifier.
+    """Write an info message to stderr with shared-memory runtime metadata.
 
     Args:
         message: Human-readable info text (no trailing newline needed).
     """
-    print(f"[shared-repo-memory] {message}", file=sys.stderr)
-
+    print(f"{format_log_prefix()} {message}", file=sys.stderr)
 
 
 def append_hook_trace(
@@ -883,6 +1139,8 @@ def append_hook_trace(
     primary diagnostic tool when hooks run but produce unexpected behavior.
     Each invocation of SessionStart and post-turn-notify.py appends one or more
     records covering start, success, error, noop, and bootstrapping phases.
+    Every record also includes the resolved runtime agent id and provider
+    version so mixed-runtime debugging is possible from a single trace file.
 
     Write failures are silently ignored so a missing state directory never causes
     a hook to abort.
@@ -895,10 +1153,14 @@ def append_hook_trace(
             Path values are coerced to str; list values have their items coerced
             to str; None values are omitted.
     """
+    str_agent_id: str = detect_runtime_agent_id()
+    str_provider_version: str = runtime_provider_version(str_agent_id)
     payload: dict[str, Any] = {
         "timestamp": utc_timestamp(),
         "hook": hook,
         "status": status,
+        "agent": str_agent_id,
+        "provider_version": str_provider_version,
     }
     if repo_root is not None:
         payload["repo_root"] = str(Path(repo_root).resolve())

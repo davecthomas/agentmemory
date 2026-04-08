@@ -33,14 +33,17 @@ from pathlib import Path
 
 from adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, InstallerContext
 from agent_support import support_summary_lines
+from common import format_log_prefix
 
 # Scripts copied verbatim from scripts/shared-repo-memory/ into ~/.agent/shared-repo-memory/.
 # The order here is for readability; installation processes them in sequence.
 SCRIPTS = [
     "common.py",
+    "runtime-log-prefix.sh",
     "models.py",
     "agent_support.py",
     "bootstrap-repo.py",
+    "pre-commit-memory-guard.py",
     "session-start.py",
     "post-turn-notify.py",
     "prompt-guard.py",
@@ -49,6 +52,8 @@ SCRIPTS = [
     "rebuild-summary.py",
     "build-catchup.py",
     "promote-adr.py",
+    "enrich-shard.py",
+    "publish-checkpoint.py",
 ]
 
 # Adapter package files, installed under adapters/ subdirectory.
@@ -98,8 +103,8 @@ def print_banner(version: str) -> None:
  |  _  |/ _  |/ _ \\ '_ \\| __| |\\/| |/ _ \\ '_ ' _ \\ / _ \\| '__| | | |
  | | | | (_| |  __/ | | | |_| |  | |  __/ | | | | | (_) | |  | |_| |
  \\_| |_/\\__, |\\___|_| |_|\\__\\_|  |_/\\___|_| |_| |_|\\___/|_|   \\__, |
-         __/ |                                                  __/ |
-        |___/                                                  |___/
+         __/ |                                                 __/ |
+        |___/                                                 |___/
 
   v{version}  Shared Repo Memory System
   github.com/davecthomas/agentmemory
@@ -108,12 +113,12 @@ def print_banner(version: str) -> None:
 
 
 def log(message: str) -> None:
-    """Print a prefixed log message to stdout.
+    """Print an installer log line with runtime metadata.
 
     Args:
         message: Human-readable message text.
     """
-    print(f"[shared-repo-memory] {message}")
+    print(f"{format_log_prefix()} {message}")
 
 
 class Installer:

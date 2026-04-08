@@ -16,15 +16,34 @@ from common import find_first
 from models import HookRequest, HookResponse, SessionResponse, ShardAttribution
 
 # Claude Code hook event names.
-_HOOK_EVENTS = {"Stop", "SessionStart", "SubagentStop", "UserPromptSubmit", "PostCompact"}
+_HOOK_EVENTS = {
+    "Stop",
+    "SessionStart",
+    "SubagentStop",
+    "UserPromptSubmit",
+    "PostCompact",
+}
 
 # Payload key aliases -- Claude Code uses camelCase and snake_case variants.
-_THREAD_KEYS = {"thread_id", "threadId", "conversation_id", "conversationId", "session_id", "sessionId"}
+_THREAD_KEYS = {
+    "thread_id",
+    "threadId",
+    "conversation_id",
+    "conversationId",
+    "session_id",
+    "sessionId",
+}
 _TURN_KEYS = {"turn_id", "turnId", "id"}
 _PROMPT_KEYS = {"prompt", "user_prompt", "userPrompt", "inputText", "input_text"}
 _ASSISTANT_KEYS = {
-    "last_assistant_message", "lastAssistantMessage", "output_text",
-    "summary_text", "reasoning_text", "prompt_response", "text", "content",
+    "last_assistant_message",
+    "lastAssistantMessage",
+    "output_text",
+    "summary_text",
+    "reasoning_text",
+    "prompt_response",
+    "text",
+    "content",
 }
 
 
@@ -54,7 +73,8 @@ class ClaudeAdapter:
             prompt=find_first(raw, _PROMPT_KEYS) or "",
             assistant_text=find_first(raw, _ASSISTANT_KEYS) or "",
             model=find_first(raw, {"model", "model_name", "modelName"}) or "",
-            transcript_path=find_first(raw, {"transcript_path", "transcriptPath"}) or "",
+            transcript_path=find_first(raw, {"transcript_path", "transcriptPath"})
+            or "",
             raw=raw,
         )
 
@@ -95,7 +115,10 @@ class ClaudeAdapter:
                     return model
             except (json.JSONDecodeError, OSError):
                 pass
-        return find_first(payload, {"model", "model_name", "modelName"}) or "claude-unknown"
+        return (
+            find_first(payload, {"model", "model_name", "modelName"})
+            or "claude-unknown"
+        )
 
     @staticmethod
     def shard_attribution() -> ShardAttribution:
@@ -137,9 +160,9 @@ class ClaudeAdapter:
                 for entry in event_hooks
             )
             if not already_wired:
-                event_hooks.append({
-                    "hooks": [{"type": "command", "command": cmd, "timeout": timeout}]
-                })
+                event_hooks.append(
+                    {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
+                )
 
         ctx.save_json(settings_path, settings)
 
@@ -147,10 +170,24 @@ class ClaudeAdapter:
     def build_bootstrap_command(
         skill_content: str, task: str, repo_root: Path
     ) -> list[str] | None:
+        """Build the Claude CLI command used for background bootstrap-style tasks.
+
+        Args:
+            skill_content: Full skill text passed as the Claude system prompt.
+            task: User-facing task text for the one-shot Claude invocation.
+            repo_root: Repository root where the subprocess will be launched.
+
+        Returns:
+            list[str] | None: CLI argv for Claude `--print` mode. The command
+                intentionally omits any working-directory flag because the
+                subprocess caller already sets `cwd`, and current Claude CLI
+                releases reject the unsupported `--cwd` option.
+        """
         return [
-            "claude", "-p",
-            "--system", skill_content,
-            "--cwd", str(repo_root),
+            "claude",
+            "-p",
+            "--system-prompt",
+            skill_content,
             task,
         ]
 

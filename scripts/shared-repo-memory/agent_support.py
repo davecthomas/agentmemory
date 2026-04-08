@@ -36,6 +36,13 @@ class AgentSupport:
             memory after context compaction.
         str_post_turn_mode: Short label describing how post-turn capture is
             delivered today, such as "native" or "manual wrapper only".
+        bool_supports_shard_enrichment: True when the runtime can automatically
+            spawn a background checkpoint subagent after post-turn capture so
+            pending local-only shards can become trusted published memory.
+            Requires working post-turn hooks.
+        bool_supports_design_doc_inspection: True when the runtime can inspect
+            design docs for ADR-worthy decisions, either automatically via
+            post-turn hooks or manually via the adr-inspector skill.
         str_notes: Operator-facing note about important support limitations.
     """
 
@@ -50,6 +57,8 @@ class AgentSupport:
     bool_supports_prompt_guard: bool
     bool_supports_post_compact: bool
     str_post_turn_mode: str
+    bool_supports_shard_enrichment: bool
+    bool_supports_design_doc_inspection: bool
     str_notes: str
 
 
@@ -80,6 +89,8 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_prompt_guard=True,
             bool_supports_post_compact=True,
             str_post_turn_mode="native",
+            bool_supports_shard_enrichment=True,
+            bool_supports_design_doc_inspection=True,
             str_notes="Primary runtime with the full supported hook surface.",
         ),
         AgentSupport(
@@ -98,6 +109,8 @@ def list_agent_support() -> list[AgentSupport]:
             bool_supports_prompt_guard=True,
             bool_supports_post_compact=False,
             str_post_turn_mode="native",
+            bool_supports_shard_enrichment=True,
+            bool_supports_design_doc_inspection=True,
             str_notes=(
                 "Supported for SessionStart, prompt guard, and post-turn capture. "
                 "No subagent-stop or post-compact equivalent."
@@ -109,18 +122,24 @@ def list_agent_support() -> list[AgentSupport]:
             str_config_dir=".codex",
             dict_hook_event_map={
                 "SessionStart": "SessionStart",
+                "PromptGuard": "UserPromptSubmit",
             },
             str_env_var="",
             bool_supports_session_start=True,
             bool_supports_post_turn=False,
             bool_supports_subagent_capture=False,
-            bool_supports_prompt_guard=False,
+            bool_supports_prompt_guard=True,
             bool_supports_post_compact=False,
             str_post_turn_mode="manual wrapper only",
+            bool_supports_shard_enrichment=False,
+            bool_supports_design_doc_inspection=True,
             str_notes=(
-                "Supported for SessionStart only. Repo-local notify-wrapper "
-                "smoke tests exist, but native post-turn capture is not a "
-                "supported provisioned path."
+                "SessionStart and prompt guard are supported. Native "
+                "post-turn capture is not a supported provisioned path; "
+                "repo-local notify-wrapper smoke tests exist but are "
+                "manual only. Background checkpoint publication requires "
+                "post-turn hooks and is unavailable. Design doc ADR inspection is "
+                "available via manual invocation of the adr-inspector skill."
             ),
         ),
     ]
@@ -142,12 +161,18 @@ def support_summary_lines() -> list[str]:
         ("bool_supports_subagent_capture", "subagent capture"),
         ("bool_supports_prompt_guard", "prompt guard"),
         ("bool_supports_post_compact", "post-compact"),
+        ("bool_supports_shard_enrichment", "checkpoint publication"),
+        ("bool_supports_design_doc_inspection", "design doc ADR inspection"),
     ]
 
     list_str_summary_lines: list[str] = []
     for agent in list_agent_support():
-        supported = [label for attr, label in _CAPABILITY_LABELS if getattr(agent, attr)]
-        unsupported = [label for attr, label in _CAPABILITY_LABELS if not getattr(agent, attr)]
+        supported = [
+            label for attr, label in _CAPABILITY_LABELS if getattr(agent, attr)
+        ]
+        unsupported = [
+            label for attr, label in _CAPABILITY_LABELS if not getattr(agent, attr)
+        ]
 
         if unsupported:
             str_line = (
@@ -157,12 +182,13 @@ def support_summary_lines() -> list[str]:
                 f"{'is' if len(unsupported) == 1 else 'are'} unavailable."
             )
         else:
-            str_line = (
-                f"{agent.str_agent_name}: {', '.join(supported)} are supported."
-            )
+            str_line = f"{agent.str_agent_name}: {', '.join(supported)} are supported."
 
         # Append post-turn mode note for non-native runtimes.
-        if agent.str_post_turn_mode != "native" and agent.bool_supports_post_turn is False:
+        if (
+            agent.str_post_turn_mode != "native"
+            and agent.bool_supports_post_turn is False
+        ):
             str_line += (
                 " Native post-turn capture is not provisioned;"
                 " notify-wrapper remains a manual smoke-test path."

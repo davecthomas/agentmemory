@@ -34,12 +34,14 @@ from pathlib import Path
 
 from common import (
     ensure_dir,
+    info,
     iso_date,
     load_event,
     relative_link,
     safe_main,
     slugify,
     utc_now,
+    warn,
     write_text,
 )
 
@@ -216,10 +218,7 @@ def main() -> int:
 
     # Guard: only decision-candidate shards may be promoted.
     if not event["decision_candidate"]:
-        print(
-            "[shared-repo-memory] shard is not marked as a decision candidate",
-            flush=True,
-        )
+        warn("shard is not marked as a decision candidate")
         return 1
 
     adr_root = ensure_dir(repo_root / ".agents/memory" / "adr")
@@ -280,9 +279,7 @@ def main() -> int:
 
     # Always rebuild the index after writing a new ADR so it stays consistent.
     refresh_index(repo_root)
-    print(
-        f"[shared-repo-memory] promoted {related_event_name} to {adr_path.relative_to(repo_root)}"
-    )
+    info(f"promoted {related_event_name} to {adr_path.relative_to(repo_root)}")
     return 0
 
 

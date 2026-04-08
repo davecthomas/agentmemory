@@ -23,7 +23,13 @@ import json
 import sys
 from pathlib import Path
 
-from common import append_hook_trace, safe_main, try_repo_root, warn
+from common import (
+    append_hook_trace,
+    safe_main,
+    set_runtime_log_context,
+    try_repo_root,
+    warn,
+)
 
 
 def _load_memory_context(repo_root: Path) -> str:
@@ -73,6 +79,8 @@ def main() -> int:
     Returns:
         int: Always 0 -- this hook never blocks.
     """
+    set_runtime_log_context("claude")
+
     payload_text: str = sys.stdin.read()
     try:
         payload: dict[str, object] = (

@@ -3,8 +3,8 @@
 
 Fires before every user turn.  Its sole job is to detect when a session is
 running in a wired repo that has no event shards yet and inject a one-time
-recovery suggestion so the agent proactively offers the documented `news`
-workflow before proceeding.
+recovery suggestion so the agent proactively offers to run the
+`memory-bootstrap` skill before proceeding.
 
 Performance design
 ------------------
@@ -46,7 +46,15 @@ from datetime import timedelta
 from pathlib import Path
 
 from adapters import detect_adapter_from_hook_event
-from common import append_hook_trace, safe_main, utc_now, utc_timestamp
+from common import (
+    append_hook_trace,
+    info,
+    safe_main,
+    set_runtime_log_context,
+    utc_now,
+    utc_timestamp,
+    warn,
+)
 
 # Path to the per-session state file.
 _STATE_FILE: Path = Path.home() / ".agent" / "state" / "prompt-guard-sessions.json"
@@ -56,9 +64,8 @@ _SESSION_TTL_DAYS: int = 7
 
 _NUDGE_TEXT: str = (
     "INSTRUCTION: This repository has shared memory wiring but no event shards yet. "
-    "Before proceeding, proactively offer to run the `news` skill so the operator "
-    "can seed or inspect shared memory history. If `news` finds no substantive "
-    "history, it will run `memory-bootstrap` as the documented recovery path."
+    "Before proceeding, proactively offer to run the `memory-bootstrap` skill so "
+    "the operator can seed shared memory history from recent commits and design docs."
 )
 
 
@@ -158,12 +165,16 @@ def main() -> int:
     Returns:
         int: Always 0 -- this hook never blocks the turn.
     """
+    adapter = detect_adapter_from_hook_event("")
+    set_runtime_log_context(adapter.agent_id())
+
     payload_text: str = sys.stdin.read()
     try:
         payload: dict[str, object] = (
             json.loads(payload_text) if payload_text.strip() else {}
         )
     except json.JSONDecodeError:
+        warn("PromptGuard: invalid JSON payload on stdin")
         payload = {}
 
     # Detect adapter and normalize the payload through it.
@@ -171,13 +182,23 @@ def main() -> int:
         payload.get("hook_event_name", payload.get("hookEventName", ""))
     )
     adapter = detect_adapter_from_hook_event(hook_event_raw)
+    set_runtime_log_context(adapter.agent_id())
     req = adapter.normalize_hook_request(payload)
+    info(
+        f"PromptGuard: fired ({adapter.agent_id()}, event={req.hook_event or 'unknown'}, session={req.session_id or 'none'})"
+    )
 
     # --- Fast exit: session already processed ---
     # Load state once; if this session is already marked done, exit immediately
     # without touching the filesystem or spawning any subprocess.
     sessions: dict[str, str] = _load_sessions()
     if req.session_id and req.session_id in sessions:
+        info("PromptGuard: fast exit -- session already seen")
+        append_hook_trace(
+            "PromptGuard",
+            "fast_exit",
+            details={"reason": "session_already_seen", "session_id": req.session_id},
+        )
         return 0
 
     # --- Find repo root (pure Python, no subprocess) ---
@@ -187,6 +208,12 @@ def main() -> int:
         if req.session_id:
             sessions[req.session_id] = utc_timestamp()
             _save_sessions(sessions)
+        info(f"PromptGuard: noop -- no wired repo found from cwd={req.cwd or 'empty'}")
+        append_hook_trace(
+            "PromptGuard",
+            "noop",
+            details={"reason": "no_wired_repo", "cwd": req.cwd},
+        )
         return 0
 
     # --- Check for existing shards ---
@@ -195,6 +222,13 @@ def main() -> int:
         if req.session_id:
             sessions[req.session_id] = utc_timestamp()
             _save_sessions(sessions)
+        info(f"PromptGuard: noop -- shards already exist in {repo_root}")
+        append_hook_trace(
+            "PromptGuard",
+            "noop",
+            repo_root=repo_root,
+            details={"reason": "shards_exist", "session_id": req.session_id},
+        )
         return 0
 
     # --- Inject a one-time recovery nudge for empty-memory repos ---
@@ -217,6 +251,7 @@ def main() -> int:
     }
     print(json.dumps(response, sort_keys=True))
 
+    info(f"PromptGuard: injected memory-bootstrap nudge for session {req.session_id}")
     append_hook_trace(
         "PromptGuard",
         "nudge_injected",

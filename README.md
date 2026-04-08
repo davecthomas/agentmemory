@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.2.3`
+Current version: `0.3.1`
 
 ---
 
@@ -14,25 +14,32 @@ Coding agents are productive inside a single session and fragile across time. Te
 
 ### Key concepts
 
-| Concept              | What it is                                                                                                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Meaningful turn**  | An agent turn that changed at least one tracked file in the working tree. Only meaningful turns produce event shards. Conversational turns with no file changes are silently skipped. |
-| **Event shard**      | Immutable record of one meaningful agent turn. Captures why, what changed, evidence, next steps, and AI attribution. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
-| **Daily summary**    | Derived read model rebuilt deterministically from that day's shards. Never edited directly.                                                                                 |
-| **ADR**              | Architecture Decision Record. Promoted explicitly from decision-candidate shards. The only location for durable repo decisions.                                             |
-| **Local catch-up**   | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran.                                                    |
+| Concept | What it is |
+| ------- | ---------- |
+| **Turn** | One prompt-response interaction or hook event. Turns remain provenance and traceability metadata; they are not the durable memory unit. |
+| **File-changing turn** | A turn that changed at least one repo file in the working tree, including newly created files. Only file-changing turns may produce pending captures; conversational turns with no repo changes are silently skipped. |
+| **Pending capture** | Local-only mechanical capture for one file-changing turn. Lives under `.agents/memory/pending/YYYY-MM-DD/`, contains no raw prompt or raw assistant text, and must never be committed. |
+| **Workstream episode** | A bounded, semantically related collection of pending captures evaluated together so the system can infer the broader effort rather than over-trusting a single turn. |
+| **Workstream checkpoint** | Durable published memory synthesized from a workstream episode plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
+| **Daily summary** | Derived read model rebuilt deterministically from that day's published checkpoints. Never edited directly. |
+| **ADR** | Architecture Decision Record. Promoted explicitly from decision-candidate checkpoints. The only location for durable repo decisions. |
+| **Local catch-up** | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran. |
 
 ### Storage layout
 
 ```
 <repo>/
-├── .agents/memory/          # canonical shared memory (committed)
+├── .agents/memory/          # shared memory root (published + local-only staging)
 │   ├── adr/                 # architecture decision records
 │   │   └── INDEX.md
-│   └── daily/
-│       └── YYYY-MM-DD/
-│           ├── events/      # immutable event shards
-│           └── summary.md   # derived daily summary
+│   ├── daily/
+│   │   └── YYYY-MM-DD/
+│   │       ├── events/      # immutable published checkpoints
+│   │       └── summary.md   # derived daily summary
+│   ├── pending/             # local-only pending captures (gitignored)
+│   └── logs/                # local-only checkpoint context and logs (gitignored)
+├── .githooks/               # generated repo-local hooks (gitignored)
+│   └── pre-commit           # blocks pending/raw shards, then runs optional project checks
 └── .codex/
     └── memory -> ../.agents/memory   # Codex access path (symlink)
 
@@ -52,9 +59,13 @@ SessionStart hook
 
 Agent turn completes
     → Stop / AfterAgent hook fires post-turn-notify.py
-    → meaningful turn? → memory-writer writes one event shard
-    → daily summary rebuilt from full shard set
-    → shard + summary auto-staged
+    → file-changing turn? → one privacy-safe pending capture written under .agents/memory/pending/
+    → bounded local workstream episode assembled from related pending captures
+    → local workstream episode manifest written under .agents/memory/logs/
+    → background memory-checkpointer subagent evaluates the episode bundle
+    → only if the candidate passes validation: published checkpoint written under daily/events/
+    → summary rebuilt from the published checkpoint set
+    → published checkpoint + summary auto-staged
 
 Developer commits + pushes (same PR as the code)
     → shared memory becomes collaborative
@@ -103,7 +114,7 @@ The installer:
 
 ### After installation
 
-Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing.
+Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs the agentmemory-managed `.gitignore` block when local-only paths change, and restores the generated repo-local hook files when hook wiring drifts. Generated hook files include a provenance header so developers can see that agentmemory created them, and the generated `pre-commit` hook delegates to `scripts/shared-repo-memory/project-pre-commit.sh` when a repo wants tracked project-specific checks such as linting or tests.
 
 ---
 
@@ -112,12 +123,12 @@ Restart any open agent sessions. `SessionStart` validates and bootstraps repo-lo
 | Hook | Purpose | Claude Code | Gemini CLI | Codex |
 | ---- | ------- | ----------- | ---------- | ----- |
 | Session start | Validate wiring, inject memory context | `SessionStart` | `SessionStart` | `SessionStart` |
-| Post-turn capture | Write event shard, rebuild summary | `Stop` | `AfterAgent` | Not provisioned |
-| Subagent capture | Write shard for Task agent turns | `SubagentStop` | — | — |
-| Pre-turn guard | Detect empty memory, offer bootstrap | `UserPromptSubmit` | `BeforeAgent` | — |
+| Post-turn capture | Write pending capture and spawn checkpoint flow | `Stop` | `AfterAgent` | Not provisioned |
+| Subagent capture | Write pending capture for Task agent turns | `SubagentStop` | — | — |
+| Pre-turn guard | Detect empty memory, offer bootstrap | `UserPromptSubmit` | `BeforeAgent` | `UserPromptSubmit` |
 | Post-compaction | Re-inject memory after context compaction | `PostCompact` | — | — |
 
-Codex support is intentionally explicit: today the supported surface is `SessionStart` only. The repo keeps `notify-wrapper.sh` as a manual smoke-test path for `post-turn-notify.py`, but the installer does not claim native Codex post-turn parity.
+Codex support is intentionally explicit: today the supported surface is `SessionStart` plus the pre-turn bootstrap guard. The repo keeps `notify-wrapper.sh` as a manual smoke-test path for `post-turn-notify.py`, but the installer does not claim native Codex post-turn parity.
 
 All hook scripts (`session-start.py`, `prompt-guard.py`, `post-compact.py`) emit a unified JSON schema accepted by all agents. `post-turn-notify.py` detects the calling agent from `hookEventName` to set AI attribution fields when the runtime exposes a supported post-turn event.
 
@@ -167,7 +178,7 @@ shared_repo_memory_configured = true
 shared_agent_assets_repo_path = "/path/to/this/repo"
 ```
 
-Codex is wired for `SessionStart` only. This repo does not currently provision a native Codex post-turn hook path.
+Codex is wired for `SessionStart` and `UserPromptSubmit`. This repo does not currently provision a native Codex post-turn hook path.
 
 **`~/.gemini/settings.json`** — Gemini CLI:
 
@@ -233,12 +244,13 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 ### Skills reference
 
-| Skill              | Invoke when                                                                                                                                  |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory-writer`    | After a meaningful turn — writes one event shard, rebuilds the day summary, stages generated files                                           |
+| Skill | Invoke when |
+| ----- | ----------- |
+| `memory-writer` | After a file-changing turn from a manual runtime path such as Codex notify-wrapper testing — delegates to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
+| `memory-checkpointer` | A background workstream episode should be evaluated for durable publication without blocking the user turn |
 | `memory-bootstrap` | First time in a repo with existing history — mines design docs and commits to seed initial decision candidates and promote foundational ADRs |
-| `adr-promoter`     | A decision-candidate shard should become a permanent ADR                                                                                     |
-| `news`             | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
+| `adr-promoter` | A decision-candidate shard should become a permanent ADR |
+| `news` | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
 
 ---
 
@@ -252,7 +264,9 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 3. Agent turn ends
    └── Stop/AfterAgent hook runs post-turn-notify.py
-   └── Meaningful turn? → event shard written + day summary rebuilt + auto-staged
+   └── File-changing turn? → pending capture written
+   └── Background checkpoint evaluation runs from a bounded local workstream episode
+   └── Validation succeeds? → published checkpoint + day summary auto-staged
 
 4. Review staged memory files alongside code changes
 
@@ -285,7 +299,7 @@ To trigger bootstrap manually (e.g. after deleting shards): `/memory-bootstrap`
 
 ## ADR Promotion
 
-Decision-candidate event shards are raw captures. ADRs are curated, durable decisions. Promotion is always explicit — it never happens automatically as a post-turn side effect.
+Decision-candidate event shards are published checkpoints. ADRs are curated, durable decisions. Promotion is always explicit — it never happens automatically as a post-turn side effect.
 
 To promote a candidate:
 
@@ -311,7 +325,9 @@ ls ~/.claude/skills/
 
 ```bash
 ls -la .agents/memory/
+ls -la .agents/memory/pending/
 ls -la .codex/memory          # should be a symlink → ../.agents/memory
+ls -la .githooks/
 git config core.hooksPath     # should print .githooks
 ```
 
@@ -321,7 +337,7 @@ git config core.hooksPath     # should print .githooks
 ./scripts/shared-repo-memory/validate-notify.sh
 ```
 
-Writes one synthetic validation event through the manual `notify-wrapper.sh` path. This confirms the wrapper and `post-turn-notify.py` work together when invoked directly; it does not prove native Codex post-turn hook support.
+Writes one synthetic pending capture through the manual `notify-wrapper.sh` path. This confirms the wrapper and `post-turn-notify.py` work together when invoked directly; durable publication still requires checkpoint validation, and the check does not prove native Codex post-turn hook support.
 
 ### Check the hook trace log
 
@@ -330,6 +346,9 @@ tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl
 ```
 
 Every hook invocation appends a JSONL entry. If `SessionStart` fired successfully you will see `"status": "success"` entries.
+
+Shared-memory stderr logs and helper-script logs now include runtime metadata in
+their prefix, for example `[shared-repo-memory][agent=codex][version=0.118.0]`.
 
 ---
 
@@ -341,5 +360,5 @@ Every hook invocation appends a JSONL entry. If `SessionStart` fired successfull
 | Hook trace shows `skipped` with `shared_repo_memory_disabled` | `shared_repo_memory_configured` is not `true`. Re-run `./install.sh`.                                    |
 | Hook trace shows `error` with `missing_required_paths`        | Re-run `./install.sh` to reinstall helper scripts and refresh state.                                     |
 | `.codex/memory` is a real directory, not a symlink            | Delete it and re-run `./install.sh`.                                                                     |
-| No shard written after a turn                                 | The turn was not meaningful: no tracked files changed in the working tree. Check `git status` — only turns that modify tracked files produce shards. |
+| No pending capture written after a turn                       | The turn was not file-changing: no repo files changed in the working tree. Check `git status` — only turns that modify or create repo files produce pending captures. |
 | `Permission denied` on `install.sh`                           | `chmod +x install.sh && ./install.sh`                                                                    |

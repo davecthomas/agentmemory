@@ -9,12 +9,26 @@ Give coding agents durable repo context so every new session starts from prior d
 ## Core Principles
 
 - **Memory is plain Markdown in Git.** No external service, no database, no embedding pipeline.
-- **The repo owns the memory.** Canonical storage lives under `<repo>/.agents/memory/`, committed and versioned like code.
+- **The repo owns the memory.** Published storage lives under `<repo>/.agents/memory/daily/` and `<repo>/.agents/memory/adr/`, committed and versioned like code; pending and log subtrees under the same root stay local-only.
 - **Agent-facing paths are access paths, not storage.** `.codex/memory` is a symlink into `.agents/memory/` — it never holds a separate copy.
-- **Writes are immutable event shards.** Each meaningful agent turn produces one shard. Shards are never edited after creation.
+- **Raw capture and publication are separate phases.** Each file-changing agent turn may produce one pending local-only capture. Durable shared memory is synthesized later from a workstream episode, not written directly from a single turn.
 - **Read models are derived.** Daily summaries are rebuilt deterministically from shards. They are never the write target.
 - **Durable decisions live only in ADRs.** ADR promotion is always explicit — never an automatic post-turn side effect.
-- **Memory is not collaborative until committed and pushed.** The system auto-stages memory artifacts but never auto-commits or auto-pushes.
+- **Memory is not collaborative until committed and pushed.** The system auto-stages only published memory artifacts; it never auto-commits or auto-pushes.
+
+---
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| `turn` | One prompt-response interaction or hook invocation. A turn is provenance metadata, not the durable memory unit. |
+| `file-changing turn` | A turn whose working-tree effects include at least one repo file change. Only these turns may produce pending captures. |
+| `pending capture` | Local-only mechanical record created from one file-changing turn. It contains no raw prompt or raw assistant text and must never be committed. |
+| `workstream episode` | A bounded, semantically related collection of pending captures evaluated together so the system can infer the broader effort. |
+| `workstream checkpoint` | Durable published memory synthesized from a workstream episode after validation. |
+| `daily summary` | Deterministic read model rebuilt from published checkpoints for one day. |
+| `ADR` | Architecture Decision Record promoted explicitly from a decision-candidate checkpoint. |
 
 ---
 
@@ -22,15 +36,20 @@ Give coding agents durable repo context so every new session starts from prior d
 
 ```
 <repo>/
-├── .agents/memory/                         # canonical shared memory — committed to Git
+├── .agents/memory/                         # shared memory root (published + local-only staging)
 │   ├── adr/
 │   │   ├── INDEX.md                        # ADR index table, rebuilt on every promotion
 │   │   └── ADR-NNNN-<slug>.md             # one file per architecture decision
-│   └── daily/
+│   ├── daily/
+│   │   └── YYYY-MM-DD/
+│   │       ├── events/
+│   │       │   └── <timestamp>--<author>--thread_<id>--turn_<id>.md
+│   │       └── summary.md                  # derived daily summary, rebuilt from shards
+│   └── pending/
 │       └── YYYY-MM-DD/
-│           ├── events/
-│           │   └── <timestamp>--<author>--thread_<id>--turn_<id>.md
-│           └── summary.md                  # derived daily summary, rebuilt from shards
+│           └── <timestamp>--<author>--thread_<id>--turn_<id>.md
+│   └── logs/
+│       └── checkpoint-context/             # local-only workstream episode manifests
 ├── .codex/
 │   ├── memory -> ../.agents/memory         # symlink — Codex access path only
 │   └── local/
@@ -39,6 +58,7 @@ Give coding agents durable repo context so every new session starts from prior d
 ├── .claude/
 │   └── local/                              # Claude-specific local continuity state
 └── .githooks/
+    ├── pre-commit                          # blocks commits of pending/raw shards
     ├── post-checkout                        # triggers catch-up rebuild
     ├── post-merge                           # triggers catch-up rebuild
     └── post-rewrite                         # triggers catch-up rebuild
@@ -47,6 +67,7 @@ Give coding agents durable repo context so every new session starts from prior d
 ├── shared-repo-memory/                      # installed helper scripts
 │   ├── common.py
 │   ├── bootstrap-repo.py
+│   ├── pre-commit-memory-guard.py
 │   ├── session-start.py
 │   ├── post-turn-notify.py
 │   ├── prompt-guard.py
@@ -54,12 +75,14 @@ Give coding agents durable repo context so every new session starts from prior d
 │   ├── rebuild-summary.py
 │   ├── build-catchup.py
 │   ├── promote-adr.py
+│   ├── publish-checkpoint.py
 │   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
 └── state/
     └── shared_asset_refresh_state.json
 
 ~/.agent/skills/
     ├── memory-writer/
+    ├── memory-checkpointer/
     ├── memory-bootstrap/
     ├── adr-promoter/
     └── news/
@@ -88,14 +111,15 @@ Give coding agents durable repo context so every new session starts from prior d
 
 `bootstrap-repo.py` creates the repo-local layout:
 
-- `.agents/memory/adr/` and `.agents/memory/daily/`
+- `.agents/memory/adr/`, `.agents/memory/daily/`, and `.agents/memory/pending/`
 - `.codex/local/` and `.claude/local/`
-- `.githooks/` with `post-checkout`, `post-merge`, `post-rewrite`
+- `.githooks/` with `pre-commit`, `post-checkout`, `post-merge`, `post-rewrite`
 - `.codex/memory → ../.agents/memory` symlink
 - Empty `INDEX.md`
+- Required local-state ignore entries in `.gitignore`
 - `git config core.hooksPath .githooks`
 
-`SessionStart` calls this automatically on every session open when any wiring is incomplete. You do not need to run it manually.
+`SessionStart` calls this automatically on every session open when any wiring is incomplete, including missing required `.gitignore` entries. You do not need to run it manually.
 
 ---
 
@@ -106,9 +130,9 @@ Give coding agents durable repo context so every new session starts from prior d
 | Hook event | Script | Claude Code | Gemini CLI | Codex |
 |---|---|---|---|---|
 | `SessionStart` / `SessionStart` | `session-start.py` | yes | yes | yes |
-| `Stop` / `AfterAgent` | `post-turn-notify.py` | `Stop` | `AfterAgent` | not provisioned |
-| `SubagentStop` | `post-turn-notify.py` | yes | — | — |
-| `UserPromptSubmit` / `BeforeAgent` | `prompt-guard.py` | `UserPromptSubmit` | `BeforeAgent` | — |
+| `Stop` / `AfterAgent` | `post-turn-notify.py` | writes pending shard + spawns publish flow | writes pending shard + spawns publish flow | not provisioned |
+| `SubagentStop` | `post-turn-notify.py` | writes pending shard + spawns publish flow | — | — |
+| `UserPromptSubmit` / `BeforeAgent` | `prompt-guard.py` | `UserPromptSubmit` | `BeforeAgent` | `UserPromptSubmit` |
 | `PostCompact` | `post-compact.py` | yes | — (no equivalent) | — |
 
 ### Claude Code — `~/.claude/settings.json`
@@ -138,12 +162,13 @@ shared_repo_memory_configured = true
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/session-start.py" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/session-start.py" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/prompt-guard.py" }] }]
   }
 }
 ```
 
-Codex is intentionally treated as a SessionStart-only supported runtime. `scripts/shared-repo-memory/notify-wrapper.sh` remains available as a manual smoke-test path for `post-turn-notify.py`, but it is not treated as a supported provisioned native post-turn integration.
+Codex is intentionally treated as a limited supported runtime: `SessionStart` and `UserPromptSubmit` are provisioned, but `scripts/shared-repo-memory/notify-wrapper.sh` remains only a manual smoke-test path for `post-turn-notify.py`, not a supported native post-turn integration.
 
 ### Gemini CLI — `~/.gemini/settings.json`
 
@@ -213,9 +238,9 @@ Gemini CLI has no `PostCompact` equivalent — `PreCompress` fires before compre
 
 ## UserPromptSubmit / BeforeAgent Hook
 
-`prompt-guard.py` runs before every user turn (`UserPromptSubmit` on Claude Code, `BeforeAgent` on Gemini CLI).
+`prompt-guard.py` runs before every user turn (`UserPromptSubmit` on Claude Code and Codex, `BeforeAgent` on Gemini CLI).
 
-Fires only when needed: if the repo has memory wiring but no event shards yet. Injects a one-time instruction into the agent's context telling it to proactively offer to run the `news` skill before proceeding. Tracks which sessions have already received the nudge in `~/.agent/state/prompt-guard-sessions.json` — the nudge fires at most once per session.
+Fires only when needed: if the repo has memory wiring but no event shards yet. Injects a one-time instruction into the agent's context telling it to proactively offer to run the `memory-bootstrap` skill before proceeding. Tracks which sessions have already received the nudge in `~/.agent/state/prompt-guard-sessions.json` — the nudge fires at most once per session.
 
 This is the recovery path for sessions where memory was deleted or never bootstrapped. It fires mid-session, unlike `SessionStart` which only fires at session open.
 
@@ -260,7 +285,7 @@ Injecting a "please bootstrap" instruction into the main agent's context fails i
 
 | Agent | Command |
 |---|---|
-| Claude Code | `claude -p --system <SKILL.md content> --cwd <repo_root> "Bootstrap shared repo memory…"` |
+| Claude Code | `claude -p --system-prompt <SKILL.md content> --cwd <repo_root> "Bootstrap shared repo memory…"` |
 | Gemini CLI | `gemini --prompt "Bootstrap…" --system-prompt <SKILL.md content>` |
 | Codex (fallback) | same as Claude Code — `claude` binary used cross-agent |
 
@@ -289,11 +314,13 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 
 `post-turn-notify.py` runs after every supported agent turn via `Stop` or `SubagentStop` (Claude Code) or `AfterAgent` (Gemini). `notify-wrapper.sh` remains a manual wrapper path and smoke test, not a supported native Codex post-turn integration.
 
-`SubagentStop` fires when a Task agent (spawned via the Agent tool) completes. Wiring `post-turn-notify.py` to `SubagentStop` ensures that significant work done inside subagents also produces event shards, not just main-agent turns.
+`SubagentStop` fires when a Task agent (spawned via the Agent tool) completes. Wiring `post-turn-notify.py` to `SubagentStop` ensures that significant work done inside subagents also produces pending shards, not just main-agent turns.
 
-### Meaningful turn gate
+### File-changing turn capture gate
 
-**A shard is written only if `files_touched` is non-empty.** Turns with no tracked file changes produce no shard.
+**A pending local-only capture is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no pending capture.
+
+This is only a capture gate. Durable memory is published later from a workstream episode: a bounded, semantically related collection of pending captures evaluated together.
 
 ### What is captured
 
@@ -304,11 +331,15 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 | `branch` | `git rev-parse --abbrev-ref HEAD` |
 | `thread_id` | payload field or stable hash of payload |
 | `turn_id` | payload field or stable hash of payload |
-| `decision_candidate` | payload strings contain: decision, policy, contract, standard, repo rule, adr, must read, governing |
-| `ai_model` | `CLAUDE_MODEL` env var → payload `model` field → `claude-unknown` |
+| `workstream_id` | explicit thread-derived identifier when available, otherwise a branch-derived fallback |
+| `workstream_scope` | `thread` when the runtime provides a stable thread id, otherwise `branch` |
+| `decision_candidate` | `false` on the pending capture; may be flipped to `true` only during trusted checkpoint publication or explicit ADR inspection |
+| `ai_model` | `CLAUDE_MODEL` env var → payload `model` field → runtime fallback model |
 | `ai_tool` | `claude` / `gemini` / `codex` per agent detection |
-| `files_touched` | `git status --porcelain` excluding `.agents/memory/` and `.codex/local/` |
-| `verification` | payload strings matching: pass, fail, error, warning, test, lint, build, verified |
+| `files_touched` | `git status --porcelain` including newly created repo files, excluding `.agents/memory/`, `.codex/local/`, and other local-only paths |
+| `design_docs_touched` | subset of `files_touched` that match design-doc heuristics |
+| `diff_summary` | compact `git diff --stat` summary used only as mechanical local evidence |
+| `verification` | repo-grounded evidence lines such as the diff summary or touched design docs; never raw prompt or raw assistant text |
 
 ### Shard filename
 
@@ -316,7 +347,7 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 <timestamp>--<author>--thread_<thread_id>--turn_<turn_id>.md
 ```
 
-If a shard for the same thread and turn already exists, the existing file is kept (idempotent).
+If a shard for the same thread and turn already exists, the existing timestamp is reused (idempotent) across both pending and published paths.
 
 ### Shard format
 
@@ -326,19 +357,28 @@ timestamp: "2026-04-03T14:22:00Z"
 author: "davidcthomas"
 branch: "main"
 thread_id: "abc123"
-turn_id: "turn_def456"
+turn_id: "def456"
 decision_candidate: false
+enriched: true
 ai_generated: true
 ai_model: "claude-sonnet-4-6"
 ai_tool: "claude"
 ai_surface: "claude-code"
 ai_executor: "local-agent"
+workstream_id: "thread-auth-boundary"
+workstream_scope: "thread"
+checkpoint_goal: "Harden shared-memory publication so raw captures never become durable memory."
+checkpoint_surface: "The shared repo-memory post-turn pipeline and commit boundary."
+checkpoint_outcome: "Published one validated workstream checkpoint from the pending bundle."
 related_adrs:
   - "ADR-0001"
 files_touched:
   - "scripts/shared-repo-memory/session-start.py"
+design_docs_touched:
 verification:
   - "Tests passed."
+source_pending_shards:
+  - ".agents/memory/pending/2026-04-03/2026-04-03T14-22-00Z--davidcthomas--thread_abc123--turn_def456.md"
 # bootstrapped_at is only present on shards written by memory-bootstrap, not live turns.
 # It records when the bootstrap ran; timestamp records the source event date.
 bootstrapped_at: "2026-04-03T14:22:00Z"
@@ -346,25 +386,29 @@ bootstrapped_at: "2026-04-03T14:22:00Z"
 
 ## Why
 
-- <first line of user prompt or assistant response>
+- <coherent workstream-level rationale tying the larger effort to this checkpoint>
 
 ## What changed
 
-- Updated scripts/shared-repo-memory/session-start.py
+- <meaningful system movement, not a filename list>
 
 ## Evidence
 
-- <verification matches from payload>
+- <repo-grounded evidence such as tests, validators, design docs, hooks, or specific paths>
 
 ## Next
 
-- <blocker or next-step matches from payload>
+- <follow-up, risk, or closure note>
 ```
 
-### After writing
+### After capture
 
-1. Calls `rebuild-summary.py` to regenerate today's `summary.md`
-2. Auto-stages the shard and rebuilt summary via `git add`
+1. `post-turn-notify.py` writes a privacy-safe pending capture under `.agents/memory/pending/<date>/`
+2. `post-turn-notify.py` writes a local checkpoint context manifest under `.agents/memory/logs/checkpoint-context/` with the bounded workstream episode bundle and supporting repo paths
+3. The `memory-checkpointer` background subagent inspects the episode bundle and either skips publication or calls `publish-checkpoint.py` with structured checkpoint fields
+4. `publish-checkpoint.py` validates gestalt, privacy, and anti-mechanical rules before writing the final shard under `.agents/memory/daily/<date>/events/`
+5. The publish step rebuilds `summary.md`, stages only the published shard plus summary, and removes the consumed pending captures
+6. `.githooks/pre-commit` rejects commits that stage pending captures or any daily event shard still marked `enriched: false`
 
 ---
 
@@ -400,7 +444,7 @@ Also writes `.codex/local/sync_state.json` with `last_seen_head`, last ADR/summa
 
 ### Automatic triggers
 
-`.githooks/post-checkout`, `post-merge`, and `post-rewrite` each call `scripts/shared-repo-memory/run-catchup.sh`. A normal `git pull`, branch switch, or rebase automatically rebuilds the local digest.
+`.githooks/post-checkout`, `post-merge`, and `post-rewrite` each call `scripts/shared-repo-memory/run-catchup.sh`. A normal `git pull`, branch switch, or rebase automatically rebuilds the local digest. `.githooks/pre-commit` separately protects the publication boundary by rejecting raw shared-memory artifacts.
 
 ---
 
@@ -473,7 +517,8 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 
 | Skill | Purpose |
 |---|---|
-| `memory-writer` | Write one event shard and rebuild the daily summary |
+| `memory-writer` | Delegate a manual runtime path to `post-turn-notify.py` so a file-changing turn becomes a pending capture instead of a directly published shard |
+| `memory-checkpointer` | Evaluate a bounded pending-capture bundle and publish one durable checkpoint only when it passes trust validation |
 | `memory-bootstrap` | Seed initial decision candidates and ADRs from existing repo history |
 | `adr-promoter` | Promote a decision-candidate shard into a permanent ADR |
 | `news` | Summarize recent summaries and ADRs; bootstrap if repo has no memory history yet |
@@ -483,8 +528,10 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 ## Collaboration Model
 
 ```
-agent turn completes
-    → shard written + summary rebuilt + both auto-staged
+agent completes a file-changing turn
+    → pending capture written locally
+    → background checkpoint evaluation inspects the bounded local workstream episode
+    → if validation succeeds: published shard + summary auto-staged
 
 developer commits (same commit as the code change)
     → memory is in Git history on the current branch

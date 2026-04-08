@@ -18,6 +18,9 @@
 # With --dry-run, every action is logged without modifying any file.
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+log_prefix="$("$script_dir/runtime-log-prefix.sh")"
+
 DRY_RUN=false
 FORCE=false
 
@@ -35,7 +38,7 @@ hooks_config="$HOME/.codex/hooks.json"
 gemini_config="$HOME/.gemini/settings.json"
 
 log() {
-  echo "[shared-repo-memory] $*"
+  echo "$log_prefix $*"
 }
 
 # Create a directory if it does not already exist.
@@ -299,6 +302,7 @@ ensure_dir "$HOME/.codex"
 # Copy each helper script into the install root and make it executable.
 for file in \
   common.py \
+  runtime-log-prefix.sh \
   bootstrap-repo.py \
   session-start.py \
   post-turn-notify.py \

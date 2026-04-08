@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +19,25 @@ from common import find_first
 from models import HookRequest, HookResponse, SessionResponse, ShardAttribution
 
 # Payload key aliases -- same broad set for resilience.
-_THREAD_KEYS = {"thread_id", "threadId", "conversation_id", "conversationId", "session_id", "sessionId"}
+_THREAD_KEYS = {
+    "thread_id",
+    "threadId",
+    "conversation_id",
+    "conversationId",
+    "session_id",
+    "sessionId",
+}
 _TURN_KEYS = {"turn_id", "turnId", "id"}
 _PROMPT_KEYS = {"prompt", "user_prompt", "userPrompt", "inputText", "input_text"}
 _ASSISTANT_KEYS = {
-    "last_assistant_message", "lastAssistantMessage", "output_text",
-    "summary_text", "reasoning_text", "prompt_response", "text", "content",
+    "last_assistant_message",
+    "lastAssistantMessage",
+    "output_text",
+    "summary_text",
+    "reasoning_text",
+    "prompt_response",
+    "text",
+    "content",
 }
 
 
@@ -57,7 +71,8 @@ class CodexAdapter:
             prompt=find_first(raw, _PROMPT_KEYS) or "",
             assistant_text=find_first(raw, _ASSISTANT_KEYS) or "",
             model=find_first(raw, {"model", "model_name", "modelName"}) or "",
-            transcript_path=find_first(raw, {"transcript_path", "transcriptPath"}) or "",
+            transcript_path=find_first(raw, {"transcript_path", "transcriptPath"})
+            or "",
             raw=raw,
         )
 
@@ -168,9 +183,17 @@ class CodexAdapter:
 
         codex_config.write_text(text, encoding="utf-8")
 
-        # Write hooks.json with SessionStart command.
-        session_start_cmd = str(ctx.install_root / "session-start.py")
-        hooks_data = ctx.load_json(codex_hooks)
+        # Write hooks.json with SessionStart and UserPromptSubmit commands.
+        # Codex docs show explicit python3 interpreter prefix for all commands.
+        str_session_start_path: str = shlex.quote(
+            str(ctx.install_root / "session-start.py")
+        )
+        str_prompt_guard_path: str = shlex.quote(
+            str(ctx.install_root / "prompt-guard.py")
+        )
+        session_start_cmd: str = f"python3 {str_session_start_path}"
+        prompt_guard_cmd: str = f"python3 {str_prompt_guard_path}"
+        hooks_data: dict[str, object] = ctx.load_json(codex_hooks)
         hooks_data.setdefault("hooks", {})
         hooks_data["hooks"]["SessionStart"] = [
             {
@@ -178,6 +201,9 @@ class CodexAdapter:
                     {"type": "command", "command": session_start_cmd, "timeout": 30}
                 ]
             }
+        ]
+        hooks_data["hooks"]["UserPromptSubmit"] = [
+            {"hooks": [{"type": "command", "command": prompt_guard_cmd, "timeout": 10}]}
         ]
         ctx.save_json(codex_hooks, hooks_data)
 

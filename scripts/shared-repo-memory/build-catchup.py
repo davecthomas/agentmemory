@@ -38,6 +38,7 @@ from common import (
     dump_json,
     ensure_dir,
     head_sha,
+    info,
     load_json,
     relative_link,
     safe_main,
@@ -258,7 +259,7 @@ def main() -> int:
         "last_trigger": args.trigger,
     }
     dump_json(sync_state_path, sync_state)
-    print(f"[shared-repo-memory] catch-up rebuilt via {args.trigger}")
+    info(f"catch-up rebuilt via {args.trigger}")
     return 0
 
 

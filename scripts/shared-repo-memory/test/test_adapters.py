@@ -28,8 +28,15 @@ from adapters import (  # noqa: E402
     ClaudeAdapter,
     CodexAdapter,
     GeminiAdapter,
+    InstallerContext,
     detect_adapter,
     detect_adapter_from_hook_event,
+)
+from common import (  # noqa: E402
+    append_hook_trace,
+    clear_runtime_log_context,
+    format_log_prefix,
+    set_runtime_log_context,
 )
 from models import HookResponse, SessionResponse  # noqa: E402
 
@@ -52,13 +59,16 @@ class TestDetectAdapter:
                 assert detect_adapter() is GeminiAdapter
 
     def test_fallback_is_codex(self):
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("CLAUDECODE", "GEMINI_CLI")}
+        env = {
+            k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "GEMINI_CLI")
+        }
         with patch.dict(os.environ, env, clear=True):
             assert detect_adapter() is CodexAdapter
 
     def test_claude_takes_priority_over_gemini(self):
-        with patch.dict(os.environ, {"CLAUDECODE": "1", "GEMINI_CLI": "1"}, clear=False):
+        with patch.dict(
+            os.environ, {"CLAUDECODE": "1", "GEMINI_CLI": "1"}, clear=False
+        ):
             assert detect_adapter() is ClaudeAdapter
 
 
@@ -77,8 +87,9 @@ class TestDetectAdapterFromHookEvent:
         assert detect_adapter_from_hook_event("SessionStart") is ClaudeAdapter
 
     def test_unknown_event_falls_back_to_env(self):
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("CLAUDECODE", "GEMINI_CLI")}
+        env = {
+            k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "GEMINI_CLI")
+        }
         with patch.dict(os.environ, env, clear=True):
             # No adapter claims empty string, falls back to env-based detection
             result = detect_adapter_from_hook_event("")
@@ -304,22 +315,108 @@ class TestTimeoutValue:
 
 class TestBuildBootstrapCommand:
     def test_claude_command(self):
-        cmd = ClaudeAdapter.build_bootstrap_command("skill text", "Bootstrap.", Path("/repo"))
+        cmd = ClaudeAdapter.build_bootstrap_command(
+            "skill text", "Bootstrap.", Path("/repo")
+        )
         assert cmd is not None
         assert cmd[0] == "claude"
         assert "-p" in cmd
-        assert "--system" in cmd
+        assert "--system-prompt" in cmd
         assert "skill text" in cmd
-        assert str(Path("/repo")) in cmd
+        assert "--cwd" not in cmd
         assert "Bootstrap." in cmd
 
     def test_gemini_command(self):
-        cmd = GeminiAdapter.build_bootstrap_command("skill text", "Bootstrap.", Path("/repo"))
+        cmd = GeminiAdapter.build_bootstrap_command(
+            "skill text", "Bootstrap.", Path("/repo")
+        )
         assert cmd is not None
         assert cmd[0] == "gemini"
         assert "--prompt" in cmd
         assert "--system-prompt" in cmd
 
     def test_codex_returns_none(self):
-        cmd = CodexAdapter.build_bootstrap_command("skill text", "Bootstrap.", Path("/repo"))
+        cmd = CodexAdapter.build_bootstrap_command(
+            "skill text", "Bootstrap.", Path("/repo")
+        )
         assert cmd is None
+
+
+class TestCodexHookWiring:
+    def test_codex_hook_commands_quote_script_paths(self, tmp_path: Path):
+        home_dir: Path = tmp_path / "home"
+        install_root: Path = home_dir / ".agent" / "shared repo memory"
+        repo_root: Path = tmp_path / "authoring repo"
+
+        def load_json(path_json: Path) -> dict[str, object]:
+            if not path_json.exists():
+                return {}
+            return json.loads(path_json.read_text(encoding="utf-8"))
+
+        def save_json(path_json: Path, payload: dict[str, object]) -> None:
+            path_json.parent.mkdir(parents=True, exist_ok=True)
+            path_json.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        install_root.mkdir(parents=True, exist_ok=True)
+        repo_root.mkdir(parents=True, exist_ok=True)
+        context = InstallerContext(
+            install_root=install_root,
+            home=home_dir,
+            repo_root=repo_root,
+            dry_run=False,
+            load_json=load_json,
+            save_json=save_json,
+        )
+
+        CodexAdapter.wire_hooks(context)
+
+        hooks_path: Path = home_dir / ".codex" / "hooks.json"
+        hooks_payload: dict[str, object] = json.loads(
+            hooks_path.read_text(encoding="utf-8")
+        )
+        dict_hooks: dict[str, object] = hooks_payload["hooks"]
+        list_session_start_hooks: list[object] = dict_hooks["SessionStart"]
+        dict_session_start_group: dict[str, object] = list_session_start_hooks[0]
+        list_session_start_commands: list[object] = dict_session_start_group["hooks"]
+        dict_session_start_command: dict[str, object] = list_session_start_commands[0]
+        list_prompt_guard_hooks: list[object] = dict_hooks["UserPromptSubmit"]
+        dict_prompt_guard_group: dict[str, object] = list_prompt_guard_hooks[0]
+        list_prompt_guard_commands: list[object] = dict_prompt_guard_group["hooks"]
+        dict_prompt_guard_command: dict[str, object] = list_prompt_guard_commands[0]
+
+        assert (
+            dict_session_start_command["command"]
+            == "python3 '" + str(install_root / "session-start.py") + "'"
+        )
+        assert (
+            dict_prompt_guard_command["command"]
+            == "python3 '" + str(install_root / "prompt-guard.py") + "'"
+        )
+
+
+class TestRuntimeLogMetadata:
+    def teardown_method(self):
+        clear_runtime_log_context()
+
+    def test_format_log_prefix_uses_explicit_context(self):
+        set_runtime_log_context("codex", "0.118.0")
+        assert (
+            format_log_prefix() == "[shared-repo-memory][agent=codex][version=0.118.0]"
+        )
+
+    def test_append_hook_trace_includes_runtime_metadata(self, tmp_path: Path):
+        with patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
+            set_runtime_log_context("gemini", "0.36.0")
+            append_hook_trace("Notify", "success")
+
+        trace_path: Path = (
+            tmp_path / ".agent" / "state" / "shared-repo-memory-hook-trace.jsonl"
+        )
+        payload: dict[str, object] = json.loads(
+            trace_path.read_text(encoding="utf-8").splitlines()[0]
+        )
+        assert payload["agent"] == "gemini"
+        assert payload["provider_version"] == "0.36.0"

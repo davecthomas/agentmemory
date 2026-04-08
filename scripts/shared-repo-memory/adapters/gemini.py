@@ -19,12 +19,25 @@ from models import HookRequest, HookResponse, SessionResponse, ShardAttribution
 _HOOK_EVENTS = {"SessionStart", "AfterAgent", "BeforeAgent"}
 
 # Payload key aliases -- same broad set for resilience.
-_THREAD_KEYS = {"thread_id", "threadId", "conversation_id", "conversationId", "session_id", "sessionId"}
+_THREAD_KEYS = {
+    "thread_id",
+    "threadId",
+    "conversation_id",
+    "conversationId",
+    "session_id",
+    "sessionId",
+}
 _TURN_KEYS = {"turn_id", "turnId", "id"}
 _PROMPT_KEYS = {"prompt", "user_prompt", "userPrompt", "inputText", "input_text"}
 _ASSISTANT_KEYS = {
-    "last_assistant_message", "lastAssistantMessage", "output_text",
-    "summary_text", "reasoning_text", "prompt_response", "text", "content",
+    "last_assistant_message",
+    "lastAssistantMessage",
+    "output_text",
+    "summary_text",
+    "reasoning_text",
+    "prompt_response",
+    "text",
+    "content",
 }
 
 
@@ -54,7 +67,8 @@ class GeminiAdapter:
             prompt=find_first(raw, _PROMPT_KEYS) or "",
             assistant_text=find_first(raw, _ASSISTANT_KEYS) or "",
             model=find_first(raw, {"model", "model_name", "modelName"}) or "",
-            transcript_path=find_first(raw, {"transcript_path", "transcriptPath"}) or "",
+            transcript_path=find_first(raw, {"transcript_path", "transcriptPath"})
+            or "",
             raw=raw,
         )
 
@@ -114,7 +128,12 @@ class GeminiAdapter:
 
         # Each entry: (event_name, hook_name, command_path, timeout_ms)
         hook_specs = [
-            ("SessionStart", "shared-repo-memory-session-start", session_start_cmd, 30000),
+            (
+                "SessionStart",
+                "shared-repo-memory-session-start",
+                session_start_cmd,
+                30000,
+            ),
             ("AfterAgent", "shared-repo-memory-post-turn", post_turn_cmd, 30000),
             ("BeforeAgent", "shared-repo-memory-prompt-guard", prompt_guard_cmd, 10000),
         ]
@@ -127,15 +146,19 @@ class GeminiAdapter:
                 for h in event_hooks
             )
             if not already_wired:
-                event_hooks.append({
-                    "matcher": "*",
-                    "hooks": [{
-                        "name": hook_name,
-                        "type": "command",
-                        "command": cmd,
-                        "timeout": timeout_ms,
-                    }],
-                })
+                event_hooks.append(
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "name": hook_name,
+                                "type": "command",
+                                "command": cmd,
+                                "timeout": timeout_ms,
+                            }
+                        ],
+                    }
+                )
 
         ctx.save_json(settings_path, settings)
 
@@ -145,8 +168,10 @@ class GeminiAdapter:
     ) -> list[str] | None:
         return [
             "gemini",
-            "--prompt", task,
-            "--system-prompt", skill_content,
+            "--prompt",
+            task,
+            "--system-prompt",
+            skill_content,
         ]
 
     @staticmethod
