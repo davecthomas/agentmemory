@@ -323,7 +323,7 @@ class TestBuildBootstrapCommand:
         assert "-p" in cmd
         assert "--system-prompt" in cmd
         assert "skill text" in cmd
-        assert str(Path("/repo")) in cmd
+        assert "--cwd" not in cmd
         assert "Bootstrap." in cmd
 
     def test_gemini_command(self):

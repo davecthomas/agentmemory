@@ -100,67 +100,166 @@ The refactor should not change:
 
 Those are product contracts, not runtime adapter details.
 
-## Shard quality: two-phase enrichment via subagent
+## Memory trust: pending captures plus workstream checkpoints
 
 ### Problem
 
-Event shards produced by `post-turn-notify.py` are mechanically generated from `git diff` output and regex pattern matching. The resulting content restates what is already visible in the commit history and provides no architectural insight, no reasoning about *why* changes matter, and no useful context for future agents or developers. The `assistant_text` field is extracted from every hook payload but never used.
+Publishing one durable shard per file-changing turn is the wrong trust boundary.
 
-Regex-based extraction cannot produce semantic understanding. Only an LLM can distill an agent's reasoning into meaningful, durable memory.
+Single turns often do not contain enough context to explain the larger issue being
+advanced, the subsystem or architectural surface affected, and the concrete
+outcome of that turn in the context of the broader effort. When the system tries
+to publish directly from one turn anyway, the result is low-signal memory:
+diff restatements, filename lists, or mechanically paraphrased fragments with no
+gestalt.
 
-### Architecture: two-phase shard write
+The privacy boundary is also too weak if raw prompt text or raw assistant text is
+persisted on disk. Durable repo memory must never enshrine direct user wording,
+and local-only staging data should avoid persisting raw conversation content when
+repo-grounded context is sufficient.
 
-**Phase 1 (synchronous, in Stop/AfterAgent hook):** Write a raw shard with mechanical data (frontmatter, files_touched, user prompt) under `pending/` and save an enrichment context file containing `assistant_text`, prompt, diff summary, and shard paths. Return immediately with zero added latency. Do not rebuild summaries in this phase.
+### Product invariant
 
-**Phase 2 (async, fire-and-forget):** Spawn a subagent via the detected adapter's CLI as a background subprocess. The subagent reads the enrichment context, produces semantically enriched shard content, publishes the final shard under `daily/`, rebuilds the daily summary once after publish, deletes the corresponding pending shard, and then deletes the ephemeral context file.
+Published memory must be:
 
-### Multi-runtime subagent enrichment
+- coherent at the workstream level, not merely the single-turn level
+- privacy-safe, with no direct user prompt text persisted or published
+- fail-closed: no shard is better than a bad shard
 
-Enrichment uses `adapter.build_bootstrap_command()` with the same fallback chain as memory bootstrap:
+This changes the model from **turn enrichment** to **workstream checkpoint
+publication**.
+
+### Architecture: three-phase checkpoint pipeline
+
+**Phase 1 (synchronous, in Stop/AfterAgent hook):** Write a local-only pending
+capture under `pending/` with mechanical facts only: timestamp, branch, touched
+files, diff summary, attribution, and stable identity metadata. Do not persist
+raw user prompt text. Do not persist raw assistant text. Do not rebuild
+summaries in this phase.
+
+**Phase 2 (async, fire-and-forget):** Build an ephemeral checkpoint context
+manifest that references a bounded series of related pending captures plus
+supporting repo context such as touched design docs, ADR index, and recent
+summaries. Spawn a background subagent via the detected adapter's CLI. The
+subagent reads the referenced files, decides whether the series represents a
+meaningful durable checkpoint, and if so produces structured checkpoint fields.
+
+**Phase 3 (local publish/validate):** A local publisher script validates the
+structured checkpoint output. Only valid checkpoints are written to
+`daily/<date>/events/`, summary rebuild runs once after publish, the published
+artifacts are staged, and the consumed pending captures are deleted. When
+validation fails or the subagent returns `publish: false`, nothing is published.
+
+### What counts as a workstream
+
+A workstream bundle is a bounded set of related pending captures. The current
+bundle selection rules should stay simple and deterministic:
+
+- current pending capture is always included
+- prefer same `thread_id` when the runtime provides one
+- otherwise fall back to same branch, optionally narrowed by touched-file overlap
+- include only a small recent window (for example, 3-7 pending captures)
+
+This is a local-only read model used to give the subagent enough context to infer
+the broader effort. It is not a committed artifact.
+
+### Multi-runtime background checkpointing
+
+Checkpoint evaluation uses `adapter.build_bootstrap_command()` with the same
+fallback chain as memory bootstrap:
 
 | Runtime | Subagent command | Auth | Status |
 |---------|-----------------|------|--------|
-| Claude Code | `claude -p --system-prompt <skill> --cwd <repo> <task>` | Keychain/OAuth | Full support |
+| Claude Code | `claude -p --system-prompt <skill> <task>` | Keychain/OAuth | Full support |
 | Gemini CLI | `gemini --prompt <task> --system-prompt <skill>` | Gemini auth | Full support |
-| Codex CLI | Falls back to Claude CLI | Keychain/OAuth | Degraded -- post-turn hooks not reliably firing as of Codex release 117; revisit when a future release improves hook support |
+| Codex CLI | Falls back to Claude CLI | Keychain/OAuth | Degraded -- native post-turn hooks are not yet a supported product path |
 
-When the detected adapter returns `None` from `build_bootstrap_command()`, the system falls back to `ClaudeAdapter.build_bootstrap_command()` before giving up.
+The parent process sets `cwd=<repo_root>` when launching the subprocess. The
+command itself should not rely on a Claude-specific working-directory flag.
 
-### What the enrichment subagent produces
+When the detected adapter returns `None` from `build_bootstrap_command()`, the
+system falls back to `ClaudeAdapter.build_bootstrap_command()` before giving up.
 
-The subagent replaces the four body sections of the raw shard:
+### Structured checkpoint output
 
-- **Why**: 1-3 sentences distilling user intent and agent reasoning into *why this change matters* architecturally. Not a restatement of the diff.
-- **What changed**: Semantic summary of what was done -- purpose and impact, not filenames.
-- **Evidence**: Concrete signals -- test results, design doc alignment, specific architectural choices made.
-- **Next**: Genuine follow-up work, unresolved issues, or architectural implications.
+The background subagent must not emit free-form prose and trust the local
+publisher to interpret it. Instead, it must return structured output that the
+publisher can validate mechanically.
 
-Existing frontmatter is otherwise preserved, but enrichment may update system-managed frontmatter fields such as `decision_candidate` and `enriched`. The substantive content change is limited to the four body sections above.
+Minimum required fields:
+
+- `publish`: boolean
+- `workstream_goal`: the larger issue or goal being advanced
+- `subsystem_surface`: the subsystem or architectural surface affected
+- `turn_outcome`: the concrete outcome reached by the latest turn in that broader effort
+- `why`: semantic rationale lines
+- `what_changed`: semantic change lines
+- `evidence`: concrete repo-grounded evidence lines
+- `next`: follow-up or implications lines
+- `decision_candidate`: boolean
+- `source_pending_shards`: the pending captures consumed by this checkpoint
+
+If the subagent cannot produce those fields coherently, it must return
+`publish: false`.
+
+### The gestalt gate
+
+The local publisher enforces the key trust boundary:
+
+- `workstream_goal`, `subsystem_surface`, and `turn_outcome` must all be present
+- they must be distinct, not trivial paraphrases of each other
+- together they must form one coherent synopsis of the broader issue, affected
+  area, and concrete latest-turn contribution
+- the four published body sections must align with that synopsis rather than
+  restating diffs or filenames
+
+This is the core reason the bundle exists at all: a single turn often lacks
+enough information to satisfy the gestalt gate, while a short series of related
+pending captures often does.
+
+### Privacy and trust gates
+
+The publish validator must reject output that violates any of these invariants:
+
+- direct user prompt text or quoted prompt fragments
+- raw assistant-response passthrough
+- diff-stat restatements as durable memory
+- filename-only or patch-summary-only content
+- placeholder or boilerplate text with no repo-specific meaning
+- malformed or incomplete section output
+
+The simplest way to satisfy the privacy invariant is to avoid persisting prompt
+text and raw assistant text in the pending capture or checkpoint context at all.
+
+### Decision candidate detection moves to the checkpoint level
+
+`decision_candidate` should no longer be inferred from a single turn's keyword
+matches. Instead, the checkpoint subagent evaluates the whole workstream bundle
+and marks the published checkpoint as a decision candidate only when it captures
+an actual durable architectural decision.
+
+This keeps routine implementation turns from polluting the ADR pipeline while
+still allowing a multi-turn design or refactor effort to promote durable
+decisions once enough context exists.
 
 ### Graceful degradation
 
-- No subagent CLI available: pending raw shard stays local-only and unpublished.
-- Enrichment subprocess fails or crashes: pending raw shard remains local-only.
-- Empty assistant_text (Codex manual wrapper, truncated payloads): enrich from diff + prompt only, or skip enrichment entirely.
-- Summary is rebuilt only after publish, so the durable read model changes atomically with the published shard.
+- No subagent CLI available: pending captures remain local-only.
+- Insufficient context to explain the broader workstream: no publish.
+- Validation fails: no publish.
+- Concurrent evaluations race: only validations against still-present source
+  pending captures may publish.
 
-### Enrichment-based decision candidate detection
-
-The current `decision_candidate()` function in `post-turn-notify.py` uses a regex gate:
-
-    pattern = r"\b(decision|policy|contract|standard|repo rule|adr|must read|governing)\b"
-
-This never fires in practice because developers do not narrate their architectural choices with these keywords during normal work. After four days of active development including a major platform refactor, zero shards were flagged as decision candidates.
-
-The enrichment subagent replaces this. When enriching a shard, the subagent evaluates whether the turn involved an architectural decision and sets `decision_candidate: true` or `false` in the enriched shard. The raw shard defaults to `false` as a safe pre-enrichment value.
+In all of these cases the system keeps raw local staging data, but durable
+memory remains unchanged.
 
 ### Design constraints
 
-- No external API keys required. Subagent CLIs use their own auth (keychain, OAuth).
-- No latency added to the hook. Enrichment is fully asynchronous.
-- One enrichment attempt per shard. No retry loops.
-- Enrichment context files are ephemeral (dot-prefixed, deleted after use, never committed).
-- Adding a new runtime adapter automatically gets enrichment support through the adapter protocol.
+- No external API keys required. Subagent CLIs use their own auth.
+- No latency added to the hook. Bundling and checkpoint evaluation are asynchronous.
+- Pending captures are local-only and must never be committed.
+- Published memory remains plain Markdown under `.agents/memory/daily/`.
+- The summary format and ADR workflow stay unchanged.
 
 ## ADR promotion: design doc inspection
 
@@ -168,11 +267,11 @@ The enrichment subagent replaces this. When enriching a shard, the subagent eval
 
 Design docs are the richest source of ADR-worthy decisions, but nothing inspects them. The existing ADR promotion pipeline depends entirely on event shards being flagged `decision_candidate: true`, which requires the regex gate described above. Since that gate never fires, no ADRs are ever promoted from live work. All six existing ADRs came from bootstrap.
 
-Even if the shard enrichment fix resolves the `decision_candidate` detection problem for turn-level work, it misses the most important ADR source: design docs themselves. When an agent writes or updates a document like `docs/agent-runtime-adapter-refactor-plan.md`, the decisions recorded there should be inspected for ADR promotion independently of the event shard pipeline.
+Even if trusted checkpoint publication resolves the `decision_candidate` detection problem for turn-level work, it misses the most important ADR source: design docs themselves. When an agent writes or updates a document like `docs/agent-runtime-adapter-refactor-plan.md`, the decisions recorded there should be inspected for ADR promotion independently of the event shard pipeline.
 
 ### Architecture: design doc ADR inspection
 
-When `post-turn-notify.py` detects that `files_touched` includes a design doc (matching patterns such as `docs/*`, `*design*`, `*spec*`, `*arch*`, `*adr*`), it spawns a separate async subagent task in addition to normal shard writing and enrichment.
+When `post-turn-notify.py` detects that `files_touched` includes a design doc (matching patterns such as `docs/*`, `*design*`, `*spec*`, `*arch*`, `*adr*`), it spawns a separate async subagent task in addition to normal checkpoint capture and publication.
 
 #### Skill: `adr-inspector`
 
@@ -195,7 +294,7 @@ The skill source file lives in the repo at `skills/adr-inspector/SKILL.md` and i
 
 #### Trigger and independence
 
-Design doc inspection runs independently of shard enrichment. A single turn that changes a design doc fires both processes: shard enrichment (for the turn's own shard) and design doc inspection (for ADR candidates found in the document). The two subagent processes do not coordinate; they write to different files and do not conflict.
+Design doc inspection runs independently of checkpoint publication. A single turn that changes a design doc fires both processes: checkpoint evaluation (for the turn's own durable memory, if any) and design doc inspection (for ADR candidates found in the document). The two subagent processes do not coordinate; they write to different files and do not conflict.
 
 ### What makes a decision ADR-worthy
 
@@ -217,7 +316,7 @@ Reject:
 
 ### Multi-runtime support
 
-Design doc inspection uses the same `adapter.build_bootstrap_command()` pattern and fallback chain as shard enrichment and memory bootstrap.
+Design doc inspection uses the same `adapter.build_bootstrap_command()` pattern and fallback chain as checkpoint evaluation and memory bootstrap.
 
 ### Relationship to existing ADR promotion
 
@@ -227,7 +326,8 @@ ADR-0005 established that ADR promotion is always explicit and separate from pos
 
 | File | Purpose |
 |------|---------|
-| `scripts/shared-repo-memory/enrich-shard.py` | Standalone enrichment script invoked by subagent to rewrite raw shard body sections |
+| `scripts/shared-repo-memory/publish-checkpoint.py` | Standalone validator/publisher script invoked by the checkpoint subagent to publish only trusted workstream checkpoints |
+| `skills/memory-checkpointer/SKILL.md` | Skill defining the system prompt for the workstream checkpoint evaluation subagent |
 | `skills/adr-inspector/SKILL.md` | Skill defining the system prompt for the design doc ADR inspection subagent |
 
 ## Suggested migration sequence
@@ -238,8 +338,8 @@ ADR-0005 established that ADR promotion is always explicit and separate from pos
 4. Move payload parsing and hook response rendering into per-agent adapter modules.
 5. Convert docs and doctor output to render from the capability registry.
 6. Add adapter-specific test suites before removing the old mixed logic.
-7. Add two-phase shard enrichment via subagent to post-turn-notify.py.
-8. Replace regex-based decision candidate detection with enrichment-based semantic evaluation.
+7. Add pending capture plus background checkpoint evaluation to post-turn-notify.py.
+8. Replace regex-based decision candidate detection with checkpoint-level semantic evaluation.
 9. Create `skills/adr-inspector/SKILL.md` and add design doc ADR inspection as an async subagent task triggered by design doc changes in post-turn-notify.py.
-10. Add shard enrichment and design doc inspection capability flags to agent_support.py.
-11. Update install.py to install enrich-shard.py and the adr-inspector skill.
+10. Add checkpoint publication and design doc inspection capability flags to agent_support.py.
+11. Update install.py to install publish-checkpoint.py, memory-checkpointer, and the adr-inspector skill.

@@ -526,12 +526,13 @@ def main() -> int:
         home / ".agent" / "shared-repo-memory" / "rebuild-summary.py",
         home / ".agent" / "shared-repo-memory" / "build-catchup.py",
         home / ".agent" / "shared-repo-memory" / "promote-adr.py",
+        home / ".agent" / "shared-repo-memory" / "publish-checkpoint.py",
         refresh_state,
     ]
     missing = [str(path) for path in required if not path.exists()]
 
     # Skills may be installed under Claude or Codex skill paths; require at least one.
-    for skill in ("memory-writer", "adr-promoter"):
+    for skill in ("memory-writer", "memory-checkpointer", "adr-promoter"):
         claude_path = home / ".claude" / "skills" / skill
         codex_path = home / ".codex" / "skills" / skill
         if not claude_path.exists() and not codex_path.exists():

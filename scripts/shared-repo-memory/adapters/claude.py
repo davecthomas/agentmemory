@@ -170,13 +170,24 @@ class ClaudeAdapter:
     def build_bootstrap_command(
         skill_content: str, task: str, repo_root: Path
     ) -> list[str] | None:
+        """Build the Claude CLI command used for background bootstrap-style tasks.
+
+        Args:
+            skill_content: Full skill text passed as the Claude system prompt.
+            task: User-facing task text for the one-shot Claude invocation.
+            repo_root: Repository root where the subprocess will be launched.
+
+        Returns:
+            list[str] | None: CLI argv for Claude `--print` mode. The command
+                intentionally omits any working-directory flag because the
+                subprocess caller already sets `cwd`, and current Claude CLI
+                releases reject the unsupported `--cwd` option.
+        """
         return [
             "claude",
             "-p",
             "--system-prompt",
             skill_content,
-            "--cwd",
-            str(repo_root),
             task,
         ]
 

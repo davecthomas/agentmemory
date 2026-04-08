@@ -2,7 +2,7 @@
 # validate-notify.sh -- Smoke-test the manual post-turn notify wrapper path.
 #
 # Sends a synthetic hook payload through notify-wrapper.sh and verifies that a
-# new pending raw shard was created under .agents/memory/pending/<today>/.
+# new pending capture was created under .agents/memory/pending/<today>/.
 #
 # Use this script to confirm that post-turn-notify.py works when invoked
 # directly through the wrapper, or when troubleshooting missing shards.
@@ -63,4 +63,4 @@ if [ "$after_count" -le "$before_count" ]; then
 fi
 
 log "notify-wrapper validation succeeded"
-log "this confirms the manual wrapper path only; durable publication still requires enrichment"
+log "this confirms the manual wrapper path only; durable publication still requires checkpoint validation"

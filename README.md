@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.2.8`
+Current version: `0.3.0`
 
 ---
 
@@ -14,14 +14,14 @@ Coding agents are productive inside a single session and fragile across time. Te
 
 ### Key concepts
 
-| Concept              | What it is                                                                                                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Meaningful turn**  | An agent turn that changed at least one repo file in the working tree, including newly created files. Only meaningful turns produce pending raw shards; conversational turns with no file changes are silently skipped. |
-| **Pending raw shard**| Local-only mechanical capture for a meaningful turn. Lives under `.agents/memory/pending/YYYY-MM-DD/` and must never be committed.                                          |
-| **Event shard**      | Immutable published record of one meaningful agent turn after enrichment. Captures why, what changed, evidence, next steps, and AI attribution. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
-| **Daily summary**    | Derived read model rebuilt deterministically from that day's shards. Never edited directly.                                                                                 |
-| **ADR**              | Architecture Decision Record. Promoted explicitly from decision-candidate shards. The only location for durable repo decisions.                                             |
-| **Local catch-up**   | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran.                                                    |
+| Concept | What it is |
+| ------- | ---------- |
+| **Meaningful turn** | An agent turn that changed at least one repo file in the working tree, including newly created files. Only meaningful turns produce pending captures; conversational turns with no file changes are silently skipped. |
+| **Pending capture** | Local-only mechanical capture for a meaningful turn. Lives under `.agents/memory/pending/YYYY-MM-DD/`, contains no raw prompt or raw assistant text, and must never be committed. |
+| **Workstream checkpoint** | Durable published memory synthesized from a bounded bundle of related pending captures plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
+| **Daily summary** | Derived read model rebuilt deterministically from that day's published checkpoints. Never edited directly. |
+| **ADR** | Architecture Decision Record. Promoted explicitly from decision-candidate checkpoints. The only location for durable repo decisions. |
+| **Local catch-up** | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran. |
 
 ### Storage layout
 
@@ -32,9 +32,10 @@ Coding agents are productive inside a single session and fragile across time. Te
 │   │   └── INDEX.md
 │   ├── daily/
 │   │   └── YYYY-MM-DD/
-│   │       ├── events/      # immutable event shards
+│   │       ├── events/      # immutable published checkpoints
 │   │       └── summary.md   # derived daily summary
-│   └── pending/             # local-only raw shard staging area (gitignored)
+│   ├── pending/             # local-only pending captures (gitignored)
+│   └── logs/                # local-only checkpoint context and logs (gitignored)
 ├── .githooks/               # generated repo-local hooks (gitignored)
 │   └── pre-commit           # blocks pending/raw shards, then runs optional project checks
 └── .codex/
@@ -56,10 +57,12 @@ SessionStart hook
 
 Agent turn completes
     → Stop / AfterAgent hook fires post-turn-notify.py
-    → meaningful turn? → one pending raw shard written under .agents/memory/pending/
-    → if enrichment succeeds: published event shard written under daily/events/
-    → summary rebuilt from published shard set
-    → published shard + summary auto-staged
+    → meaningful turn? → one privacy-safe pending capture written under .agents/memory/pending/
+    → local workstream bundle manifest written under .agents/memory/logs/
+    → background memory-checkpointer subagent evaluates the bundle
+    → only if the candidate passes validation: published checkpoint written under daily/events/
+    → summary rebuilt from the published checkpoint set
+    → published checkpoint + summary auto-staged
 
 Developer commits + pushes (same PR as the code)
     → shared memory becomes collaborative
@@ -117,8 +120,8 @@ Restart any open agent sessions. `SessionStart` validates and bootstraps repo-lo
 | Hook | Purpose | Claude Code | Gemini CLI | Codex |
 | ---- | ------- | ----------- | ---------- | ----- |
 | Session start | Validate wiring, inject memory context | `SessionStart` | `SessionStart` | `SessionStart` |
-| Post-turn capture | Write pending shard and spawn publish flow | `Stop` | `AfterAgent` | Not provisioned |
-| Subagent capture | Write pending shard for Task agent turns | `SubagentStop` | — | — |
+| Post-turn capture | Write pending capture and spawn checkpoint flow | `Stop` | `AfterAgent` | Not provisioned |
+| Subagent capture | Write pending capture for Task agent turns | `SubagentStop` | — | — |
 | Pre-turn guard | Detect empty memory, offer bootstrap | `UserPromptSubmit` | `BeforeAgent` | `UserPromptSubmit` |
 | Post-compaction | Re-inject memory after context compaction | `PostCompact` | — | — |
 
@@ -238,12 +241,13 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 ### Skills reference
 
-| Skill              | Invoke when                                                                                                                                  |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory-writer`    | After a meaningful turn — writes one event shard, rebuilds the day summary, stages generated files                                           |
+| Skill | Invoke when |
+| ----- | ----------- |
+| `memory-writer` | After a meaningful turn from a manual runtime path such as Codex notify-wrapper testing — delegates to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
+| `memory-checkpointer` | A background workstream bundle should be evaluated for durable publication without blocking the user turn |
 | `memory-bootstrap` | First time in a repo with existing history — mines design docs and commits to seed initial decision candidates and promote foundational ADRs |
-| `adr-promoter`     | A decision-candidate shard should become a permanent ADR                                                                                     |
-| `news`             | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
+| `adr-promoter` | A decision-candidate shard should become a permanent ADR |
+| `news` | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
 
 ---
 
@@ -257,8 +261,9 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 
 3. Agent turn ends
    └── Stop/AfterAgent hook runs post-turn-notify.py
-   └── Meaningful turn? → pending raw shard written
-   └── Enrichment succeeds? → published event shard + day summary auto-staged
+   └── Meaningful turn? → pending capture written
+   └── Background checkpoint evaluation runs from a bounded local workstream bundle
+   └── Validation succeeds? → published checkpoint + day summary auto-staged
 
 4. Review staged memory files alongside code changes
 
@@ -291,7 +296,7 @@ To trigger bootstrap manually (e.g. after deleting shards): `/memory-bootstrap`
 
 ## ADR Promotion
 
-Decision-candidate event shards are published enriched captures. ADRs are curated, durable decisions. Promotion is always explicit — it never happens automatically as a post-turn side effect.
+Decision-candidate event shards are published checkpoints. ADRs are curated, durable decisions. Promotion is always explicit — it never happens automatically as a post-turn side effect.
 
 To promote a candidate:
 
@@ -329,7 +334,7 @@ git config core.hooksPath     # should print .githooks
 ./scripts/shared-repo-memory/validate-notify.sh
 ```
 
-Writes one synthetic pending raw shard through the manual `notify-wrapper.sh` path. This confirms the wrapper and `post-turn-notify.py` work together when invoked directly; durable publication still requires enrichment, and the check does not prove native Codex post-turn hook support.
+Writes one synthetic pending capture through the manual `notify-wrapper.sh` path. This confirms the wrapper and `post-turn-notify.py` work together when invoked directly; durable publication still requires checkpoint validation, and the check does not prove native Codex post-turn hook support.
 
 ### Check the hook trace log
 

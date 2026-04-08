@@ -53,6 +53,7 @@ SCRIPTS = [
     "build-catchup.py",
     "promote-adr.py",
     "enrich-shard.py",
+    "publish-checkpoint.py",
 ]
 
 # Adapter package files, installed under adapters/ subdirectory.

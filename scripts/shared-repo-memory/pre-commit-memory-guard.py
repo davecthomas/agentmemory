@@ -3,10 +3,10 @@
 
 This helper runs from the repo-local `pre-commit` Git hook installed by
 bootstrap-repo.py. Its purpose is to enforce the publication boundary for the
-two-phase shard pipeline:
+pending-capture to published-checkpoint pipeline:
 
   1. Raw mechanical turn output is written under `.agents/memory/pending/`.
-  2. Only the enrichment/publish step may create committed files under
+  2. Only the trusted checkpoint publish step may create committed files under
      `.agents/memory/daily/<date>/events/`.
 
 The guard rejects a commit when either of these conditions is true:
@@ -205,7 +205,7 @@ def main() -> int:
     for str_failure in list_str_failures:
         warn(f"  - {str_failure}")
     warn(
-        "Only enriched daily event shards may be committed. Pending raw shards must stay local."
+        "Only trusted published daily event shards may be committed. Pending captures must stay local."
     )
     return 1
 

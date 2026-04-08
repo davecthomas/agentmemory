@@ -37,8 +37,9 @@ class AgentSupport:
         str_post_turn_mode: Short label describing how post-turn capture is
             delivered today, such as "native" or "manual wrapper only".
         bool_supports_shard_enrichment: True when the runtime can automatically
-            spawn a subagent to semantically enrich raw shards after post-turn
-            capture.  Requires working post-turn hooks.
+            spawn a background checkpoint subagent after post-turn capture so
+            pending local-only shards can become trusted published memory.
+            Requires working post-turn hooks.
         bool_supports_design_doc_inspection: True when the runtime can inspect
             design docs for ADR-worthy decisions, either automatically via
             post-turn hooks or manually via the adr-inspector skill.
@@ -136,8 +137,8 @@ def list_agent_support() -> list[AgentSupport]:
                 "SessionStart and prompt guard are supported. Native "
                 "post-turn capture is not a supported provisioned path; "
                 "repo-local notify-wrapper smoke tests exist but are "
-                "manual only. Shard enrichment requires post-turn hooks "
-                "and is unavailable. Design doc ADR inspection is "
+                "manual only. Background checkpoint publication requires "
+                "post-turn hooks and is unavailable. Design doc ADR inspection is "
                 "available via manual invocation of the adr-inspector skill."
             ),
         ),
@@ -160,7 +161,7 @@ def support_summary_lines() -> list[str]:
         ("bool_supports_subagent_capture", "subagent capture"),
         ("bool_supports_prompt_guard", "prompt guard"),
         ("bool_supports_post_compact", "post-compact"),
-        ("bool_supports_shard_enrichment", "shard enrichment"),
+        ("bool_supports_shard_enrichment", "checkpoint publication"),
         ("bool_supports_design_doc_inspection", "design doc ADR inspection"),
     ]
 

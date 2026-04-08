@@ -11,7 +11,7 @@ Give coding agents durable repo context so every new session starts from prior d
 - **Memory is plain Markdown in Git.** No external service, no database, no embedding pipeline.
 - **The repo owns the memory.** Published storage lives under `<repo>/.agents/memory/daily/` and `<repo>/.agents/memory/adr/`, committed and versioned like code; pending and log subtrees under the same root stay local-only.
 - **Agent-facing paths are access paths, not storage.** `.codex/memory` is a symlink into `.agents/memory/` — it never holds a separate copy.
-- **Raw capture and publication are separate phases.** Each meaningful agent turn produces one pending raw shard locally. Only enrichment may publish a committed event shard.
+- **Raw capture and publication are separate phases.** Each meaningful agent turn produces one pending local-only capture. Only trusted checkpoint publication may write a committed event shard.
 - **Read models are derived.** Daily summaries are rebuilt deterministically from shards. They are never the write target.
 - **Durable decisions live only in ADRs.** ADR promotion is always explicit — never an automatic post-turn side effect.
 - **Memory is not collaborative until committed and pushed.** The system auto-stages only published memory artifacts; it never auto-commits or auto-pushes.
@@ -34,6 +34,8 @@ Give coding agents durable repo context so every new session starts from prior d
 │   └── pending/
 │       └── YYYY-MM-DD/
 │           └── <timestamp>--<author>--thread_<id>--turn_<id>.md
+│   └── logs/
+│       └── checkpoint-context/             # local-only workstream bundle manifests
 ├── .codex/
 │   ├── memory -> ../.agents/memory         # symlink — Codex access path only
 │   └── local/
@@ -59,12 +61,14 @@ Give coding agents durable repo context so every new session starts from prior d
 │   ├── rebuild-summary.py
 │   ├── build-catchup.py
 │   ├── promote-adr.py
+│   ├── publish-checkpoint.py
 │   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
 └── state/
     └── shared_asset_refresh_state.json
 
 ~/.agent/skills/
     ├── memory-writer/
+    ├── memory-checkpointer/
     ├── memory-bootstrap/
     ├── adr-promoter/
     └── news/
@@ -300,7 +304,7 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 
 ### Meaningful turn gate
 
-**A pending raw shard is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no shard.
+**A pending local-only capture is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no shard.
 
 ### What is captured
 
@@ -311,11 +315,15 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 | `branch` | `git rev-parse --abbrev-ref HEAD` |
 | `thread_id` | payload field or stable hash of payload |
 | `turn_id` | payload field or stable hash of payload |
-| `decision_candidate` | `false` on the pending raw shard; may be flipped to `true` during enrichment or explicit ADR inspection |
-| `ai_model` | `CLAUDE_MODEL` env var → payload `model` field → `claude-unknown` |
+| `workstream_id` | explicit thread-derived identifier when available, otherwise a branch-derived fallback |
+| `workstream_scope` | `thread` when the runtime provides a stable thread id, otherwise `branch` |
+| `decision_candidate` | `false` on the pending capture; may be flipped to `true` only during trusted checkpoint publication or explicit ADR inspection |
+| `ai_model` | `CLAUDE_MODEL` env var → payload `model` field → runtime fallback model |
 | `ai_tool` | `claude` / `gemini` / `codex` per agent detection |
 | `files_touched` | `git status --porcelain` including newly created repo files, excluding `.agents/memory/`, `.codex/local/`, and other local-only paths |
-| `verification` | payload strings matching: pass, fail, error, warning, test, lint, build, verified |
+| `design_docs_touched` | subset of `files_touched` that match design-doc heuristics |
+| `diff_summary` | compact `git diff --stat` summary used only as mechanical local evidence |
+| `verification` | repo-grounded evidence lines such as the diff summary or touched design docs; never raw prompt or raw assistant text |
 
 ### Shard filename
 
@@ -341,12 +349,20 @@ ai_model: "claude-sonnet-4-6"
 ai_tool: "claude"
 ai_surface: "claude-code"
 ai_executor: "local-agent"
+workstream_id: "thread-auth-boundary"
+workstream_scope: "thread"
+checkpoint_goal: "Harden shared-memory publication so raw captures never become durable memory."
+checkpoint_surface: "The shared repo-memory post-turn pipeline and commit boundary."
+checkpoint_outcome: "Published one validated workstream checkpoint from the pending bundle."
 related_adrs:
   - "ADR-0001"
 files_touched:
   - "scripts/shared-repo-memory/session-start.py"
+design_docs_touched:
 verification:
   - "Tests passed."
+source_pending_shards:
+  - ".agents/memory/pending/2026-04-03/2026-04-03T14-22-00Z--davidcthomas--thread_abc123--turn_def456.md"
 # bootstrapped_at is only present on shards written by memory-bootstrap, not live turns.
 # It records when the bootstrap ran; timestamp records the source event date.
 bootstrapped_at: "2026-04-03T14:22:00Z"
@@ -354,27 +370,29 @@ bootstrapped_at: "2026-04-03T14:22:00Z"
 
 ## Why
 
-- <first line of user prompt or assistant response>
+- <coherent workstream-level rationale tying the larger effort to this checkpoint>
 
 ## What changed
 
-- Updated scripts/shared-repo-memory/session-start.py
+- <meaningful system movement, not a filename list>
 
 ## Evidence
 
-- <verification matches from payload>
+- <repo-grounded evidence such as tests, validators, design docs, hooks, or specific paths>
 
 ## Next
 
-- <blocker or next-step matches from payload>
+- <follow-up, risk, or closure note>
 ```
 
 ### After capture
 
-1. `post-turn-notify.py` writes the raw shard under `.agents/memory/pending/<date>/`
-2. If semantic context is available and enrichment succeeds, `enrich-shard.py` publishes the final shard under `.agents/memory/daily/<date>/events/`
-3. The publish step rebuilds `summary.md`, stages only the published shard plus summary, and removes the pending raw shard
-4. `.githooks/pre-commit` rejects commits that stage pending shards or any daily event shard still marked `enriched: false`
+1. `post-turn-notify.py` writes a privacy-safe pending capture under `.agents/memory/pending/<date>/`
+2. `post-turn-notify.py` writes a local checkpoint context manifest under `.agents/memory/logs/checkpoint-context/` with the bounded workstream bundle and supporting repo paths
+3. The `memory-checkpointer` background subagent inspects the bundle and either skips publication or calls `publish-checkpoint.py` with structured checkpoint fields
+4. `publish-checkpoint.py` validates gestalt, privacy, and anti-mechanical rules before writing the final shard under `.agents/memory/daily/<date>/events/`
+5. The publish step rebuilds `summary.md`, stages only the published shard plus summary, and removes the consumed pending captures
+6. `.githooks/pre-commit` rejects commits that stage pending captures or any daily event shard still marked `enriched: false`
 
 ---
 
@@ -483,7 +501,8 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 
 | Skill | Purpose |
 |---|---|
-| `memory-writer` | Write one event shard and rebuild the daily summary |
+| `memory-writer` | Delegate a manual runtime path to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
+| `memory-checkpointer` | Evaluate a bounded pending-capture bundle and publish one durable checkpoint only when it passes trust validation |
 | `memory-bootstrap` | Seed initial decision candidates and ADRs from existing repo history |
 | `adr-promoter` | Promote a decision-candidate shard into a permanent ADR |
 | `news` | Summarize recent summaries and ADRs; bootstrap if repo has no memory history yet |
@@ -494,8 +513,9 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 
 ```
 agent turn completes
-    → pending raw shard written locally
-    → if enrichment succeeds: published shard + summary auto-staged
+    → pending capture written locally
+    → background checkpoint evaluation inspects the bounded local workstream bundle
+    → if validation succeeds: published shard + summary auto-staged
 
 developer commits (same commit as the code change)
     → memory is in Git history on the current branch

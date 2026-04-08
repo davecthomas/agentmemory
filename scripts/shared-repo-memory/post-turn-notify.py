@@ -2,12 +2,12 @@
 """post-turn-notify.py -- Post-turn hook for the shared repo-memory system.
 
 This script fires after every agent turn. Its job is to decide whether the turn
-was meaningful and, if so, write a local pending shard capturing the mechanical
-facts needed for semantic publication later.
+was meaningful and, if so, write a local pending capture containing only the
+mechanical repo facts needed for trusted checkpoint publication later.
 
 The "meaningful turn" gate
 --------------------------
-A pending raw shard is written only when repo files changed in the working tree
+A pending local-only capture is written only when repo files changed in the working tree
 (files_touched is non-empty).  Conversational turns with no repo changes --
 even long discussions that mention ADRs or decisions -- produce no shard.
 This prevents the memory from filling up with noise and false-positive
@@ -19,13 +19,14 @@ Triggered by:
   - Codex CLI:    Invoked directly via scripts/shared-repo-memory/notify-wrapper.sh
 
 After writing the pending shard, this script may:
-  1. Save enrichment context and spawn an async subagent to publish an enriched
-     shard into `.agents/memory/daily/<date>/events/`.
+  1. Save a privacy-safe checkpoint context manifest and spawn an async
+     subagent to evaluate whether a durable workstream checkpoint should be
+     published into `.agents/memory/daily/<date>/events/`.
   2. Spawn an ADR inspection subagent when changed design docs were touched.
 
 The raw pending shard is local-only and must never be committed. Publication,
-summary rebuild, and staging happen only inside enrich-shard.py after semantic
-content is available.
+summary rebuild, and staging happen only inside publish-checkpoint.py after a
+bounded workstream bundle passes semantic validation.
 
 Install location after `./install.sh`:
   ~/.agent/shared-repo-memory/post-turn-notify.py
@@ -49,17 +50,18 @@ from common import (
     append_hook_trace,
     author_slug,
     changed_repo_files,
-    collect_matches,
     current_branch,
     ensure_dir,
     find_first,
     flatten_strings,
     format_log_prefix,
     info,
+    parse_frontmatter,
     render_frontmatter,
     runtime_provider_version,
     safe_main,
     set_runtime_log_context,
+    slugify,
     try_repo_root,
     utc_now,
     utc_timestamp,
@@ -78,54 +80,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=False)
     return parser.parse_args()
-
-
-def extract_user_prompt_from_transcript(transcript_path: str) -> str | None:
-    """Read the JSONL transcript and return the last human/user turn text.
-
-    Claude Code writes a JSONL transcript file during each session.  When the
-    hook payload does not include the user prompt directly, we fall back to
-    reading the last human-role entry from the transcript file referenced in
-    the payload.
-
-    Args:
-        transcript_path: Absolute path to the session transcript JSONL file.
-
-    Returns:
-        str | None: Up to 500 characters of the most recent user turn text,
-            or None if the transcript is absent, unreadable, or has no human turns.
-    """
-    try:
-        lines = Path(transcript_path).read_text(encoding="utf-8").splitlines()
-        for raw in reversed(lines):
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                entry = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            role = entry.get("role", "")
-            if role not in ("human", "user"):
-                continue
-            content = entry.get("content", "")
-            if isinstance(content, str):
-                text = content.strip()
-            elif isinstance(content, list):
-                # Content may be a list of typed blocks; extract text blocks only.
-                parts = [
-                    b.get("text", "")
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                text = " ".join(parts).strip()
-            else:
-                continue
-            if text:
-                return text[:500]
-    except OSError:
-        pass
-    return None
 
 
 def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
@@ -303,7 +257,7 @@ def _already_captured(repo_root: Path, thread_id: str, current_hash: str) -> boo
 
 
 # ---------------------------------------------------------------------------
-# Git diff summary for Why content
+# Git diff summary for pending-capture evidence
 # ---------------------------------------------------------------------------
 
 
@@ -362,61 +316,6 @@ def _diff_summary(repo_root: Path, files: list[str]) -> str:
         return "; ".join(parts)
     except Exception:
         return ""
-
-
-def normalize_why_text(str_text: str) -> str:
-    """Collapse whitespace in candidate Why text and trim the result.
-
-    Args:
-        str_text: Raw candidate Why text collected from a prompt or diff summary.
-
-    Returns:
-        str: Normalized single-line text, or an empty string when no meaningful
-            content remains after normalization.
-    """
-    str_normalized_text: str = " ".join(str_text.split()).strip()
-    return str_normalized_text  # Normal exit.
-
-
-def is_useful_prompt_for_why(str_prompt: str) -> bool:
-    """Return True when a user prompt is strong enough to seed shard Why content.
-
-    Args:
-        str_prompt: Candidate user prompt text after extraction from the hook
-            payload or transcript.
-
-    Returns:
-        bool: True when the prompt is long enough to communicate a concrete task;
-            False when it is too short or empty to serve as durable memory.
-    """
-    str_normalized_prompt: str = normalize_why_text(str_prompt)
-    bool_is_useful: bool = len(str_normalized_prompt) >= 15
-    return bool_is_useful  # Normal exit.
-
-
-def build_why_lines(str_prompt: str | None, str_diff_summary: str) -> list[str]:
-    """Construct the shard Why section from high-signal inputs only.
-
-    Args:
-        str_prompt: Extracted user prompt text when available.
-        str_diff_summary: Compact Git diff summary describing the repo changes.
-
-    Returns:
-        list[str]: One bullet line for the shard Why section. The result prefers
-            a qualifying user task, otherwise a diff summary, otherwise a neutral
-            fallback describing that the repo changed during the turn.
-    """
-    list_str_why_lines: list[str] = []
-    if str_prompt and is_useful_prompt_for_why(str_prompt):
-        str_prompt_line: str = normalize_why_text(str_prompt)
-        list_str_why_lines.append(f"- {str_prompt_line}")
-        return list_str_why_lines  # Normal exit.
-    str_diff_line: str = normalize_why_text(str_diff_summary)
-    if str_diff_line:
-        list_str_why_lines.append(f"- {str_diff_line}")
-        return list_str_why_lines  # Normal exit.
-    list_str_why_lines.append("- Repo state changed during this agent turn.")
-    return list_str_why_lines  # Normal exit.
 
 
 def parse_timestamp_from_shard_name(str_shard_name: str) -> str:
@@ -556,37 +455,305 @@ def _is_design_doc(file_path: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Async subagent spawning: shard enrichment and ADR inspection
+# Async subagent spawning: checkpoint evaluation and ADR inspection
 # ---------------------------------------------------------------------------
 
 
 def _open_enrichment_log(repo_root: Path) -> TextIO:
-    """Open (or create) the enrichment log file for subprocess output.
+    """Open (or create) the background memory log file for subprocess output.
 
     Args:
         repo_root: Absolute path to the repository root.
 
     Returns:
-        File handle for the enrichment log.
+        File handle for the background memory log.
     """
     log_dir: Path = repo_root / ".agents" / "memory" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return open(log_dir / "enrichment.log", "a")  # noqa: SIM115
 
 
-def _enrichment_context_dir(repo_root: Path) -> Path:
-    """Return the ignored directory used for ephemeral enrichment context files.
+def _checkpoint_context_dir(repo_root: Path) -> Path:
+    """Return the ignored directory used for checkpoint context manifests.
 
     Args:
         repo_root: Absolute path to the repository root.
 
     Returns:
-        Path: Absolute path to the local-only enrichment context directory.
+        Path: Absolute path to the local-only checkpoint context directory.
     """
     path_context_dir: Path = ensure_dir(
-        repo_root / ".agents" / "memory" / "logs" / "enrichment-context"
+        repo_root / ".agents" / "memory" / "logs" / "checkpoint-context"
     )
     return path_context_dir
+
+
+def _path_scope_keys(list_str_paths: list[str]) -> set[str]:
+    """Return coarse path-scope keys used to group branch-scoped pending captures.
+
+    Args:
+        list_str_paths: Repo-relative file paths touched by one pending capture.
+
+    Returns:
+        set[str]: Top-level or top-two-level path keys used to approximate
+            whether two pending captures likely belong to the same effort.
+    """
+    set_str_scope_keys: set[str] = set()
+    for str_path in list_str_paths:
+        path_item: Path = Path(str_path)
+        tuple_str_parts: tuple[str, ...] = path_item.parts
+        if not tuple_str_parts:
+            continue
+        if len(tuple_str_parts) == 1:
+            set_str_scope_keys.add(tuple_str_parts[0])
+            continue
+        set_str_scope_keys.add("/".join(tuple_str_parts[:2]))
+    return set_str_scope_keys
+
+
+def _workstream_identity(
+    str_explicit_thread_id: str, str_branch: str
+) -> tuple[str, str]:
+    """Return the stable workstream identifier and scope for one turn.
+
+    Args:
+        str_explicit_thread_id: Runtime-provided thread identifier after
+            normalization, or an empty string when the runtime lacks one.
+        str_branch: Current repository branch name.
+
+    Returns:
+        tuple[str, str]: `(workstream_id, workstream_scope)` where scope is
+            either `thread` or `branch`.
+    """
+    if str_explicit_thread_id:
+        return f"thread-{str_explicit_thread_id}", "thread"
+    return f"branch-{slugify(str_branch)}", "branch"
+
+
+def _load_pending_metadata(path_pending_shard: Path) -> dict[str, object] | None:
+    """Load frontmatter metadata from one pending capture.
+
+    Args:
+        path_pending_shard: Absolute path to the pending Markdown shard.
+
+    Returns:
+        dict[str, object] | None: Parsed frontmatter metadata, or None when the
+            shard is unreadable or malformed.
+    """
+    try:
+        str_pending_text: str = path_pending_shard.read_text(encoding="utf-8")
+        dict_metadata: dict[str, object]
+        _body: str
+        dict_metadata, _body = parse_frontmatter(str_pending_text)
+        return dict_metadata
+    except (OSError, ValueError):
+        return None
+
+
+def _pending_bundle_entry(path_pending_shard: Path) -> dict[str, object] | None:
+    """Build one structured bundle entry from a pending capture file.
+
+    Args:
+        path_pending_shard: Absolute path to the pending capture.
+
+    Returns:
+        dict[str, object] | None: Bundle metadata for the checkpoint context, or
+            None when the pending capture cannot be parsed.
+    """
+    dict_metadata: dict[str, object] | None = _load_pending_metadata(path_pending_shard)
+    if dict_metadata is None:
+        return None
+    object_files_touched: object = dict_metadata.get("files_touched", [])
+    object_design_docs_touched: object = dict_metadata.get("design_docs_touched", [])
+    object_verification: object = dict_metadata.get("verification", [])
+    dict_bundle_entry: dict[str, object] = {
+        "path": str(path_pending_shard),
+        "timestamp": str(dict_metadata.get("timestamp", "")),
+        "branch": str(dict_metadata.get("branch", "")),
+        "thread_id": str(dict_metadata.get("thread_id", "")),
+        "turn_id": str(dict_metadata.get("turn_id", "")),
+        "workstream_id": str(dict_metadata.get("workstream_id", "")),
+        "workstream_scope": str(dict_metadata.get("workstream_scope", "")),
+        "files_touched": (
+            [str(item) for item in object_files_touched]
+            if isinstance(object_files_touched, list)
+            else []
+        ),
+        "design_docs_touched": (
+            [str(item) for item in object_design_docs_touched]
+            if isinstance(object_design_docs_touched, list)
+            else []
+        ),
+        "verification": (
+            [str(item) for item in object_verification]
+            if isinstance(object_verification, list)
+            else []
+        ),
+        "diff_summary": str(dict_metadata.get("diff_summary", "")),
+    }
+    return dict_bundle_entry
+
+
+def _collect_related_pending_shards(
+    repo_root: Path,
+    path_current_pending_shard: Path,
+    str_workstream_id: str,
+    str_workstream_scope: str,
+    files_touched: list[str],
+    *,
+    limit: int = 5,
+) -> list[Path]:
+    """Return a bounded chronological bundle of related pending captures.
+
+    Args:
+        repo_root: Absolute repository root.
+        path_current_pending_shard: Pending capture created by the latest turn.
+        str_workstream_id: Stable workstream identifier for the latest turn.
+        str_workstream_scope: `thread` or `branch`.
+        files_touched: Repo-relative files changed by the latest turn.
+        limit: Maximum number of pending captures to include in the bundle.
+
+    Returns:
+        list[Path]: Chronologically sorted pending-capture paths. The current
+            pending capture is always included.
+    """
+    path_pending_root: Path = repo_root / PENDING_SHARDS_RELATIVE_DIR
+    list_path_candidates: list[Path] = sorted(path_pending_root.glob("*/*.md"))
+    set_str_current_scope_keys: set[str] = _path_scope_keys(files_touched)
+    list_tuple_candidate_rows: list[tuple[str, str, Path]] = []
+
+    for path_candidate in list_path_candidates:
+        dict_candidate_metadata: dict[str, object] | None = _load_pending_metadata(
+            path_candidate
+        )
+        if dict_candidate_metadata is None:
+            continue
+        if str(dict_candidate_metadata.get("workstream_id", "")) != str_workstream_id:
+            continue
+        if (
+            path_candidate != path_current_pending_shard
+            and str_workstream_scope == "branch"
+        ):
+            object_candidate_files: object = dict_candidate_metadata.get(
+                "files_touched", []
+            )
+            list_str_candidate_files: list[str] = (
+                [str(item) for item in object_candidate_files]
+                if isinstance(object_candidate_files, list)
+                else []
+            )
+            set_str_candidate_scope_keys: set[str] = _path_scope_keys(
+                list_str_candidate_files
+            )
+            if (
+                set_str_current_scope_keys
+                and set_str_candidate_scope_keys
+                and set_str_current_scope_keys.isdisjoint(set_str_candidate_scope_keys)
+            ):
+                continue
+        str_timestamp: str = str(dict_candidate_metadata.get("timestamp", ""))
+        list_tuple_candidate_rows.append(
+            (str_timestamp, path_candidate.name, path_candidate)
+        )
+
+    list_tuple_candidate_rows.sort()
+    list_path_other_shards: list[Path] = [
+        path_candidate
+        for _str_timestamp, _str_name, path_candidate in list_tuple_candidate_rows
+        if path_candidate != path_current_pending_shard
+    ]
+    list_path_selected_shards: list[Path] = list_path_other_shards[-max(limit - 1, 0) :]
+    list_path_selected_shards.append(path_current_pending_shard)
+    list_path_selected_shards = sorted(dict.fromkeys(list_path_selected_shards))
+    return list_path_selected_shards
+
+
+def _recent_summary_paths(repo_root: Path, *, limit: int = 3) -> list[str]:
+    """Return absolute paths to the most recent daily summaries.
+
+    Args:
+        repo_root: Absolute repository root.
+        limit: Maximum number of summaries to include.
+
+    Returns:
+        list[str]: Newest-first absolute summary paths.
+    """
+    path_daily_root: Path = repo_root / ".agents" / "memory" / "daily"
+    if not path_daily_root.exists():
+        return []
+    list_path_recent_summaries: list[str] = []
+    list_path_day_dirs: list[Path] = sorted(
+        [
+            path_day_dir
+            for path_day_dir in path_daily_root.iterdir()
+            if path_day_dir.is_dir()
+        ],
+        reverse=True,
+    )
+    for path_day_dir in list_path_day_dirs:
+        path_summary: Path = path_day_dir / "summary.md"
+        if not path_summary.exists():
+            continue
+        list_path_recent_summaries.append(str(path_summary))
+        if len(list_path_recent_summaries) >= limit:
+            break
+    return list_path_recent_summaries
+
+
+def _write_local_notify_metadata(
+    repo_root: Path,
+    *,
+    adapter: type,
+    req: object,
+    files_touched: list[str],
+    design_docs_touched: list[str],
+    pending_shard_path: Path | None = None,
+    published_shard_path: Path | None = None,
+    workstream_id: str = "",
+    workstream_scope: str = "",
+) -> None:
+    """Persist a sanitized local debug record for the latest notify invocation.
+
+    Args:
+        repo_root: Absolute repository root.
+        adapter: Detected runtime adapter class.
+        req: Normalized hook request object from the adapter.
+        files_touched: Repo-relative changed files for this turn.
+        design_docs_touched: Repo-relative design documents touched by the turn.
+        pending_shard_path: Optional pending shard path created for this turn.
+        published_shard_path: Optional published checkpoint path reserved for this turn.
+        workstream_id: Stable workstream identifier.
+        workstream_scope: `thread` or `branch`.
+
+    Returns:
+        None: The local metadata file is overwritten in place.
+    """
+    local_root: Path = ensure_dir(repo_root / ".codex" / "local")
+    dict_metadata: dict[str, object] = {
+        "agent_id": adapter.agent_id(),
+        "provider_version": runtime_provider_version(adapter.agent_id()),
+        "hook_event": getattr(req, "hook_event", ""),
+        "session_id": getattr(req, "session_id", ""),
+        "thread_id": getattr(req, "thread_id", ""),
+        "turn_id": getattr(req, "turn_id", ""),
+        "model": getattr(req, "model", ""),
+        "files_touched": files_touched,
+        "design_docs_touched": design_docs_touched,
+        "workstream_id": workstream_id,
+        "workstream_scope": workstream_scope,
+    }
+    if pending_shard_path is not None:
+        dict_metadata["pending_shard_path"] = str(
+            pending_shard_path.relative_to(repo_root)
+        )
+    if published_shard_path is not None:
+        dict_metadata["published_shard_path"] = str(
+            published_shard_path.relative_to(repo_root)
+        )
+    write_text(
+        local_root / "last-notify-metadata.json",
+        json.dumps(dict_metadata, indent=2, sort_keys=True) + "\n",
+    )
 
 
 def _resolve_bootstrap_command(
@@ -628,7 +795,7 @@ def _resolve_bootstrap_command(
 def _subagent_env(
     str_launcher_agent_id: str, str_launcher_provider_version: str
 ) -> dict[str, str]:
-    """Build environment overrides for spawned enrichment-related subprocesses.
+    """Build environment overrides for spawned memory background subprocesses.
 
     Args:
         str_launcher_agent_id: Runtime that is launching the subagent, such as
@@ -657,7 +824,8 @@ def _write_subagent_log_header(
 
     Args:
         log_file: Open enrichment log file handle.
-        str_action: Short action label such as "enrichment" or "ADR inspection".
+        str_action: Short action label such as "checkpoint evaluation" or
+            "ADR inspection".
         str_launcher_agent_id: Runtime used to launch the subagent.
         str_launcher_provider_version: Resolved CLI version for that runtime.
         cmd: Full subprocess command that will be executed.
@@ -673,31 +841,36 @@ def _write_subagent_log_header(
     log_file.flush()
 
 
-def _spawn_enrichment(
+def _spawn_checkpoint_evaluation(
     adapter: type,
     context_path: Path,
     repo_root: Path,
 ) -> bool:
-    """Fire-and-forget a subagent to enrich a raw shard with semantic content.
+    """Fire-and-forget a subagent to evaluate one workstream checkpoint bundle.
 
-    Loads the shard-enricher skill and spawns the subagent via the adapter's CLI.
-    Falls back to ClaudeAdapter when the adapter cannot spawn subagents.
+    Loads the memory-checkpointer skill and spawns the subagent via the
+    adapter's CLI. Falls back to ClaudeAdapter when the adapter cannot spawn
+    subagents.
 
     Args:
         adapter: The detected runtime adapter class.
-        context_path: Absolute path to the enrichment context JSON file.
+        context_path: Absolute path to the checkpoint context JSON file.
         repo_root: Absolute path to the repository root.
 
     Returns:
         bool: True if a subprocess was launched, False if skipped.
     """
-    skill_path: Path = Path.home() / ".agent" / "skills" / "shard-enricher" / "SKILL.md"
+    skill_path: Path = (
+        Path.home() / ".agent" / "skills" / "memory-checkpointer" / "SKILL.md"
+    )
     if not skill_path.exists():
-        warn("shard-enricher skill not installed; skipping enrichment")
+        warn("memory-checkpointer skill not installed; skipping checkpoint evaluation")
         return False
 
     skill_content: str = skill_path.read_text(encoding="utf-8")
-    task: str = f"Enrich the shard using context at: {context_path}"
+    task: str = (
+        "Evaluate the workstream checkpoint bundle using context at: " f"{context_path}"
+    )
     (
         cmd,
         str_launcher_agent_id,
@@ -710,7 +883,7 @@ def _spawn_enrichment(
     try:
         _write_subagent_log_header(
             log_file,
-            str_action="enrichment",
+            str_action="checkpoint evaluation",
             str_launcher_agent_id=str_launcher_agent_id,
             str_launcher_provider_version=str_launcher_provider_version,
             cmd=cmd,
@@ -725,7 +898,9 @@ def _spawn_enrichment(
         )
         return True
     except OSError:
-        warn(f"enrichment subagent launch failed for {str_launcher_agent_id}")
+        warn(
+            f"checkpoint evaluation subagent launch failed for {str_launcher_agent_id}"
+        )
         return False
     finally:
         log_file.close()
@@ -855,13 +1030,6 @@ def main() -> int:
 
     append_hook_trace("Notify", "started", repo_root=repo_root)
 
-    # Save the raw payload for debugging; stored in .codex/local/ which is never committed.
-    local_root = ensure_dir(repo_root / ".codex" / "local")
-    write_text(
-        local_root / "last-notify-payload.json",
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-    )
-
     # Canonical memory directory must exist; it is created by bootstrap-repo.py
     # which SessionStart calls on every session open.
     if not (repo_root / ".agents" / "memory").is_dir():
@@ -881,16 +1049,9 @@ def main() -> int:
         )
         return 1
 
-    # Collect evidence and metadata from the payload.
+    # Collect repo-grounded evidence and metadata for the current turn.
     strings = flatten_strings(payload)
     files_touched = changed_repo_files(repo_root)
-    verification = collect_matches(
-        strings,
-        r"\b(pass(ed)?|fail(ed|ure)?|error|warning|test|lint|build|verified?)\b",
-    )
-    blockers = collect_matches(
-        strings, r"\b(blocked|blocker|waiting on|cannot|can't|stuck)\b"
-    )
     # Meaningful turn gate: a shard is ONLY written when repo files changed.
     # Decision keyword matches alone are insufficient -- every discussion of this
     # system's own design would match, producing shards with no real content.
@@ -912,13 +1073,17 @@ def main() -> int:
     if not thread_id:
         thread_id = stable_identifier("thread", payload)
     model = adapter.resolve_model(payload)
+    branch = current_branch(repo_root)
+    workstream_id, workstream_scope = _workstream_identity(
+        thread_id if req.thread_id else "", branch
+    )
 
     # Diff-hash deduplication gate: git status is sticky -- once a file is
     # modified it appears in every subsequent turn until committed.  Hash the
     # actual diff content so we only write a new shard when the working-tree
-    # content has genuinely changed since the last captured shard for this thread.
+    # content has genuinely changed since the last captured shard for this workstream.
     current_diff_hash = _diff_hash(repo_root, files_touched)
-    if _already_captured(repo_root, thread_id, current_diff_hash):
+    if _already_captured(repo_root, workstream_id, current_diff_hash):
         append_hook_trace(
             "Notify",
             "noop",
@@ -928,14 +1093,13 @@ def main() -> int:
         _emit(
             adapter,
             "noop",
-            message="diff unchanged since last shard for this thread; skipping duplicate",
+            message="diff unchanged since last shard for this workstream; skipping duplicate",
         )
         return 0
 
     now = utc_now()
     timestamp = utc_timestamp(now)
     author = author_slug(repo_root)
-    branch = current_branch(repo_root)
 
     # Exclude volatile fields from the turn hash so the same logical turn
     # produces the same turn_id even if the payload timestamp changes between retries.
@@ -953,28 +1117,23 @@ def main() -> int:
     if not turn_id:
         turn_id = stable_identifier("turn", payload_for_turn_hash)
 
-    # Extract "why" seed text from the user task, optionally via transcript fallback.
-    prompt = req.prompt
-    if not prompt and req.transcript_path:
-        prompt = extract_user_prompt_from_transcript(req.transcript_path)
-
-    # Why: prefer the user prompt that drove the change. When prompt text is
-    # unavailable or too weak, fall back to a diff summary rather than assistant
-    # chatter so durable memory stays high-signal.
     diff_summary = _diff_summary(repo_root, files_touched)
-    why_lines = build_why_lines(prompt, diff_summary)
-
-    what_lines = [f"- Updated {path}" for path in files_touched] or [
+    design_docs = [path for path in files_touched if _is_design_doc(path)]
+    why_lines = [
+        "- Pending workstream capture only. Durable memory may publish later if related turns add enough context.",
+    ]
+    what_lines = [f"- Touched {path}" for path in files_touched] or [
         "- No repo files were detected."
     ]
-    # Evidence: include the git diff summary as a concrete signal when available.
-    evidence_lines = verification[:]
+    evidence_lines: list[str] = []
     if diff_summary:
-        evidence_lines.insert(0, f"- git diff: {diff_summary}")
+        evidence_lines.append(f"- git diff: {diff_summary}")
+    for str_design_doc in design_docs:
+        evidence_lines.append(f"- design doc touched: {str_design_doc}")
     if not evidence_lines:
         evidence_lines = ["- Repo changes were detected in the working tree."]
-    next_lines = blockers or [
-        "- Wait for enrichment to publish a durable shard before committing shared memory artifacts."
+    next_lines = [
+        "- Await background checkpoint evaluation before publishing durable memory."
     ]
 
     # Scan the payload for any ADR cross-references so we can link them in the shard.
@@ -1015,6 +1174,8 @@ def main() -> int:
             ("branch", branch),
             ("thread_id", thread_id),
             ("turn_id", turn_id),
+            ("workstream_id", workstream_id),
+            ("workstream_scope", workstream_scope),
             ("decision_candidate", False),
             ("enriched", False),
             ("ai_generated", True),
@@ -1024,6 +1185,8 @@ def main() -> int:
             ("ai_executor", "local-agent"),
             ("related_adrs", related_adrs),
             ("files_touched", files_touched),
+            ("design_docs_touched", design_docs),
+            ("diff_summary", diff_summary),
             ("verification", [line.removeprefix("- ") for line in evidence_lines]),
         ]
     )
@@ -1034,7 +1197,7 @@ def main() -> int:
         "",
         *why_lines,
         "",
-        "## Repo changes",
+        "## What changed",
         "",
         *what_lines,
         "",
@@ -1051,46 +1214,80 @@ def main() -> int:
 
     # Persist the diff hash so subsequent turns can detect unchanged diffs and
     # skip writing duplicate pending shards for the same working-tree state.
-    _save_diff_state(repo_root, thread_id, current_diff_hash)
+    _save_diff_state(repo_root, workstream_id, current_diff_hash)
 
-    # --- Async Phase 2: shard enrichment via subagent ---
-    # Save enrichment context for the subagent to read, then fire-and-forget.
-    # The pending shard is local-only. Publication into the committed daily
-    # namespace happens only if enrich-shard.py runs successfully.
-    bool_enrichment_spawned: bool = False
-    assistant_text: str = req.assistant_text or ""
-    if assistant_text or prompt:
-        context_data: dict[str, object] = {
-            "shard_path": str(path_pending_shard),
-            "published_shard_path": str(path_published_shard),
-            "repo_root": str(repo_root),
-            "assistant_text": assistant_text[:8000],
-            "prompt": prompt or "",
-            "files_touched": files_touched,
-            "diff_summary": diff_summary,
-        }
-        context_filename: str = f".enrich-{turn_id}.json"
-        path_context_dir: Path = _enrichment_context_dir(repo_root)
-        context_path: Path = path_context_dir / context_filename
-        try:
-            write_text(
-                context_path, json.dumps(context_data, indent=2, sort_keys=True) + "\n"
+    _write_local_notify_metadata(
+        repo_root,
+        adapter=adapter,
+        req=req,
+        files_touched=files_touched,
+        design_docs_touched=design_docs,
+        pending_shard_path=path_pending_shard,
+        published_shard_path=path_published_shard,
+        workstream_id=workstream_id,
+        workstream_scope=workstream_scope,
+    )
+
+    # --- Async Phase 2: checkpoint evaluation via subagent ---
+    # The checkpoint context is local-only and excludes raw prompt or assistant
+    # text. Durable memory publishes only if the background evaluation passes
+    # the checkpoint validator.
+    bool_checkpoint_spawned: bool = False
+    list_path_bundle_shards: list[Path] = _collect_related_pending_shards(
+        repo_root,
+        path_pending_shard,
+        workstream_id,
+        workstream_scope,
+        files_touched,
+    )
+    list_dict_bundle_entries: list[dict[str, object]] = []
+    for path_bundle_shard in list_path_bundle_shards:
+        dict_bundle_entry: dict[str, object] | None = _pending_bundle_entry(
+            path_bundle_shard
+        )
+        if dict_bundle_entry is None:
+            continue
+        list_dict_bundle_entries.append(dict_bundle_entry)
+
+    context_data: dict[str, object] = {
+        "repo_root": str(repo_root),
+        "current_pending_shard": str(path_pending_shard),
+        "pending_shard_paths": [
+            str(path_bundle_shard) for path_bundle_shard in list_path_bundle_shards
+        ],
+        "pending_bundle": list_dict_bundle_entries,
+        "published_shard_path": str(path_published_shard),
+        "workstream_id": workstream_id,
+        "workstream_scope": workstream_scope,
+        "branch": branch,
+        "files_touched": files_touched,
+        "design_docs_touched": design_docs,
+        "diff_summary": diff_summary,
+        "adr_index_path": str(repo_root / ".agents" / "memory" / "adr" / "INDEX.md"),
+        "recent_summary_paths": _recent_summary_paths(repo_root),
+    }
+    context_filename: str = f".checkpoint-{turn_id}.json"
+    path_context_dir: Path = _checkpoint_context_dir(repo_root)
+    path_context: Path = path_context_dir / context_filename
+    try:
+        write_text(
+            path_context, json.dumps(context_data, indent=2, sort_keys=True) + "\n"
+        )
+        bool_checkpoint_spawned = _spawn_checkpoint_evaluation(
+            adapter, path_context, repo_root
+        )
+        if bool_checkpoint_spawned:
+            info(
+                f"spawned checkpoint evaluation subagent for {path_published_shard.name}"
             )
-            bool_enrichment_spawned = _spawn_enrichment(
-                adapter, context_path, repo_root
-            )
-            if bool_enrichment_spawned:
-                info(f"spawned enrichment subagent for {path_published_shard.name}")
-            elif context_path.exists():
-                # No subagent CLI available; clean up context file.
-                context_path.unlink(missing_ok=True)
-        except OSError as error:
-            warn(f"failed to write enrichment context: {error}")
+        elif path_context.exists():
+            path_context.unlink(missing_ok=True)
+    except OSError as error:
+        warn(f"failed to write checkpoint context: {error}")
 
     # --- Async Phase 2b: design doc ADR inspection ---
     # When the turn touched design docs, spawn a separate subagent to inspect
-    # them for ADR-worthy decisions.  Independent of shard enrichment.
-    design_docs: list[str] = [path for path in files_touched if _is_design_doc(path)]
+    # them for ADR-worthy decisions. Independent of checkpoint publication.
     bool_inspection_spawned: bool = False
     if design_docs:
         bool_inspection_spawned = _spawn_adr_inspection(adapter, design_docs, repo_root)
@@ -1109,7 +1306,9 @@ def main() -> int:
             "published_shard_path": str(path_published_shard.relative_to(repo_root)),
             "thread_id": thread_id,
             "turn_id": turn_id,
-            "enrichment_spawned": bool_enrichment_spawned,
+            "workstream_id": workstream_id,
+            "workstream_scope": workstream_scope,
+            "checkpoint_spawned": bool_checkpoint_spawned,
             "adr_inspection_spawned": bool_inspection_spawned,
             "design_docs_touched": design_docs,
         },
