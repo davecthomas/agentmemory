@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -184,8 +185,14 @@ class CodexAdapter:
 
         # Write hooks.json with SessionStart and UserPromptSubmit commands.
         # Codex docs show explicit python3 interpreter prefix for all commands.
-        session_start_cmd: str = f"python3 {ctx.install_root / 'session-start.py'}"
-        prompt_guard_cmd: str = f"python3 {ctx.install_root / 'prompt-guard.py'}"
+        str_session_start_path: str = shlex.quote(
+            str(ctx.install_root / "session-start.py")
+        )
+        str_prompt_guard_path: str = shlex.quote(
+            str(ctx.install_root / "prompt-guard.py")
+        )
+        session_start_cmd: str = f"python3 {str_session_start_path}"
+        prompt_guard_cmd: str = f"python3 {str_prompt_guard_path}"
         hooks_data: dict[str, object] = ctx.load_json(codex_hooks)
         hooks_data.setdefault("hooks", {})
         hooks_data["hooks"]["SessionStart"] = [

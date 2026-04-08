@@ -36,11 +36,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-from common import info, safe_main, warn, write_text
+from common import info, parse_frontmatter, safe_main, warn, write_text
 
 
 def parse_args() -> argparse.Namespace:
@@ -124,17 +125,67 @@ def _resolve_shard_paths(context: dict[str, object]) -> tuple[Path, Path]:
     Returns:
         tuple[Path, Path]: Absolute paths for the raw input shard and the final
             published shard. When `published_shard_path` is absent, the function
-            falls back to the legacy in-place overwrite behavior and returns the
-            same path twice.
+            derives the canonical daily event path from a pending raw shard when
+            possible and otherwise falls back to legacy in-place overwrite.
     """
     path_raw_shard: Path = Path(str(context["shard_path"])).resolve()
     str_published_value: str | None = None
     if "published_shard_path" in context:
         str_published_value = str(context["published_shard_path"])
-    path_published_shard: Path = (
-        Path(str_published_value).resolve() if str_published_value else path_raw_shard
-    )
-    return path_raw_shard, path_published_shard
+    if str_published_value:
+        path_published_shard: Path = Path(str_published_value).resolve()
+        return path_raw_shard, path_published_shard
+
+    list_str_parts: list[str] = list(path_raw_shard.parts)
+    if "pending" in list_str_parts:
+        int_pending_idx: int = (
+            len(list_str_parts) - 1 - list_str_parts[::-1].index("pending")
+        )
+        if int_pending_idx + 2 < len(list_str_parts):
+            path_memory_root: Path = Path(*list_str_parts[:int_pending_idx])
+            str_date_dir: str = list_str_parts[int_pending_idx + 1]
+            str_filename: str = list_str_parts[int_pending_idx + 2]
+            path_published_shard = (
+                path_memory_root / "daily" / str_date_dir / "events" / str_filename
+            )
+            return path_raw_shard, path_published_shard
+
+    return path_raw_shard, path_raw_shard
+
+
+def _summary_date_for_shard(
+    path_published_shard: Path, dict_metadata: dict[str, object]
+) -> str | None:
+    """Resolve the daily summary date for one published shard.
+
+    Args:
+        path_published_shard: Absolute path to the final published shard, or the
+            legacy in-place shard path when no separate publish path exists.
+        dict_metadata: Parsed shard frontmatter metadata.
+
+    Returns:
+        str | None: Date string in `YYYY-MM-DD` format when it can be resolved
+            from the published path or shard timestamp; otherwise None.
+    """
+    list_str_parts: list[str] = list(path_published_shard.parts)
+    if "daily" in list_str_parts:
+        int_daily_idx: int = (
+            len(list_str_parts) - 1 - list_str_parts[::-1].index("daily")
+        )
+        if int_daily_idx + 2 < len(list_str_parts):
+            str_date_dir: str = list_str_parts[int_daily_idx + 1]
+            if (
+                re.fullmatch(r"\d{4}-\d{2}-\d{2}", str_date_dir)
+                and list_str_parts[int_daily_idx + 2] == "events"
+            ):
+                return str_date_dir
+
+    object_timestamp: object | None = dict_metadata.get("timestamp")
+    if isinstance(object_timestamp, str) and len(object_timestamp) >= 10:
+        str_timestamp_date: str = object_timestamp[:10]
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str_timestamp_date):
+            return str_timestamp_date
+    return None
 
 
 def _extract_frontmatter(shard_text: str) -> tuple[str, str]:
@@ -229,6 +280,13 @@ def main() -> int:
 
     # Read the existing raw shard and preserve its frontmatter.
     shard_text: str = path_raw_shard.read_text(encoding="utf-8")
+    dict_metadata: dict[str, object]
+    _parsed_body: str
+    try:
+        dict_metadata, _parsed_body = parse_frontmatter(shard_text)
+    except ValueError:
+        warn(f"shard has no valid frontmatter: {path_raw_shard}")
+        return 1
     frontmatter: str
     _body: str
     frontmatter, _body = _extract_frontmatter(shard_text)
@@ -273,31 +331,38 @@ def main() -> int:
     info(f"published {path_published_shard.relative_to(repo_root)}")
 
     # Rebuild the daily summary to reflect enriched content.
-    date_str: str = (
-        path_published_shard.parent.parent.name
-    )  # daily/<date>/events/<shard>
-    try:
-        subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("rebuild-summary.py")),
-                "--repo-root",
-                str(repo_root),
-                "--date",
-                date_str,
-            ],
-            cwd=str(repo_root),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as error:
-        warn(f"summary rebuild after enrichment failed: {error.stderr[:200]}")
+    str_summary_date: str | None = _summary_date_for_shard(
+        path_published_shard, dict_metadata
+    )
+    if str_summary_date is None:
+        warn(f"could not resolve summary date for shard: {path_published_shard}")
+    else:
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("rebuild-summary.py")),
+                    "--repo-root",
+                    str(repo_root),
+                    "--date",
+                    str_summary_date,
+                ],
+                cwd=str(repo_root),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            warn(f"summary rebuild after enrichment failed: {error.stderr[:200]}")
 
     # Stage the enriched shard and rebuilt summary.
-    summary_path: Path = path_published_shard.parent.parent / "summary.md"
+    summary_path: Path | None = None
+    if str_summary_date is not None:
+        summary_path = (
+            repo_root / ".agents" / "memory" / "daily" / str_summary_date / "summary.md"
+        )
     list_str_stage_paths: list[str] = [str(path_published_shard.relative_to(repo_root))]
-    if summary_path.exists():
+    if summary_path is not None and summary_path.exists():
         list_str_stage_paths.append(str(summary_path.relative_to(repo_root)))
     try:
         subprocess.run(

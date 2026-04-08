@@ -110,9 +110,9 @@ Regex-based extraction cannot produce semantic understanding. Only an LLM can di
 
 ### Architecture: two-phase shard write
 
-**Phase 1 (synchronous, in Stop/AfterAgent hook):** Write a raw shard with mechanical data (frontmatter, files_touched, user prompt) and save an enrichment context file containing assistant_text, prompt, diff summary, and shard path. Return immediately with zero added latency.
+**Phase 1 (synchronous, in Stop/AfterAgent hook):** Write a raw shard with mechanical data (frontmatter, files_touched, user prompt) under `pending/` and save an enrichment context file containing `assistant_text`, prompt, diff summary, and shard paths. Return immediately with zero added latency. Do not rebuild summaries in this phase.
 
-**Phase 2 (async, fire-and-forget):** Spawn a subagent via the detected adapter's CLI as a background subprocess. The subagent reads the enrichment context, produces semantically enriched shard content, and overwrites the shard in place. Then rebuilds the daily summary and deletes the ephemeral context file.
+**Phase 2 (async, fire-and-forget):** Spawn a subagent via the detected adapter's CLI as a background subprocess. The subagent reads the enrichment context, produces semantically enriched shard content, publishes the final shard under `daily/`, rebuilds the daily summary once after publish, deletes the corresponding pending shard, and then deletes the ephemeral context file.
 
 ### Multi-runtime subagent enrichment
 
@@ -139,10 +139,10 @@ Existing frontmatter is otherwise preserved, but enrichment may update system-ma
 
 ### Graceful degradation
 
-- No subagent CLI available: raw shard stands (today's quality, no worse).
-- Enrichment subprocess fails or crashes: raw shard is untouched.
+- No subagent CLI available: pending raw shard stays local-only and unpublished.
+- Enrichment subprocess fails or crashes: pending raw shard remains local-only.
 - Empty assistant_text (Codex manual wrapper, truncated payloads): enrich from diff + prompt only, or skip enrichment entirely.
-- Summary is rebuilt twice (once after raw write, once after enrichment). Rebuild is deterministic and idempotent.
+- Summary is rebuilt only after publish, so the durable read model changes atomically with the published shard.
 
 ### Enrichment-based decision candidate detection
 

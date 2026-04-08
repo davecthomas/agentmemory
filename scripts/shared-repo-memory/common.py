@@ -48,7 +48,7 @@ SECTION_ALIASES = {
 }
 
 # Shared repo-memory system version embedded into generated repo-local artifacts.
-SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.2.7"
+SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.2.8"
 
 # Repo-local state that must be ignored because it is derived or workstation-only.
 # bootstrap-repo.py appends these to each wired repository's .gitignore, and

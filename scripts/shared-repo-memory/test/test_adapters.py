@@ -28,6 +28,7 @@ from adapters import (  # noqa: E402
     ClaudeAdapter,
     CodexAdapter,
     GeminiAdapter,
+    InstallerContext,
     detect_adapter,
     detect_adapter_from_hook_event,
 )
@@ -339,6 +340,61 @@ class TestBuildBootstrapCommand:
             "skill text", "Bootstrap.", Path("/repo")
         )
         assert cmd is None
+
+
+class TestCodexHookWiring:
+    def test_codex_hook_commands_quote_script_paths(self, tmp_path: Path):
+        home_dir: Path = tmp_path / "home"
+        install_root: Path = home_dir / ".agent" / "shared repo memory"
+        repo_root: Path = tmp_path / "authoring repo"
+
+        def load_json(path_json: Path) -> dict[str, object]:
+            if not path_json.exists():
+                return {}
+            return json.loads(path_json.read_text(encoding="utf-8"))
+
+        def save_json(path_json: Path, payload: dict[str, object]) -> None:
+            path_json.parent.mkdir(parents=True, exist_ok=True)
+            path_json.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        install_root.mkdir(parents=True, exist_ok=True)
+        repo_root.mkdir(parents=True, exist_ok=True)
+        context = InstallerContext(
+            install_root=install_root,
+            home=home_dir,
+            repo_root=repo_root,
+            dry_run=False,
+            load_json=load_json,
+            save_json=save_json,
+        )
+
+        CodexAdapter.wire_hooks(context)
+
+        hooks_path: Path = home_dir / ".codex" / "hooks.json"
+        hooks_payload: dict[str, object] = json.loads(
+            hooks_path.read_text(encoding="utf-8")
+        )
+        dict_hooks: dict[str, object] = hooks_payload["hooks"]
+        list_session_start_hooks: list[object] = dict_hooks["SessionStart"]
+        dict_session_start_group: dict[str, object] = list_session_start_hooks[0]
+        list_session_start_commands: list[object] = dict_session_start_group["hooks"]
+        dict_session_start_command: dict[str, object] = list_session_start_commands[0]
+        list_prompt_guard_hooks: list[object] = dict_hooks["UserPromptSubmit"]
+        dict_prompt_guard_group: dict[str, object] = list_prompt_guard_hooks[0]
+        list_prompt_guard_commands: list[object] = dict_prompt_guard_group["hooks"]
+        dict_prompt_guard_command: dict[str, object] = list_prompt_guard_commands[0]
+
+        assert (
+            dict_session_start_command["command"]
+            == "python3 '" + str(install_root / "session-start.py") + "'"
+        )
+        assert (
+            dict_prompt_guard_command["command"]
+            == "python3 '" + str(install_root / "prompt-guard.py") + "'"
+        )
 
 
 class TestRuntimeLogMetadata:

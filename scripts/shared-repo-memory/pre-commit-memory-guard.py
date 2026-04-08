@@ -24,7 +24,13 @@ import re
 import subprocess
 from pathlib import Path
 
-from common import PENDING_SHARDS_RELATIVE_DIR, safe_main, try_repo_root, warn
+from common import (
+    PENDING_SHARDS_RELATIVE_DIR,
+    parse_frontmatter,
+    safe_main,
+    try_repo_root,
+    warn,
+)
 
 _EVENT_SHARD_PATTERN: re.Pattern[str] = re.compile(
     r"^\.agents/memory/daily/\d{4}-\d{2}-\d{2}/events/.+\.md$"
@@ -116,6 +122,26 @@ def is_daily_event_shard(str_path: str) -> bool:
     return bool_matches
 
 
+def is_unenriched_event_shard_text(str_staged_text: str) -> bool:
+    """Return True when staged shard frontmatter explicitly marks `enriched: false`.
+
+    Args:
+        str_staged_text: Full staged Markdown text for one daily event shard.
+
+    Returns:
+        bool: True when the parsed frontmatter contains `enriched: false`;
+            False when the field is true, missing, or the frontmatter cannot be
+            parsed by this helper.
+    """
+    try:
+        dict_metadata, _body = parse_frontmatter(str_staged_text)
+    except ValueError:
+        return False
+    object_enriched: object | None = dict_metadata.get("enriched")
+    bool_is_unenriched: bool = object_enriched is False
+    return bool_is_unenriched
+
+
 def collect_guard_failures(repo_root: Path) -> list[str]:
     """Inspect staged files and return human-readable policy violations.
 
@@ -144,7 +170,14 @@ def collect_guard_failures(repo_root: Path) -> list[str]:
                 f"{str_path} could not be read from the index for shared-memory validation."
             )
             continue
-        if "enriched: false" in str_staged_text:
+        try:
+            parse_frontmatter(str_staged_text)
+        except ValueError:
+            list_str_failures.append(
+                f"{str_path} is missing valid frontmatter; shared-memory shards must stay well-formed."
+            )
+            continue
+        if is_unenriched_event_shard_text(str_staged_text):
             list_str_failures.append(
                 f"{str_path} is still marked `enriched: false`; raw shards must not be committed."
             )

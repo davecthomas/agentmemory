@@ -59,7 +59,7 @@ Give coding agents durable repo context so every new session starts from prior d
 │   ├── rebuild-summary.py
 │   ├── build-catchup.py
 │   ├── promote-adr.py
-    │   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
+│   └── auto-bootstrap.py                   # legacy fallback only (requires ANTHROPIC_API_KEY)
 └── state/
     └── shared_asset_refresh_state.json
 
@@ -333,7 +333,7 @@ timestamp: "2026-04-03T14:22:00Z"
 author: "davidcthomas"
 branch: "main"
 thread_id: "abc123"
-turn_id: "turn_def456"
+turn_id: "def456"
 decision_candidate: false
 enriched: true
 ai_generated: true

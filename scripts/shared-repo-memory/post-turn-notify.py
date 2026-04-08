@@ -129,23 +129,49 @@ def extract_user_prompt_from_transcript(transcript_path: str) -> str | None:
 
 
 def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
-    """Derive a stable short identifier from a JSON payload hash.
+    """Derive a stable short identifier fragment from a JSON payload hash.
 
     Used when the hook payload does not provide a thread_id or turn_id directly.
     The SHA-1 of the serialized payload provides a deterministic, collision-
     resistant identifier that is stable across retries with the same payload.
+    The prefix is used only as a hash salt so thread and turn identifiers do
+    not collide when they are derived from the same payload.
 
     Args:
-        prefix: Short string prepended to the hash, e.g. "thread" or "turn".
+        prefix: Short namespace string such as "thread" or "turn".
         payload: JSON-serialisable dict to hash.
 
     Returns:
-        str: Identifier of the form "<prefix>_<10-char hex>".
+        str: Ten-character hexadecimal identifier fragment with no semantic
+            prefix attached.
     """
+    digest_payload: dict[str, object] = {"prefix": prefix, "payload": payload}
     digest = hashlib.sha1(
-        json.dumps(payload, sort_keys=True).encode("utf-8")
+        json.dumps(digest_payload, sort_keys=True).encode("utf-8")
     ).hexdigest()
-    return f"{prefix}_{digest[:10]}"
+    return digest[:10]
+
+
+def _normalize_identifier_component(
+    str_raw_identifier: str, str_expected_prefix: str
+) -> str:
+    """Normalize a thread or turn identifier for shard filenames and metadata.
+
+    Args:
+        str_raw_identifier: Identifier from the runtime payload or a generated
+            fallback value.
+        str_expected_prefix: Semantic prefix such as "thread" or "turn" that
+            should not be duplicated in the canonical identifier component.
+
+    Returns:
+        str: Normalized identifier with spaces replaced by underscores and one
+            leading semantic prefix removed when present.
+    """
+    str_normalized_identifier: str = str_raw_identifier.strip().replace(" ", "_")
+    str_prefix: str = f"{str_expected_prefix}_"
+    if str_normalized_identifier.lower().startswith(str_prefix):
+        str_normalized_identifier = str_normalized_identifier[len(str_prefix) :]
+    return str_normalized_identifier
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +179,7 @@ def stable_identifier(prefix: str, payload: dict[str, object]) -> str:
 # ---------------------------------------------------------------------------
 
 _DIFF_STATE_FILE = ".codex/local/last-shard-diff-state.json"
+_UNTRACKED_FILE_HASH_SAMPLE_BYTES: int = 64 * 1024
 
 
 def _file_is_tracked(repo_root: Path, str_path: str) -> bool:
@@ -178,13 +205,45 @@ def _file_is_tracked(repo_root: Path, str_path: str) -> bool:
     return result.returncode == 0
 
 
+def _untracked_file_fingerprint(path_file: Path) -> bytes:
+    """Return a bounded content fingerprint for one untracked file.
+
+    The post-turn hook runs synchronously, so dedupe hashing must avoid loading
+    large untracked files fully into memory. This helper records file size plus
+    head and tail samples, which keeps hashing bounded while still tracking
+    meaningful changes for typical source files and documents.
+
+    Args:
+        path_file: Absolute path to the untracked file.
+
+    Returns:
+        bytes: Stable byte payload suitable for hashing into the turn diff state.
+    """
+    int_sample_bytes: int = _UNTRACKED_FILE_HASH_SAMPLE_BYTES
+    path_stat = path_file.stat()
+    int_file_size: int = path_stat.st_size
+    with path_file.open("rb") as file_handle:
+        bytes_head: bytes = file_handle.read(int_sample_bytes)
+        bytes_tail: bytes = b""
+        if int_file_size > int_sample_bytes:
+            int_tail_offset: int = max(int_file_size - int_sample_bytes, 0)
+            file_handle.seek(int_tail_offset)
+            bytes_tail = file_handle.read(int_sample_bytes)
+    bytes_size_prefix: bytes = f"SIZE:{int_file_size}\0".encode()
+    bytes_tail_separator: bytes = b"\0TAIL\0"
+    bytes_fingerprint: bytes = (
+        bytes_size_prefix + bytes_head + bytes_tail_separator + bytes_tail
+    )
+    return bytes_fingerprint
+
+
 def _diff_hash(repo_root: Path, files: list[str]) -> str:
     """Return a stable hash of the current change content for the given files.
 
-    The hash includes both tracked Git diff output and the raw bytes of any
-    untracked files. This prevents new-file turns from collapsing to the same
-    empty-diff hash and preserves deduplication behavior across tracked and
-    untracked changes.
+    The hash includes both tracked Git diff output and a bounded fingerprint of
+    any untracked files. This prevents new-file turns from collapsing to the
+    same empty-diff hash while keeping synchronous hook memory use bounded on
+    large local files.
     """
     try:
         digest = hashlib.md5()
@@ -209,7 +268,7 @@ def _diff_hash(repo_root: Path, files: list[str]) -> str:
             digest.update(b"\0UNTRACKED\0")
             digest.update(str_path.encode("utf-8", errors="replace"))
             if path_file.is_file():
-                digest.update(path_file.read_bytes())
+                digest.update(_untracked_file_fingerprint(path_file))
             elif path_file.is_dir():
                 digest.update(b"<directory>")
             else:
@@ -848,9 +907,10 @@ def main() -> int:
 
     # Build shard identity fields from the normalised request.
     # Fall back to stable hash-based identifiers when the payload lacks explicit IDs.
-    thread_id = (req.thread_id or stable_identifier("thread", payload)).replace(
-        " ", "_"
-    )
+    str_thread_identifier: str = req.thread_id or stable_identifier("thread", payload)
+    thread_id = _normalize_identifier_component(str_thread_identifier, "thread")
+    if not thread_id:
+        thread_id = stable_identifier("thread", payload)
     model = adapter.resolve_model(payload)
 
     # Diff-hash deduplication gate: git status is sticky -- once a file is
@@ -886,9 +946,12 @@ def main() -> int:
         "hookEventName",
     }
     payload_for_turn_hash = {k: v for k, v in payload.items() if k not in volatile_keys}
-    turn_id = (req.turn_id or stable_identifier("turn", payload_for_turn_hash)).replace(
-        " ", "_"
+    str_turn_identifier: str = req.turn_id or stable_identifier(
+        "turn", payload_for_turn_hash
     )
+    turn_id = _normalize_identifier_component(str_turn_identifier, "turn")
+    if not turn_id:
+        turn_id = stable_identifier("turn", payload_for_turn_hash)
 
     # Extract "why" seed text from the user task, optionally via transcript fallback.
     prompt = req.prompt
