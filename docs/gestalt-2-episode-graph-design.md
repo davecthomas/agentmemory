@@ -352,6 +352,96 @@ Out of scope:
 - full contradiction reconciliation across historical checkpoints
 - aggressive cluster merge and split automation
 
+## Implementation Addendum: Current Data Structures
+
+This section records the actual first-pass data structures used by the current
+implementation so future follow-on work can reason from the real shape rather
+than only from the conceptual model above.
+
+The current graph is not stored in a graph database and does not use a graph
+library. It is a bounded, weighted undirected graph represented with plain
+Python containers because the first pass only evaluates a small local window of
+pending captures.
+
+### In-Memory Representation
+
+The current implementation in
+`scripts/shared-repo-memory/episode_graph.py` uses:
+
+- `list[dict[str, Any]]` for graph nodes
+  - one node per pending capture
+  - node identity is currently the absolute pending-capture path
+  - each node carries derived association signals such as `thread_id`,
+    `branch`, `files_touched`, `path_scope_keys`, `issue_ids`,
+    `design_docs_touched`, `related_adrs`, `validation_signals`, and
+    `timestamp_epoch`
+- `dict[tuple[str, str], dict[str, Any]]` for weighted edges
+  - keyed by the sorted pair of node paths
+  - each edge record stores `source_path`, `target_path`, `score`, and
+    `reasons`
+  - this acts as the undirected weighted edge map
+- `dict[str, set[str]]` for adjacency
+  - built only from edges whose score crosses the primary clustering threshold
+  - used to derive connected components
+- `list[list[dict[str, Any]]]` for candidate clusters
+  - each connected component becomes one candidate episode cluster
+
+The implementation is intentionally simple and inspectable:
+
+- no external graph dependency
+- no global persistent graph object
+- bounded recent-history window only
+- deterministic scoring and clustering
+
+### Persisted Derived State
+
+The current implementation does not persist the entire graph structure as one
+serialized object. Instead, it writes per-episode derived manifests under:
+
+```text
+.agents/memory/state/episode-graph/episodes/<episode-id>.json
+```
+
+Each manifest records the current cluster view for one candidate episode,
+including:
+
+- `episode_id`
+- `episode_scope`
+- `status`
+- `branches`
+- `member_count`
+- `member_pending_shard_paths`
+- `member_nodes`
+- `cluster_edges`
+- `primary_subsystem_hints`
+- `secondary_candidate_episode_ids`
+- `latest_pending_shard_path`
+- `current_pending_shard_path`
+- `manifest_path`
+
+Checkpoint-evaluator input is written separately under:
+
+```text
+.agents/memory/state/checkpoint-context/
+```
+
+That context references the active episode manifest plus the latest pending
+capture and nearby supporting artifacts.
+
+### Why This Shape Was Chosen
+
+This first-pass shape is optimized for bounded local reasoning:
+
+- the graph window is small enough that pairwise scoring is acceptable
+- plain Python containers keep the implementation easy to inspect and test
+- per-episode JSON manifests are easy for humans and subagents to read
+- the system can evolve toward richer typed models or longer-lived graph state
+  later without first depending on a heavier graph substrate
+
+This means Gestalt 2.0 currently persists cluster manifests, not a full graph
+database. Gestalt 3 can revisit whether a more explicit typed graph model or
+longer-lived graph state is warranted.
+
 ## Future Directions
 
 More advanced follow-on work could add:
