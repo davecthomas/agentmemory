@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.4.0`
+Current version: `0.4.1`
 
 ---
 
@@ -146,7 +146,7 @@ When you open Claude Code in a wired repo, the `SessionStart` hook fires automat
 2. Bootstraps any missing repo-local wiring
 3. Shows a notification in the UI: _"Shared repo memory loaded. Last refresh: …"_
 4. Injects the ADR index and recent daily summaries into the model's context
-5. If no event shards exist yet, spawns a `claude -p` subagent in the background to seed initial memory from recent commits and design docs — the session is not blocked
+5. If no event shards exist yet, spawns a current-runtime background bootstrap only when that runtime exposes a supported non-interactive bootstrap command; otherwise it leaves bootstrap manual via `/memory-bootstrap`
 
 You do not need to ask the agent to read memory — it arrives as session context.
 
@@ -351,8 +351,8 @@ tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl
 
 Every hook invocation appends a JSONL entry. If `SessionStart` fired successfully you will see `"status": "success"` entries.
 
-Shared-memory stderr logs and helper-script logs now include runtime metadata in
-their prefix, for example `[shared-repo-memory][agent=codex][version=0.118.0]`.
+Shared-memory stderr logs and helper-script logs now include product and runtime
+metadata in their prefix, for example `[agentmemory][version=0.4.1][agent=codex][provider-version=0.118.0]`.
 
 ---
 

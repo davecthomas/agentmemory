@@ -33,6 +33,7 @@ from adapters import (  # noqa: E402
     detect_adapter_from_hook_event,
 )
 from common import (  # noqa: E402
+    SHARED_REPO_MEMORY_SYSTEM_VERSION,
     append_hook_trace,
     clear_runtime_log_context,
     format_log_prefix,
@@ -403,8 +404,9 @@ class TestRuntimeLogMetadata:
 
     def test_format_log_prefix_uses_explicit_context(self):
         set_runtime_log_context("codex", "0.118.0")
-        assert (
-            format_log_prefix() == "[shared-repo-memory][agent=codex][version=0.118.0]"
+        assert format_log_prefix() == (
+            f"[agentmemory][version={SHARED_REPO_MEMORY_SYSTEM_VERSION}]"
+            "[agent=codex][provider-version=0.118.0]"
         )
 
     def test_append_hook_trace_includes_runtime_metadata(self, tmp_path: Path):

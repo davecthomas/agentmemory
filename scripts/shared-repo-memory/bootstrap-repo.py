@@ -244,7 +244,7 @@ fi
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[shared-repo-memory][agent=unknown][version=unknown]')"
+log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[agentmemory][version=unknown][agent=unknown][provider-version=unknown]')"
 if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" {str_hook_name} "$@"; then
     echo "$log_prefix warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
 fi
