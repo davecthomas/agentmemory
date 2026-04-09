@@ -180,6 +180,7 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
       .agents/memory/adr/       -- ADR storage directory
       .agents/memory/daily/     -- daily shard storage directory
       .agents/memory/pending/   -- ignored raw shard staging directory
+      .agents/memory/state/     -- ignored derived episode-graph state
       .codex/local/             -- local catch-up state (not committed)
       .githooks/                -- git hooks directory
       .githooks/pre-commit      -- blocks commits of raw/pending shards
@@ -206,6 +207,7 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
     repo_memory_adr = repo_memory_root / "adr"
     repo_memory_daily = repo_memory_root / "daily"
     repo_memory_pending = repo_memory_root / "pending"
+    repo_memory_state = repo_memory_root / "state"
     codex_local = repo_root / ".codex" / "local"
     githooks = repo_root / ".githooks"
     repo_memory_link = repo_root / ".codex" / "memory"
@@ -217,6 +219,8 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
         issues.append(str(repo_memory_daily))
     if not repo_memory_pending.is_dir():
         issues.append(str(repo_memory_pending))
+    if not repo_memory_state.is_dir():
+        issues.append(str(repo_memory_state))
     if not codex_local.is_dir():
         issues.append(str(codex_local))
     if not githooks.is_dir():

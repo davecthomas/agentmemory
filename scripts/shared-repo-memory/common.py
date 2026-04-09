@@ -48,13 +48,17 @@ SECTION_ALIASES = {
 }
 
 # Shared repo-memory system version embedded into generated repo-local artifacts.
-SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.3.1"
+SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.4.0"
 
 # Repo-local state that must be ignored because it is derived or workstation-only.
 # bootstrap-repo.py appends these to each wired repository's .gitignore, and
 # session-start.py validates them so newly installed ignore rules are repaired.
 GITHOOKS_RELATIVE_DIR: str = ".githooks"
 PENDING_SHARDS_RELATIVE_DIR: str = ".agents/memory/pending"
+MEMORY_STATE_RELATIVE_DIR: str = ".agents/memory/state"
+CHECKPOINT_CONTEXT_RELATIVE_DIR: str = ".agents/memory/state/checkpoint-context"
+EPISODE_GRAPH_RELATIVE_DIR: str = ".agents/memory/state/episode-graph"
+EPISODE_MANIFESTS_RELATIVE_DIR: str = ".agents/memory/state/episode-graph/episodes"
 MEMORY_LOGS_RELATIVE_DIR: str = ".agents/memory/logs"
 PROJECT_PRE_COMMIT_RELATIVE_PATH: str = (
     "scripts/shared-repo-memory/project-pre-commit.sh"
@@ -69,6 +73,7 @@ REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
     ".claude/local/",
     ".claude/settings.local.json",
     f"{PENDING_SHARDS_RELATIVE_DIR}/",
+    f"{MEMORY_STATE_RELATIVE_DIR}/",
     f"{MEMORY_LOGS_RELATIVE_DIR}/",
     ".agents/memory/.auto_bootstrap_running",
 )

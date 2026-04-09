@@ -12,6 +12,7 @@ pending-capture to published-checkpoint pipeline:
 The guard rejects a commit when either of these conditions is true:
 
   - A staged path lives under `.agents/memory/pending/`.
+  - A staged path lives under `.agents/memory/state/`.
   - A staged daily event shard still contains `enriched: false`.
 
 Usage:
@@ -25,6 +26,7 @@ import subprocess
 from pathlib import Path
 
 from common import (
+    MEMORY_STATE_RELATIVE_DIR,
     PENDING_SHARDS_RELATIVE_DIR,
     parse_frontmatter,
     safe_main,
@@ -155,11 +157,17 @@ def collect_guard_failures(repo_root: Path) -> list[str]:
     list_str_failures: list[str] = []
     list_str_staged_paths: list[str] = staged_paths(repo_root)
     str_pending_prefix: str = f"{PENDING_SHARDS_RELATIVE_DIR}/"
+    str_state_prefix: str = f"{MEMORY_STATE_RELATIVE_DIR}/"
 
     for str_path in list_str_staged_paths:
         if str_path.startswith(str_pending_prefix):
             list_str_failures.append(
                 f"{str_path} is a pending raw shard; only published daily shards may be committed."
+            )
+            continue
+        if str_path.startswith(str_state_prefix):
+            list_str_failures.append(
+                f"{str_path} is derived local episode-graph state; only published daily shards may be committed."
             )
             continue
         if not is_daily_event_shard(str_path):

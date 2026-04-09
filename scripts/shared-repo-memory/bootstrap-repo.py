@@ -12,6 +12,7 @@ What this script creates (all relative to the repo root):
   .agents/memory/adr/                     -- ADR storage directory
   .agents/memory/daily/                   -- daily event shard storage
   .agents/memory/pending/                 -- ignored raw shard staging area
+  .agents/memory/state/                   -- ignored derived episode-graph state
   .codex/local/                           -- local catch-up state (never committed)
   .claude/local/                          -- Claude-specific local state
   .githooks/                              -- git hooks directory
@@ -298,6 +299,7 @@ def main() -> int:
         ".agents/memory/adr",
         ".agents/memory/daily",
         ".agents/memory/pending",
+        ".agents/memory/state",
         ".codex/local",
         ".claude/local",
         GITHOOKS_RELATIVE_DIR,
