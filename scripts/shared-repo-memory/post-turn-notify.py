@@ -1343,7 +1343,7 @@ def main() -> int:
             list_str_episode_pending_paths,
             list_dict_bundle_entries,
         ) = _episode_bundle_entries(dict_episode_manifest)
-    except ValueError as error:
+    except (OSError, ValueError) as error:
         warn(f"failed to rebuild episode graph: {error}")
 
     _write_local_notify_metadata(

@@ -487,12 +487,7 @@ def _episode_scope(list_dict_cluster_nodes: Sequence[dict[str, Any]]) -> str:
             when members share one branch without a unifying thread id, or
             `mixed` when the cluster spans multiple branches or incompatible ids.
     """
-    set_str_thread_ids: set[str] = {
-        str(dict_node.get("thread_id", "")).strip()
-        for dict_node in list_dict_cluster_nodes
-        if str(dict_node.get("thread_id", "")).strip()
-        and str(dict_node.get("workstream_scope", "")).strip() == "thread"
-    }
+    set_str_thread_ids: set[str] = _thread_scoped_ids(list_dict_cluster_nodes)
     if len(set_str_thread_ids) == 1:
         return "thread"
     set_str_branches: set[str] = {
@@ -503,6 +498,25 @@ def _episode_scope(list_dict_cluster_nodes: Sequence[dict[str, Any]]) -> str:
     if len(set_str_branches) <= 1:
         return "branch"
     return "mixed"
+
+
+def _thread_scoped_ids(list_dict_cluster_nodes: Sequence[dict[str, Any]]) -> set[str]:
+    """Return explicit thread ids from nodes whose scope is truly thread-level.
+
+    Args:
+        list_dict_cluster_nodes: Cluster member nodes in deterministic order.
+
+    Returns:
+        set[str]: Unique non-empty thread identifiers from members whose
+            `workstream_scope` is `thread`.
+    """
+    set_str_thread_ids: set[str] = {
+        str(dict_node.get("thread_id", "")).strip()
+        for dict_node in list_dict_cluster_nodes
+        if str(dict_node.get("thread_id", "")).strip()
+        and str(dict_node.get("workstream_scope", "")).strip() == "thread"
+    }
+    return set_str_thread_ids
 
 
 def _episode_id(list_dict_cluster_nodes: Sequence[dict[str, Any]]) -> str:
@@ -517,11 +531,7 @@ def _episode_id(list_dict_cluster_nodes: Sequence[dict[str, Any]]) -> str:
     """
     str_scope: str = _episode_scope(list_dict_cluster_nodes)
     if str_scope == "thread":
-        set_str_thread_ids: set[str] = {
-            str(dict_node.get("thread_id", "")).strip()
-            for dict_node in list_dict_cluster_nodes
-            if str(dict_node.get("thread_id", "")).strip()
-        }
+        set_str_thread_ids: set[str] = _thread_scoped_ids(list_dict_cluster_nodes)
         str_thread_id: str = sorted(set_str_thread_ids)[0]
         return f"episode-thread-{str_thread_id}"
 

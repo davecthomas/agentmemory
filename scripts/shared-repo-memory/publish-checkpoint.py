@@ -228,6 +228,31 @@ def _cleanup_context(path_context: Path) -> None:
         warn(f"failed to remove checkpoint context {path_context}: {error}")
 
 
+def _coerce_episode_member_count(
+    dict_context: dict[str, Any], list_path_source_shards: Sequence[Path]
+) -> int:
+    """Return a safe episode-member count from checkpoint context metadata.
+
+    Args:
+        dict_context: Parsed checkpoint context metadata.
+        list_path_source_shards: Pending shard paths selected as the source set
+            for the checkpoint publication attempt.
+
+    Returns:
+        int: Parsed episode-member count when the context value is numeric, or
+            a fallback count derived from the current source-shard list when the
+            context field is missing or malformed.
+    """
+    object_episode_member_count: object = dict_context.get(
+        "episode_member_count", len(list_path_source_shards)
+    )
+    try:
+        int_episode_member_count: int = int(object_episode_member_count)
+    except (TypeError, ValueError):
+        int_episode_member_count = len(list_path_source_shards)
+    return int_episode_member_count
+
+
 def _normalize_text(str_text: str) -> str:
     """Collapse whitespace and lowercase text for heuristic comparisons.
 
@@ -541,8 +566,8 @@ def _validate_candidate(
     str_workstream_scope: str = str(
         dict_context.get("episode_scope", dict_context.get("workstream_scope", ""))
     ).strip()
-    int_episode_member_count: int = int(
-        dict_context.get("episode_member_count", len(list_path_source_shards))
+    int_episode_member_count: int = _coerce_episode_member_count(
+        dict_context, list_path_source_shards
     )
     bool_has_design_doc_grounding: bool = False
     for dict_source_metadata in list_dict_source_metadata:
