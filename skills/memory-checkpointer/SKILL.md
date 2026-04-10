@@ -1,19 +1,19 @@
 ---
 name: memory-checkpointer
-description: Evaluates a bounded bundle of pending captures and publishes one durable shared-memory checkpoint only when the bundle supports a coherent, privacy-safe workstream summary.
+description: Evaluates one bounded episode cluster of pending captures and publishes one durable shared-memory checkpoint only when the cluster supports a coherent, privacy-safe summary.
 license: MIT
 ---
 
-# Publish A Trusted Workstream Checkpoint
+# Publish A Trusted Episode Checkpoint
 
 ## Keywords
 
-memory checkpoint, workstream checkpoint, pending captures, shard publication, semantic memory, privacy-safe memory, fail-closed memory
+memory checkpoint, episode checkpoint, pending captures, shard publication, semantic memory, privacy-safe memory, fail-closed memory
 
 ## When to Use This Skill
 
 - `post-turn-notify.py` has written a local-only pending capture and a checkpoint context JSON file
-- You need to inspect a bounded series of related pending captures before deciding whether durable memory should be published
+- You need to inspect the active bounded episode cluster before deciding whether durable memory should be published
 - The repository uses `.agents/memory/` as canonical shared repo memory
 
 This skill is invoked automatically by the post-turn hook as a fire-and-forget background subagent. It may also be invoked manually for recovery or re-evaluation.
@@ -60,7 +60,7 @@ Do not write `.agents/memory/daily/...` files directly. Only `publish-checkpoint
 When invoked automatically, the task message contains:
 
 ```text
-Evaluate the workstream checkpoint bundle using context at: <absolute path to context JSON>
+Evaluate the episode checkpoint bundle using context at: <absolute path to context JSON>
 ```
 
 ## Context JSON Schema
@@ -69,9 +69,17 @@ The context file contains only repo-grounded metadata. It must not contain raw u
 
 - `repo_root`: absolute path to the repository root
 - `current_pending_shard`: absolute path to the pending capture created by the latest turn
-- `pending_shard_paths`: absolute paths to the bounded related pending captures in this bundle
+- `pending_shard_paths`: absolute paths to the bounded related pending captures in the active episode cluster
 - `pending_bundle`: structured metadata for those pending captures
 - `published_shard_path`: absolute path where the durable checkpoint should be written if publication succeeds
+- `episode_manifest_path`: absolute path to the local episode-cluster manifest under `.agents/memory/state/episode-graph/episodes/`
+- `episode_id`: stable active episode identifier
+- `episode_scope`: `thread`, `branch`, or `mixed`
+- `episode_status`: cluster status such as `active` or `ambiguous`
+- `episode_member_count`: number of pending captures in the active episode cluster
+- `secondary_candidate_episode_ids`: nearby alternate episode ids when the deterministic graph found ambiguity
+- `episode_primary_subsystem_hints`: common subsystem hints for the cluster
+- `episode_cluster_edges`: deterministic scored edges that connect the episode-cluster members
 - `workstream_id`: stable local workstream identifier
 - `workstream_scope`: `thread` or `branch`
 - `branch`: current branch name
@@ -87,7 +95,7 @@ The context file contains only repo-grounded metadata. It must not contain raw u
 
 The default outcome is **no publish**.
 
-Only publish when you can explain the workstream at a durable level:
+Only publish when you can explain the episode at a durable level:
 
 1. What larger issue or goal is being advanced?
 2. What subsystem or architectural surface is affected?
@@ -140,7 +148,7 @@ The output must be semantically whole across the broader issue. Reject the bundl
 ## Source Selection
 
 - Always include `current_pending_shard` in `--source-pending-shard`.
-- Include earlier pending captures only when they are part of the same bounded workstream and they materially improve the checkpoint gestalt.
+- Include earlier pending captures only when they are part of the same active episode cluster and they materially improve the checkpoint gestalt.
 - Prefer the smallest bundle that still produces a trustworthy checkpoint.
 
-If the bundle is branch-scoped, single-capture, and not grounded by a design doc, bias strongly toward `--skip-publish`.
+If the cluster is branch-scoped, single-capture, and not grounded by a design doc, bias strongly toward `--skip-publish`.

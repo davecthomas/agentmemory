@@ -2,15 +2,15 @@
 """post-turn-notify.py -- Post-turn hook for the shared repo-memory system.
 
 This script fires after every agent turn. Its job is to decide whether the turn
-was meaningful and, if so, write a local pending capture containing only the
+changed repo files and, if so, write a local pending capture containing only the
 mechanical repo facts needed for trusted checkpoint publication later.
 
-The "meaningful turn" gate
---------------------------
-A pending local-only capture is written only when repo files changed in the working tree
-(files_touched is non-empty).  Conversational turns with no repo changes --
-even long discussions that mention ADRs or decisions -- produce no shard.
-This prevents the memory from filling up with noise and false-positive
+The file-changing turn gate
+---------------------------
+A pending local-only capture is written only when repo files changed in the
+working tree (files_touched is non-empty). Conversational turns with no repo
+changes, even long discussions that mention ADRs or decisions, produce no
+capture. This prevents the memory from filling up with noise and false-positive
 decision candidates.
 
 Triggered by:
@@ -20,13 +20,13 @@ Triggered by:
 
 After writing the pending shard, this script may:
   1. Save a privacy-safe checkpoint context manifest and spawn an async
-     subagent to evaluate whether a durable workstream checkpoint should be
+     subagent to evaluate whether a durable episode checkpoint should be
      published into `.agents/memory/daily/<date>/events/`.
   2. Spawn an ADR inspection subagent when changed design docs were touched.
 
 The raw pending shard is local-only and must never be committed. Publication,
 summary rebuild, and staging happen only inside publish-checkpoint.py after a
-bounded workstream bundle passes semantic validation.
+bounded episode cluster passes semantic validation.
 
 Install location after `./install.sh`:
   ~/.agent/shared-repo-memory/post-turn-notify.py
@@ -46,6 +46,7 @@ from typing import TextIO
 
 from adapters import ClaudeAdapter, detect_adapter, detect_adapter_from_hook_event
 from common import (
+    CHECKPOINT_CONTEXT_RELATIVE_DIR,
     PENDING_SHARDS_RELATIVE_DIR,
     append_hook_trace,
     author_slug,
@@ -68,6 +69,7 @@ from common import (
     warn,
     write_text,
 )
+from episode_graph import rebuild_episode_graph
 from models import HookResponse
 
 
@@ -482,9 +484,7 @@ def _checkpoint_context_dir(repo_root: Path) -> Path:
     Returns:
         Path: Absolute path to the local-only checkpoint context directory.
     """
-    path_context_dir: Path = ensure_dir(
-        repo_root / ".agents" / "memory" / "logs" / "checkpoint-context"
-    )
+    path_context_dir: Path = ensure_dir(repo_root / CHECKPOINT_CONTEXT_RELATIVE_DIR)
     return path_context_dir
 
 
@@ -700,6 +700,92 @@ def _recent_summary_paths(repo_root: Path, *, limit: int = 3) -> list[str]:
     return list_path_recent_summaries
 
 
+def _episode_bundle_entries(
+    dict_episode_manifest: dict[str, object],
+) -> tuple[list[str], list[dict[str, object]]]:
+    """Extract privacy-safe bundle entries from one active episode manifest.
+
+    Args:
+        dict_episode_manifest: Episode-cluster manifest returned by
+            episode_graph.rebuild_episode_graph().
+
+    Returns:
+        tuple[list[str], list[dict[str, object]]]: Absolute pending-capture
+            paths plus structured member-node metadata suitable for the local
+            checkpoint context JSON.
+    """
+    object_member_paths: object = dict_episode_manifest.get(
+        "member_pending_shard_paths", []
+    )
+    list_str_member_paths: list[str] = (
+        [
+            str(str_item).strip()
+            for str_item in object_member_paths
+            if str(str_item).strip()
+        ]
+        if isinstance(object_member_paths, list)
+        else []
+    )
+
+    object_member_nodes: object = dict_episode_manifest.get("member_nodes", [])
+    list_dict_bundle_entries: list[dict[str, object]] = []
+    if not isinstance(object_member_nodes, list):
+        return list_str_member_paths, list_dict_bundle_entries
+
+    object_member_node: object
+    for object_member_node in object_member_nodes:
+        if not isinstance(object_member_node, dict):
+            continue
+        dict_bundle_entry: dict[str, object] = {
+            "path": str(object_member_node.get("path", "")),
+            "timestamp": str(object_member_node.get("timestamp", "")),
+            "branch": str(object_member_node.get("branch", "")),
+            "thread_id": str(object_member_node.get("thread_id", "")),
+            "turn_id": str(object_member_node.get("turn_id", "")),
+            "workstream_id": str(object_member_node.get("workstream_id", "")),
+            "workstream_scope": str(object_member_node.get("workstream_scope", "")),
+            "files_touched": (
+                list(object_member_node.get("files_touched", []))
+                if isinstance(object_member_node.get("files_touched", []), list)
+                else []
+            ),
+            "design_docs_touched": (
+                list(object_member_node.get("design_docs_touched", []))
+                if isinstance(object_member_node.get("design_docs_touched", []), list)
+                else []
+            ),
+            "verification": (
+                list(object_member_node.get("verification", []))
+                if isinstance(object_member_node.get("verification", []), list)
+                else []
+            ),
+            "diff_summary": str(object_member_node.get("diff_summary", "")),
+            "path_scope_keys": (
+                list(object_member_node.get("path_scope_keys", []))
+                if isinstance(object_member_node.get("path_scope_keys", []), list)
+                else []
+            ),
+            "issue_ids": (
+                list(object_member_node.get("issue_ids", []))
+                if isinstance(object_member_node.get("issue_ids", []), list)
+                else []
+            ),
+            "validation_signals": (
+                list(object_member_node.get("validation_signals", []))
+                if isinstance(object_member_node.get("validation_signals", []), list)
+                else []
+            ),
+            "related_adrs": (
+                list(object_member_node.get("related_adrs", []))
+                if isinstance(object_member_node.get("related_adrs", []), list)
+                else []
+            ),
+        }
+        list_dict_bundle_entries.append(dict_bundle_entry)
+
+    return list_str_member_paths, list_dict_bundle_entries
+
+
 def _write_local_notify_metadata(
     repo_root: Path,
     *,
@@ -711,6 +797,10 @@ def _write_local_notify_metadata(
     published_shard_path: Path | None = None,
     workstream_id: str = "",
     workstream_scope: str = "",
+    episode_id: str = "",
+    episode_scope: str = "",
+    episode_manifest_path: Path | None = None,
+    episode_member_count: int = 0,
 ) -> None:
     """Persist a sanitized local debug record for the latest notify invocation.
 
@@ -724,6 +814,14 @@ def _write_local_notify_metadata(
         published_shard_path: Optional published checkpoint path reserved for this turn.
         workstream_id: Stable workstream identifier.
         workstream_scope: `thread` or `branch`.
+        episode_id: Stable active episode-cluster identifier when graph rebuild
+            succeeds for this pending capture.
+        episode_scope: Dominant episode scope such as `thread`, `branch`, or
+            `mixed`.
+        episode_manifest_path: Absolute path to the local episode-cluster
+            manifest for this pending capture.
+        episode_member_count: Number of pending captures currently grouped into
+            the active episode cluster.
 
     Returns:
         None: The local metadata file is overwritten in place.
@@ -741,6 +839,9 @@ def _write_local_notify_metadata(
         "design_docs_touched": design_docs_touched,
         "workstream_id": workstream_id,
         "workstream_scope": workstream_scope,
+        "episode_id": episode_id,
+        "episode_scope": episode_scope,
+        "episode_member_count": episode_member_count,
     }
     if pending_shard_path is not None:
         dict_metadata["pending_shard_path"] = str(
@@ -749,6 +850,10 @@ def _write_local_notify_metadata(
     if published_shard_path is not None:
         dict_metadata["published_shard_path"] = str(
             published_shard_path.relative_to(repo_root)
+        )
+    if episode_manifest_path is not None:
+        dict_metadata["episode_manifest_path"] = str(
+            episode_manifest_path.relative_to(repo_root)
         )
     write_text(
         local_root / "last-notify-metadata.json",
@@ -846,7 +951,7 @@ def _spawn_checkpoint_evaluation(
     context_path: Path,
     repo_root: Path,
 ) -> bool:
-    """Fire-and-forget a subagent to evaluate one workstream checkpoint bundle.
+    """Fire-and-forget a subagent to evaluate one episode checkpoint bundle.
 
     Loads the memory-checkpointer skill and spawns the subagent via the
     adapter's CLI. Falls back to ClaudeAdapter when the adapter cannot spawn
@@ -869,7 +974,7 @@ def _spawn_checkpoint_evaluation(
 
     skill_content: str = skill_path.read_text(encoding="utf-8")
     task: str = (
-        "Evaluate the workstream checkpoint bundle using context at: " f"{context_path}"
+        "Evaluate the episode checkpoint bundle using context at: " f"{context_path}"
     )
     (
         cmd,
@@ -989,8 +1094,9 @@ def _emit(adapter: type, status: str, message: str = "", **extra: object) -> Non
 def main() -> int:
     """Post-turn hook entry point.
 
-    Reads the hook payload from stdin, evaluates whether the turn was meaningful,
-    writes a pending shard if so, and optionally spawns async publication work.
+    Reads the hook payload from stdin, evaluates whether the turn changed repo
+    files, writes a pending capture if so, and optionally spawns async
+    publication work from the active episode cluster.
 
     Returns:
         int: 0 on success or graceful noop; 1 on hard error.
@@ -1052,7 +1158,7 @@ def main() -> int:
     # Collect repo-grounded evidence and metadata for the current turn.
     strings = flatten_strings(payload)
     files_touched = changed_repo_files(repo_root)
-    # Meaningful turn gate: a shard is ONLY written when repo files changed.
+    # File-changing turn gate: a capture is ONLY written when repo files changed.
     # Decision keyword matches alone are insufficient -- every discussion of this
     # system's own design would match, producing shards with no real content.
     if not files_touched:
@@ -1120,7 +1226,7 @@ def main() -> int:
     diff_summary = _diff_summary(repo_root, files_touched)
     design_docs = [path for path in files_touched if _is_design_doc(path)]
     why_lines = [
-        "- Pending workstream capture only. Durable memory may publish later if related turns add enough context.",
+        "- Pending episode capture only. Durable memory may publish later if related captures form a trustworthy checkpoint.",
     ]
     what_lines = [f"- Touched {path}" for path in files_touched] or [
         "- No repo files were detected."
@@ -1133,7 +1239,7 @@ def main() -> int:
     if not evidence_lines:
         evidence_lines = ["- Repo changes were detected in the working tree."]
     next_lines = [
-        "- Await background checkpoint evaluation before publishing durable memory."
+        "- Await background episode evaluation before publishing durable memory."
     ]
 
     # Scan the payload for any ADR cross-references so we can link them in the shard.
@@ -1216,6 +1322,30 @@ def main() -> int:
     # skip writing duplicate pending shards for the same working-tree state.
     _save_diff_state(repo_root, workstream_id, current_diff_hash)
 
+    dict_episode_manifest: dict[str, object] | None = None
+    path_episode_manifest: Path | None = None
+    str_episode_id: str = ""
+    str_episode_scope: str = ""
+    int_episode_member_count: int = 0
+    list_str_episode_pending_paths: list[str] = []
+    list_dict_bundle_entries: list[dict[str, object]] = []
+    try:
+        dict_episode_manifest = rebuild_episode_graph(repo_root, path_pending_shard)
+        str_episode_id = str(dict_episode_manifest.get("episode_id", "")).strip()
+        str_episode_scope = str(dict_episode_manifest.get("episode_scope", "")).strip()
+        int_episode_member_count = int(dict_episode_manifest.get("member_count", 0))
+        str_episode_manifest_path: str = str(
+            dict_episode_manifest.get("manifest_path", "")
+        ).strip()
+        if str_episode_manifest_path:
+            path_episode_manifest = Path(str_episode_manifest_path)
+        (
+            list_str_episode_pending_paths,
+            list_dict_bundle_entries,
+        ) = _episode_bundle_entries(dict_episode_manifest)
+    except (OSError, ValueError) as error:
+        warn(f"failed to rebuild episode graph: {error}")
+
     _write_local_notify_metadata(
         repo_root,
         adapter=adapter,
@@ -1226,6 +1356,10 @@ def main() -> int:
         published_shard_path=path_published_shard,
         workstream_id=workstream_id,
         workstream_scope=workstream_scope,
+        episode_id=str_episode_id,
+        episode_scope=str_episode_scope,
+        episode_manifest_path=path_episode_manifest,
+        episode_member_count=int_episode_member_count,
     )
 
     # --- Async Phase 2: checkpoint evaluation via subagent ---
@@ -1233,57 +1367,96 @@ def main() -> int:
     # text. Durable memory publishes only if the background evaluation passes
     # the checkpoint validator.
     bool_checkpoint_spawned: bool = False
-    list_path_bundle_shards: list[Path] = _collect_related_pending_shards(
-        repo_root,
-        path_pending_shard,
-        workstream_id,
-        workstream_scope,
-        files_touched,
-    )
-    list_dict_bundle_entries: list[dict[str, object]] = []
-    for path_bundle_shard in list_path_bundle_shards:
-        dict_bundle_entry: dict[str, object] | None = _pending_bundle_entry(
-            path_bundle_shard
-        )
-        if dict_bundle_entry is None:
-            continue
-        list_dict_bundle_entries.append(dict_bundle_entry)
-
-    context_data: dict[str, object] = {
-        "repo_root": str(repo_root),
-        "current_pending_shard": str(path_pending_shard),
-        "pending_shard_paths": [
-            str(path_bundle_shard) for path_bundle_shard in list_path_bundle_shards
-        ],
-        "pending_bundle": list_dict_bundle_entries,
-        "published_shard_path": str(path_published_shard),
-        "workstream_id": workstream_id,
-        "workstream_scope": workstream_scope,
-        "branch": branch,
-        "files_touched": files_touched,
-        "design_docs_touched": design_docs,
-        "diff_summary": diff_summary,
-        "adr_index_path": str(repo_root / ".agents" / "memory" / "adr" / "INDEX.md"),
-        "recent_summary_paths": _recent_summary_paths(repo_root),
-    }
-    context_filename: str = f".checkpoint-{turn_id}.json"
-    path_context_dir: Path = _checkpoint_context_dir(repo_root)
-    path_context: Path = path_context_dir / context_filename
-    try:
-        write_text(
-            path_context, json.dumps(context_data, indent=2, sort_keys=True) + "\n"
-        )
-        bool_checkpoint_spawned = _spawn_checkpoint_evaluation(
-            adapter, path_context, repo_root
-        )
-        if bool_checkpoint_spawned:
-            info(
-                f"spawned checkpoint evaluation subagent for {path_published_shard.name}"
+    if (
+        path_episode_manifest is not None
+        and list_str_episode_pending_paths
+        and list_dict_bundle_entries
+    ):
+        list_str_secondary_episode_ids: list[str] = []
+        list_str_episode_primary_subsystem_hints: list[str] = []
+        list_dict_episode_cluster_edges: list[dict[str, object]] = []
+        if dict_episode_manifest is not None:
+            object_secondary_episode_ids: object = dict_episode_manifest.get(
+                "secondary_candidate_episode_ids", []
             )
-        elif path_context.exists():
-            path_context.unlink(missing_ok=True)
-    except OSError as error:
-        warn(f"failed to write checkpoint context: {error}")
+            if isinstance(object_secondary_episode_ids, list):
+                list_str_secondary_episode_ids = [
+                    str(str_item).strip()
+                    for str_item in object_secondary_episode_ids
+                    if str(str_item).strip()
+                ]
+
+            object_primary_subsystem_hints: object = dict_episode_manifest.get(
+                "primary_subsystem_hints", []
+            )
+            if isinstance(object_primary_subsystem_hints, list):
+                list_str_episode_primary_subsystem_hints = [
+                    str(str_item).strip()
+                    for str_item in object_primary_subsystem_hints
+                    if str(str_item).strip()
+                ]
+
+            object_cluster_edges: object = dict_episode_manifest.get(
+                "cluster_edges", []
+            )
+            if isinstance(object_cluster_edges, list):
+                list_dict_episode_cluster_edges = [
+                    dict(object_edge)
+                    for object_edge in object_cluster_edges
+                    if isinstance(object_edge, dict)
+                ]
+
+        context_data: dict[str, object] = {
+            "repo_root": str(repo_root),
+            "current_pending_shard": str(path_pending_shard),
+            "pending_shard_paths": list_str_episode_pending_paths,
+            "pending_bundle": list_dict_bundle_entries,
+            "published_shard_path": str(path_published_shard),
+            "workstream_id": workstream_id,
+            "workstream_scope": workstream_scope,
+            "episode_manifest_path": str(path_episode_manifest),
+            "episode_id": str_episode_id,
+            "episode_scope": str_episode_scope,
+            "episode_status": (
+                str(dict_episode_manifest.get("status", "")).strip()
+                if dict_episode_manifest is not None
+                else ""
+            ),
+            "episode_member_count": int_episode_member_count,
+            "secondary_candidate_episode_ids": list_str_secondary_episode_ids,
+            "episode_primary_subsystem_hints": list_str_episode_primary_subsystem_hints,
+            "episode_cluster_edges": list_dict_episode_cluster_edges,
+            "branch": branch,
+            "files_touched": files_touched,
+            "design_docs_touched": design_docs,
+            "diff_summary": diff_summary,
+            "adr_index_path": str(
+                repo_root / ".agents" / "memory" / "adr" / "INDEX.md"
+            ),
+            "recent_summary_paths": _recent_summary_paths(repo_root),
+        }
+        context_filename: str = f".checkpoint-{turn_id}.json"
+        path_context_dir: Path = _checkpoint_context_dir(repo_root)
+        path_context: Path = path_context_dir / context_filename
+        try:
+            write_text(
+                path_context, json.dumps(context_data, indent=2, sort_keys=True) + "\n"
+            )
+            bool_checkpoint_spawned = _spawn_checkpoint_evaluation(
+                adapter, path_context, repo_root
+            )
+            if bool_checkpoint_spawned:
+                info(
+                    f"spawned checkpoint evaluation subagent for {path_published_shard.name}"
+                )
+            elif path_context.exists():
+                path_context.unlink(missing_ok=True)
+        except OSError as error:
+            warn(f"failed to write checkpoint context: {error}")
+    else:
+        warn(
+            "skipping checkpoint evaluation because the active episode cluster could not be derived"
+        )
 
     # --- Async Phase 2b: design doc ADR inspection ---
     # When the turn touched design docs, spawn a separate subagent to inspect
@@ -1308,6 +1481,14 @@ def main() -> int:
             "turn_id": turn_id,
             "workstream_id": workstream_id,
             "workstream_scope": workstream_scope,
+            "episode_id": str_episode_id,
+            "episode_scope": str_episode_scope,
+            "episode_member_count": int_episode_member_count,
+            "episode_manifest_path": (
+                str(path_episode_manifest.relative_to(repo_root))
+                if path_episode_manifest is not None
+                else ""
+            ),
             "checkpoint_spawned": bool_checkpoint_spawned,
             "adr_inspection_spawned": bool_inspection_spawned,
             "design_docs_touched": design_docs,

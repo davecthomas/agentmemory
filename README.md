@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.3.1`
+Current version: `0.4.2`
 
 ---
 
@@ -19,8 +19,8 @@ Coding agents are productive inside a single session and fragile across time. Te
 | **Turn** | One prompt-response interaction or hook event. Turns remain provenance and traceability metadata; they are not the durable memory unit. |
 | **File-changing turn** | A turn that changed at least one repo file in the working tree, including newly created files. Only file-changing turns may produce pending captures; conversational turns with no repo changes are silently skipped. |
 | **Pending capture** | Local-only mechanical capture for one file-changing turn. Lives under `.agents/memory/pending/YYYY-MM-DD/`, contains no raw prompt or raw assistant text, and must never be committed. |
-| **Workstream episode** | A bounded, semantically related collection of pending captures evaluated together so the system can infer the broader effort rather than over-trusting a single turn. |
-| **Workstream checkpoint** | Durable published memory synthesized from a workstream episode plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
+| **Episode cluster** | A bounded, semantically related collection of pending captures derived by the local episode graph. It is the semantic unit evaluated for publication, not a durable artifact. |
+| **Checkpoint** | Durable published memory synthesized from an episode cluster plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
 | **Daily summary** | Derived read model rebuilt deterministically from that day's published checkpoints. Never edited directly. |
 | **ADR** | Architecture Decision Record. Promoted explicitly from decision-candidate checkpoints. The only location for durable repo decisions. |
 | **Local catch-up** | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran. |
@@ -37,7 +37,11 @@ Coding agents are productive inside a single session and fragile across time. Te
 │   │       ├── events/      # immutable published checkpoints
 │   │       └── summary.md   # derived daily summary
 │   ├── pending/             # local-only pending captures (gitignored)
-│   └── logs/                # local-only checkpoint context and logs (gitignored)
+│   ├── state/               # local-only derived episode-graph state (gitignored)
+│   │   ├── checkpoint-context/
+│   │   └── episode-graph/
+│   │       └── episodes/
+│   └── logs/                # local-only diagnostic logs (gitignored)
 ├── .githooks/               # generated repo-local hooks (gitignored)
 │   └── pre-commit           # blocks pending/raw shards, then runs optional project checks
 └── .codex/
@@ -60,9 +64,9 @@ SessionStart hook
 Agent turn completes
     → Stop / AfterAgent hook fires post-turn-notify.py
     → file-changing turn? → one privacy-safe pending capture written under .agents/memory/pending/
-    → bounded local workstream episode assembled from related pending captures
-    → local workstream episode manifest written under .agents/memory/logs/
-    → background memory-checkpointer subagent evaluates the episode bundle
+    → bounded local episode cluster derived from pending captures
+    → local episode manifest written under .agents/memory/state/episode-graph/episodes/
+    → background memory-checkpointer subagent evaluates the episode cluster
     → only if the candidate passes validation: published checkpoint written under daily/events/
     → summary rebuilt from the published checkpoint set
     → published checkpoint + summary auto-staged
@@ -142,7 +146,7 @@ When you open Claude Code in a wired repo, the `SessionStart` hook fires automat
 2. Bootstraps any missing repo-local wiring
 3. Shows a notification in the UI: _"Shared repo memory loaded. Last refresh: …"_
 4. Injects the ADR index and recent daily summaries into the model's context
-5. If no event shards exist yet, spawns a `claude -p` subagent in the background to seed initial memory from recent commits and design docs — the session is not blocked
+5. If no event shards exist yet, spawns a current-runtime background bootstrap only when that runtime exposes a supported non-interactive bootstrap command; otherwise it leaves bootstrap manual via `/memory-bootstrap`
 
 You do not need to ask the agent to read memory — it arrives as session context.
 
@@ -247,7 +251,7 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 | Skill | Invoke when |
 | ----- | ----------- |
 | `memory-writer` | After a file-changing turn from a manual runtime path such as Codex notify-wrapper testing — delegates to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
-| `memory-checkpointer` | A background workstream episode should be evaluated for durable publication without blocking the user turn |
+| `memory-checkpointer` | A background episode cluster should be evaluated for durable publication without blocking the user turn |
 | `memory-bootstrap` | First time in a repo with existing history — mines design docs and commits to seed initial decision candidates and promote foundational ADRs |
 | `adr-promoter` | A decision-candidate shard should become a permanent ADR |
 | `news` | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
@@ -265,7 +269,7 @@ The skills are copied from this repo rather than symlinked directly to it. This 
 3. Agent turn ends
    └── Stop/AfterAgent hook runs post-turn-notify.py
    └── File-changing turn? → pending capture written
-   └── Background checkpoint evaluation runs from a bounded local workstream episode
+   └── Background checkpoint evaluation runs from the active local episode cluster
    └── Validation succeeds? → published checkpoint + day summary auto-staged
 
 4. Review staged memory files alongside code changes
@@ -347,8 +351,8 @@ tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl
 
 Every hook invocation appends a JSONL entry. If `SessionStart` fired successfully you will see `"status": "success"` entries.
 
-Shared-memory stderr logs and helper-script logs now include runtime metadata in
-their prefix, for example `[shared-repo-memory][agent=codex][version=0.118.0]`.
+Shared-memory stderr logs and helper-script logs now include product and runtime
+metadata in their prefix, for example `[agentmemory][version=0.4.2][agent=codex][provider-version=0.118.0]`.
 
 ---
 

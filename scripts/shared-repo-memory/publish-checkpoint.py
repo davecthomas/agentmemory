@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""publish-checkpoint.py -- Validate and publish one durable workstream checkpoint.
+"""publish-checkpoint.py -- Validate and publish one durable episode checkpoint.
 
 This script is invoked by the background memory-checkpointer subagent after
 post-turn-notify.py writes a pending local-only capture and emits a checkpoint
@@ -11,7 +11,7 @@ context manifest. The subagent may either:
      trustworthy checkpoint.
 
 The script is the final trust boundary for shared repo memory. It validates
-that the candidate is workstream-level, mechanically distinct from raw diff
+that the candidate is episode-level, mechanically distinct from raw diff
 restatements, and rich enough to justify publication. When validation fails,
 the script leaves pending captures in place and publishes nothing.
 
@@ -58,6 +58,7 @@ from common import (
 
 _PLACEHOLDER_PHRASES: tuple[str, ...] = (
     "pending workstream capture",
+    "pending episode capture",
     "await checkpoint evaluation",
     "review the generated shard",
     "repo state changed during this agent turn",
@@ -104,7 +105,7 @@ def parse_args() -> argparse.Namespace:
             path, publication fields, and optional no-publish controls.
     """
     argument_parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        description="Validate and publish one shared-memory workstream checkpoint."
+        description="Validate and publish one shared-memory episode checkpoint."
     )
     argument_parser.add_argument(
         "context_path",
@@ -225,6 +226,31 @@ def _cleanup_context(path_context: Path) -> None:
         path_context.unlink(missing_ok=True)
     except OSError as error:
         warn(f"failed to remove checkpoint context {path_context}: {error}")
+
+
+def _coerce_episode_member_count(
+    dict_context: dict[str, Any], list_path_source_shards: Sequence[Path]
+) -> int:
+    """Return a safe episode-member count from checkpoint context metadata.
+
+    Args:
+        dict_context: Parsed checkpoint context metadata.
+        list_path_source_shards: Pending shard paths selected as the source set
+            for the checkpoint publication attempt.
+
+    Returns:
+        int: Parsed episode-member count when the context value is numeric, or
+            a fallback count derived from the current source-shard list when the
+            context field is missing or malformed.
+    """
+    object_episode_member_count: object = dict_context.get(
+        "episode_member_count", len(list_path_source_shards)
+    )
+    try:
+        int_episode_member_count: int = int(object_episode_member_count)
+    except (TypeError, ValueError):
+        int_episode_member_count = len(list_path_source_shards)
+    return int_episode_member_count
 
 
 def _normalize_text(str_text: str) -> str:
@@ -537,7 +563,12 @@ def _validate_candidate(
             "candidate lacks grounded evidence such as tests, design docs, ADRs, hooks, or validators"
         )
 
-    str_workstream_scope: str = str(dict_context.get("workstream_scope", "")).strip()
+    str_workstream_scope: str = str(
+        dict_context.get("episode_scope", dict_context.get("workstream_scope", ""))
+    ).strip()
+    int_episode_member_count: int = _coerce_episode_member_count(
+        dict_context, list_path_source_shards
+    )
     bool_has_design_doc_grounding: bool = False
     for dict_source_metadata in list_dict_source_metadata:
         object_design_docs: object = dict_source_metadata.get("design_docs_touched", [])
@@ -549,7 +580,7 @@ def _validate_candidate(
             break
     if (
         str_workstream_scope == "branch"
-        and len(list_path_source_shards) < 2
+        and int_episode_member_count < 2
         and not bool_has_design_doc_grounding
     ):
         list_str_failures.append(
@@ -582,6 +613,7 @@ def _deduplicate_string_lists(sequence_str_values: Sequence[str]) -> list[str]:
 def _build_published_metadata(
     list_dict_source_metadata: Sequence[dict[str, Any]],
     list_path_source_shards: Sequence[Path],
+    dict_context: dict[str, Any],
     str_workstream_goal: str,
     str_subsystem_surface: str,
     str_turn_outcome: str,
@@ -593,6 +625,7 @@ def _build_published_metadata(
     Args:
         list_dict_source_metadata: Parsed metadata from each source pending capture.
         list_path_source_shards: Absolute pending-capture paths consumed here.
+        dict_context: Parsed checkpoint context manifest for the active episode.
         str_workstream_goal: Approved broader workstream goal.
         str_subsystem_surface: Approved subsystem or architectural surface.
         str_turn_outcome: Approved concrete latest-turn outcome.
@@ -649,6 +682,8 @@ def _build_published_metadata(
             ("turn_id", str(dict_latest_metadata.get("turn_id", ""))),
             ("workstream_id", str(dict_latest_metadata.get("workstream_id", ""))),
             ("workstream_scope", str(dict_latest_metadata.get("workstream_scope", ""))),
+            ("episode_id", str(dict_context.get("episode_id", ""))),
+            ("episode_scope", str(dict_context.get("episode_scope", ""))),
             ("checkpoint_goal", str_workstream_goal.strip()),
             ("checkpoint_surface", str_subsystem_surface.strip()),
             ("checkpoint_outcome", str_turn_outcome.strip()),
@@ -805,7 +840,7 @@ def _publish_checkpoint(
 
 
 def main() -> int:
-    """Validate and publish one workstream checkpoint when the candidate is trustworthy.
+    """Validate and publish one episode checkpoint when the candidate is trustworthy.
 
     Returns:
         int: Zero on successful publish or intentional no-publish cleanup, or a
@@ -872,6 +907,7 @@ def main() -> int:
     ordered_metadata: OrderedDict[str, Any] = _build_published_metadata(
         list_dict_source_metadata,
         list_path_source_shards,
+        dict_context,
         namespace_args.workstream_goal,
         namespace_args.subsystem_surface,
         namespace_args.turn_outcome,

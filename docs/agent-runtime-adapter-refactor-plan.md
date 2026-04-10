@@ -100,7 +100,7 @@ The refactor should not change:
 
 Those are product contracts, not runtime adapter details.
 
-## Memory trust: pending captures plus workstream checkpoints
+## Memory trust: pending captures plus trusted checkpoints
 
 ### Problem
 
@@ -122,11 +122,11 @@ repo-grounded context is sufficient.
 
 Published memory must be:
 
-- coherent at the workstream level, not merely the single-turn level
+- coherent at the episode-cluster level, not merely the single-turn level
 - privacy-safe, with no direct user prompt text persisted or published
 - fail-closed: no shard is better than a bad shard
 
-This changes the model from **turn enrichment** to **workstream checkpoint
+This changes the model from **turn enrichment** to **episode checkpoint
 publication**.
 
 ### Terminology
@@ -137,8 +137,8 @@ stay explicit:
 - `turn`: one prompt-response interaction or hook event; useful provenance only
 - `file-changing turn`: a turn whose working-tree effects touched repo files
 - `pending capture`: one local-only mechanical record written from one file-changing turn
-- `workstream episode`: a bounded, semantically related set of pending captures
-- `checkpoint`: the durable published memory synthesized from a workstream episode
+- `episode cluster`: a bounded, semantically related set of pending captures selected by the local episode graph
+- `checkpoint`: the durable published memory synthesized from an episode cluster
 
 Durable memory should be described in terms of episodes and checkpoints, not as
 single-turn memory. A single turn can be mechanically important enough to
@@ -153,7 +153,7 @@ raw user prompt text. Do not persist raw assistant text. Do not rebuild
 summaries in this phase.
 
 **Phase 2 (async, fire-and-forget):** Build an ephemeral checkpoint context
-manifest that references a bounded workstream episode plus
+manifest that references the active episode cluster plus
 supporting repo context such as touched design docs, ADR index, and recent
 summaries. Spawn a background subagent via the detected adapter's CLI. The
 subagent reads the referenced files, decides whether the episode supports a
@@ -165,15 +165,15 @@ structured checkpoint output. Only valid checkpoints are written to
 artifacts are staged, and the consumed pending captures are deleted. When
 validation fails or the subagent returns `publish: false`, nothing is published.
 
-### What counts as a workstream episode
+### What counts as an episode cluster
 
-A workstream episode is a bounded set of related pending captures. The current
-bundle selection rules should stay simple and deterministic:
+An episode cluster is a bounded set of related pending captures. The current
+selection rules should stay deterministic:
 
 - current pending capture is always included
 - prefer same `thread_id` when the runtime provides one
-- otherwise fall back to same branch, optionally narrowed by touched-file overlap
-- include only a small recent window (for example, 3-7 pending captures)
+- otherwise score associations from repo-grounded signals such as branch, file overlap, design docs, validators, ADR refs, and temporal proximity
+- keep the graph local-only and bounded to a small recent window (for example, 3-7 captures in the active cluster)
 
 This is a local-only read model used to give the subagent enough context to infer
 the broader effort. It is not a committed artifact, and it is the semantic unit
@@ -250,7 +250,7 @@ text and raw assistant text in the pending capture or checkpoint context at all.
 ### Decision candidate detection moves to the checkpoint level
 
 `decision_candidate` should no longer be inferred from a single turn's keyword
-matches. Instead, the checkpoint subagent evaluates the whole workstream episode
+matches. Instead, the checkpoint subagent evaluates the whole episode cluster
 and marks the published checkpoint as a decision candidate only when it captures
 an actual durable architectural decision.
 
@@ -261,7 +261,7 @@ decisions once enough context exists.
 ### Graceful degradation
 
 - No subagent CLI available: pending captures remain local-only.
-- Insufficient context to explain the broader workstream: no publish.
+- Insufficient context to explain the broader episode cluster: no publish.
 - Validation fails: no publish.
 - Concurrent evaluations race: only validations against still-present source
   pending captures may publish.
@@ -342,8 +342,8 @@ ADR-0005 established that ADR promotion is always explicit and separate from pos
 
 | File | Purpose |
 |------|---------|
-| `scripts/shared-repo-memory/publish-checkpoint.py` | Standalone validator/publisher script invoked by the checkpoint subagent to publish only trusted workstream checkpoints |
-| `skills/memory-checkpointer/SKILL.md` | Skill defining the system prompt for the workstream checkpoint evaluation subagent |
+| `scripts/shared-repo-memory/publish-checkpoint.py` | Standalone validator/publisher script invoked by the checkpoint subagent to publish only trusted checkpoints |
+| `skills/memory-checkpointer/SKILL.md` | Skill defining the system prompt for the episode checkpoint evaluation subagent |
 | `skills/adr-inspector/SKILL.md` | Skill defining the system prompt for the design doc ADR inspection subagent |
 
 ## Suggested migration sequence

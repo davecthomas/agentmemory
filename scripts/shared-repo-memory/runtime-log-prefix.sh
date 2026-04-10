@@ -3,7 +3,7 @@
 #
 # Shell helpers and generated git hooks use this script so they emit the same
 # runtime-aware prefix as the Python helpers:
-#   [shared-repo-memory][agent=<id>][version=<version>]
+#   [agentmemory][version=<agentmemory-version>][agent=<id>][provider-version=<version>]
 #
 # The underlying detection and version probing logic lives in common.py.
 set -euo pipefail
@@ -16,5 +16,5 @@ from common import format_log_prefix
 print(format_log_prefix())
 PY
 then
-  printf '%s\n' '[shared-repo-memory][agent=unknown][version=unknown]'
+  printf '%s\n' '[agentmemory][version=unknown][agent=unknown][provider-version=unknown]'
 fi

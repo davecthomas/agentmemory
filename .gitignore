@@ -37,6 +37,7 @@ htmlcov/
 .claude/local/
 .claude/settings.local.json
 .agents/memory/pending/
+.agents/memory/state/
 .agents/memory/logs/
 .agents/memory/.auto_bootstrap_running
 

@@ -12,6 +12,7 @@ What this script creates (all relative to the repo root):
   .agents/memory/adr/                     -- ADR storage directory
   .agents/memory/daily/                   -- daily event shard storage
   .agents/memory/pending/                 -- ignored raw shard staging area
+  .agents/memory/state/                   -- ignored derived episode-graph state
   .codex/local/                           -- local catch-up state (never committed)
   .claude/local/                          -- Claude-specific local state
   .githooks/                              -- git hooks directory
@@ -243,7 +244,7 @@ fi
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[shared-repo-memory][agent=unknown][version=unknown]')"
+log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[agentmemory][version=unknown][agent=unknown][provider-version=unknown]')"
 if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" {str_hook_name} "$@"; then
     echo "$log_prefix warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
 fi
@@ -298,6 +299,7 @@ def main() -> int:
         ".agents/memory/adr",
         ".agents/memory/daily",
         ".agents/memory/pending",
+        ".agents/memory/state",
         ".codex/local",
         ".claude/local",
         GITHOOKS_RELATIVE_DIR,

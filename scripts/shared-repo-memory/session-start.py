@@ -37,7 +37,7 @@ import tomllib
 from pathlib import Path
 from typing import TextIO
 
-from adapters import ClaudeAdapter, detect_adapter
+from adapters import detect_adapter
 from common import (
     append_hook_trace,
     format_log_prefix,
@@ -180,6 +180,7 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
       .agents/memory/adr/       -- ADR storage directory
       .agents/memory/daily/     -- daily shard storage directory
       .agents/memory/pending/   -- ignored raw shard staging directory
+      .agents/memory/state/     -- ignored derived episode-graph state
       .codex/local/             -- local catch-up state (not committed)
       .githooks/                -- git hooks directory
       .githooks/pre-commit      -- blocks commits of raw/pending shards
@@ -206,6 +207,7 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
     repo_memory_adr = repo_memory_root / "adr"
     repo_memory_daily = repo_memory_root / "daily"
     repo_memory_pending = repo_memory_root / "pending"
+    repo_memory_state = repo_memory_root / "state"
     codex_local = repo_root / ".codex" / "local"
     githooks = repo_root / ".githooks"
     repo_memory_link = repo_root / ".codex" / "memory"
@@ -217,6 +219,8 @@ def repo_wiring_issues(repo_root: Path) -> list[str]:
         issues.append(str(repo_memory_daily))
     if not repo_memory_pending.is_dir():
         issues.append(str(repo_memory_pending))
+    if not repo_memory_state.is_dir():
+        issues.append(str(repo_memory_state))
     if not codex_local.is_dir():
         issues.append(str(codex_local))
     if not githooks.is_dir():
@@ -367,6 +371,31 @@ def _open_bootstrap_log(repo_root: Path) -> TextIO:
     return open(log_dir / "bootstrap.log", "a")  # noqa: SIM115
 
 
+def _write_bootstrap_log_line(
+    log_file: TextIO,
+    *,
+    str_launcher_agent_id: str,
+    str_launcher_provider_version: str,
+    str_message: str,
+) -> None:
+    """Write one agentmemory-prefixed bootstrap log line.
+
+    Args:
+        log_file: Open bootstrap log handle.
+        str_launcher_agent_id: Runtime id associated with this bootstrap path.
+        str_launcher_provider_version: Resolved CLI version for that runtime.
+        str_message: Human-readable bootstrap log message suffix.
+
+    Returns:
+        None: One line is appended and flushed immediately.
+    """
+    log_file.write(
+        f"{format_log_prefix(str_launcher_agent_id, str_launcher_provider_version)} "
+        f"{str_message}\n"
+    )
+    log_file.flush()
+
+
 def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
     """Spawn a subagent to run memory bootstrap using the detected runtime adapter.
 
@@ -375,10 +404,10 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
     which prevents the reasoning-around-instructions failure mode seen when bootstrap
     instructions are injected into the main agent's context.
 
-    Falls back to the legacy auto-bootstrap.py script when:
-      - The adapter returns None for the bootstrap command, or
-      - The runtime binary is not on PATH, or
-      - The SKILL.md file is not installed.
+    This path never falls back to another provider. If the current runtime does
+    not expose a supported non-interactive bootstrap command, SessionStart
+    leaves bootstrap manual so agentmemory never presumes Claude or Anthropic
+    credentials in another runtime.
 
     Returns True if a process was launched, False if skipped.
     """
@@ -387,61 +416,80 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
 
     skill_path = Path.home() / ".agent" / "skills" / "memory-bootstrap" / "SKILL.md"
     adapter = detect_adapter()
+    str_launcher_agent_id: str = adapter.agent_id()
+    str_launcher_provider_version: str = runtime_provider_version(str_launcher_agent_id)
 
-    if skill_path.exists():
-        skill_content = skill_path.read_text(encoding="utf-8")
-        task = "Bootstrap shared repo memory from recent commits and design docs."
-        cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
-        str_launcher_agent_id: str = adapter.agent_id()
+    if not skill_path.exists():
+        _release_lock(repo_root)
+        return False
 
-        # Codex cannot spawn subagents; fall back to Claude CLI for bootstrap.
-        if cmd is None:
-            cmd = ClaudeAdapter.build_bootstrap_command(skill_content, task, repo_root)
-            str_launcher_agent_id = ClaudeAdapter.agent_id()
-
-        if cmd is not None:
-            str_launcher_provider_version: str = runtime_provider_version(
-                str_launcher_agent_id
+    skill_content = skill_path.read_text(encoding="utf-8")
+    task = "Bootstrap shared repo memory from recent commits and design docs."
+    cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
+    if cmd is None:
+        log_file = _open_bootstrap_log(repo_root)
+        try:
+            _write_bootstrap_log_line(
+                log_file,
+                str_launcher_agent_id=str_launcher_agent_id,
+                str_launcher_provider_version=str_launcher_provider_version,
+                str_message=(
+                    "background bootstrap skipped: current runtime does not expose "
+                    "a supported non-interactive bootstrap command; run "
+                    "/memory-bootstrap manually"
+                ),
             )
-            log_file: TextIO = _open_bootstrap_log(repo_root)
-            try:
-                log_file.write(
-                    f"{format_log_prefix(str_launcher_agent_id, str_launcher_provider_version)} "
-                    f"starting bootstrap via {cmd[0]}\n"
-                )
-                log_file.flush()
-                subprocess.Popen(
-                    cmd,
-                    cwd=str(repo_root),
-                    stdout=log_file,
-                    stderr=log_file,
-                    env={
-                        **os.environ,
-                        "SHARED_REPO_MEMORY_AGENT_ID": str_launcher_agent_id,
-                        "SHARED_REPO_MEMORY_PROVIDER_VERSION": (
-                            str_launcher_provider_version
-                        ),
-                    },
-                    start_new_session=True,
-                )
-                return True
-            except OSError:
-                warn(
-                    f"SessionStart: {str_launcher_agent_id} CLI launch failed; falling back to auto-bootstrap.py"
-                )
-                log_file.close()
-                _release_lock(repo_root)
+        finally:
+            log_file.close()
+        _release_lock(repo_root)
+        return False
 
-    # Legacy fallback: auto-bootstrap.py via direct API call (requires ANTHROPIC_API_KEY).
-    _release_lock(repo_root)
-    return _spawn_auto_bootstrap(repo_root)
+    log_file = _open_bootstrap_log(repo_root)
+    try:
+        _write_bootstrap_log_line(
+            log_file,
+            str_launcher_agent_id=str_launcher_agent_id,
+            str_launcher_provider_version=str_launcher_provider_version,
+            str_message=f"starting bootstrap via {cmd[0]}",
+        )
+        subprocess.Popen(
+            cmd,
+            cwd=str(repo_root),
+            stdout=log_file,
+            stderr=log_file,
+            env={
+                **os.environ,
+                "SHARED_REPO_MEMORY_AGENT_ID": str_launcher_agent_id,
+                "SHARED_REPO_MEMORY_PROVIDER_VERSION": (str_launcher_provider_version),
+            },
+            start_new_session=True,
+        )
+        return True
+    except OSError as error:
+        _write_bootstrap_log_line(
+            log_file,
+            str_launcher_agent_id=str_launcher_agent_id,
+            str_launcher_provider_version=str_launcher_provider_version,
+            str_message=(
+                f"bootstrap launch failed for {str_launcher_agent_id}: {error}. "
+                "Run /memory-bootstrap manually."
+            ),
+        )
+        warn(
+            f"SessionStart: {str_launcher_agent_id} bootstrap launch failed; manual /memory-bootstrap required"
+        )
+        _release_lock(repo_root)
+        return False
+    finally:
+        log_file.close()
 
 
 def _spawn_auto_bootstrap(repo_root: Path) -> bool:
     """Legacy fallback: spawn auto-bootstrap.py as a detached background process.
 
-    Requires ANTHROPIC_API_KEY in the environment.  Prefer _spawn_subagent_bootstrap
-    which uses ``claude -p`` and inherits keychain auth.
+    This helper is retained only for explicit legacy compatibility. Agentmemory
+    does not require ANTHROPIC_API_KEY and SessionStart no longer invokes this
+    path automatically.
 
     Returns True if the process was launched, False if skipped.
     """
@@ -619,9 +667,9 @@ def main() -> int:
             f"Shared repo memory loaded. Last refresh: {last_refresh}.{suffix}"
         )
     else:
-        # No event shard history yet.  Spawn a subagent via claude -p (or gemini
-        # equivalent) so bootstrap runs in an isolated context without polluting
-        # this session.  Falls back to auto-bootstrap.py if the CLI is unavailable.
+        # No event shard history yet. Spawn a current-runtime subagent when the
+        # runtime exposes a supported non-interactive bootstrap command so the
+        # seed pass runs in an isolated context without polluting this session.
         spawned = _spawn_subagent_bootstrap(repo_root)
         if spawned:
             bg_note = (

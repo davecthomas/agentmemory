@@ -9,9 +9,9 @@ Give coding agents durable repo context so every new session starts from prior d
 ## Core Principles
 
 - **Memory is plain Markdown in Git.** No external service, no database, no embedding pipeline.
-- **The repo owns the memory.** Published storage lives under `<repo>/.agents/memory/daily/` and `<repo>/.agents/memory/adr/`, committed and versioned like code; pending and log subtrees under the same root stay local-only.
+- **The repo owns the memory.** Published storage lives under `<repo>/.agents/memory/daily/` and `<repo>/.agents/memory/adr/`, committed and versioned like code; pending, state, and log subtrees under the same root stay local-only.
 - **Agent-facing paths are access paths, not storage.** `.codex/memory` is a symlink into `.agents/memory/` — it never holds a separate copy.
-- **Raw capture and publication are separate phases.** Each file-changing agent turn may produce one pending local-only capture. Durable shared memory is synthesized later from a workstream episode, not written directly from a single turn.
+- **Raw capture and publication are separate phases.** Each file-changing agent turn may produce one pending local-only capture. Durable shared memory is synthesized later from an episode cluster, not written directly from a single turn.
 - **Read models are derived.** Daily summaries are rebuilt deterministically from shards. They are never the write target.
 - **Durable decisions live only in ADRs.** ADR promotion is always explicit — never an automatic post-turn side effect.
 - **Memory is not collaborative until committed and pushed.** The system auto-stages only published memory artifacts; it never auto-commits or auto-pushes.
@@ -25,8 +25,8 @@ Give coding agents durable repo context so every new session starts from prior d
 | `turn` | One prompt-response interaction or hook invocation. A turn is provenance metadata, not the durable memory unit. |
 | `file-changing turn` | A turn whose working-tree effects include at least one repo file change. Only these turns may produce pending captures. |
 | `pending capture` | Local-only mechanical record created from one file-changing turn. It contains no raw prompt or raw assistant text and must never be committed. |
-| `workstream episode` | A bounded, semantically related collection of pending captures evaluated together so the system can infer the broader effort. |
-| `workstream checkpoint` | Durable published memory synthesized from a workstream episode after validation. |
+| `episode cluster` | A bounded, semantically related collection of pending captures selected by the local episode graph and evaluated together so the system can infer the broader effort. |
+| `checkpoint` | Durable published memory synthesized from an episode cluster after validation. |
 | `daily summary` | Deterministic read model rebuilt from published checkpoints for one day. |
 | `ADR` | Architecture Decision Record promoted explicitly from a decision-candidate checkpoint. |
 
@@ -45,11 +45,14 @@ Give coding agents durable repo context so every new session starts from prior d
 │   │       ├── events/
 │   │       │   └── <timestamp>--<author>--thread_<id>--turn_<id>.md
 │   │       └── summary.md                  # derived daily summary, rebuilt from shards
-│   └── pending/
-│       └── YYYY-MM-DD/
-│           └── <timestamp>--<author>--thread_<id>--turn_<id>.md
-│   └── logs/
-│       └── checkpoint-context/             # local-only workstream episode manifests
+│   ├── pending/
+│   │   └── YYYY-MM-DD/
+│   │       └── <timestamp>--<author>--thread_<id>--turn_<id>.md
+│   ├── state/
+│   │   ├── checkpoint-context/             # local-only evaluator inputs for active episode clusters
+│   │   └── episode-graph/
+│   │       └── episodes/                   # derived local episode manifests
+│   └── logs/                               # local-only diagnostic logs
 ├── .codex/
 │   ├── memory -> ../.agents/memory         # symlink — Codex access path only
 │   └── local/
@@ -320,7 +323,7 @@ The `memory-bootstrap` SKILL.md includes a **CLI / Non-Interactive Mode** sectio
 
 **A pending local-only capture is written only if `files_touched` is non-empty.** Turns with no repo file changes produce no pending capture.
 
-This is only a capture gate. Durable memory is published later from a workstream episode: a bounded, semantically related collection of pending captures evaluated together.
+This is only a capture gate. Durable memory is published later from an episode cluster: a bounded, semantically related collection of pending captures evaluated together.
 
 ### What is captured
 
@@ -369,7 +372,7 @@ workstream_id: "thread-auth-boundary"
 workstream_scope: "thread"
 checkpoint_goal: "Harden shared-memory publication so raw captures never become durable memory."
 checkpoint_surface: "The shared repo-memory post-turn pipeline and commit boundary."
-checkpoint_outcome: "Published one validated workstream checkpoint from the pending bundle."
+checkpoint_outcome: "Published one validated checkpoint from the active episode cluster."
 related_adrs:
   - "ADR-0001"
 files_touched:
@@ -404,7 +407,7 @@ bootstrapped_at: "2026-04-03T14:22:00Z"
 ### After capture
 
 1. `post-turn-notify.py` writes a privacy-safe pending capture under `.agents/memory/pending/<date>/`
-2. `post-turn-notify.py` writes a local checkpoint context manifest under `.agents/memory/logs/checkpoint-context/` with the bounded workstream episode bundle and supporting repo paths
+2. `post-turn-notify.py` writes a local checkpoint context manifest under `.agents/memory/state/checkpoint-context/` with the active episode cluster and supporting repo paths
 3. The `memory-checkpointer` background subagent inspects the episode bundle and either skips publication or calls `publish-checkpoint.py` with structured checkpoint fields
 4. `publish-checkpoint.py` validates gestalt, privacy, and anti-mechanical rules before writing the final shard under `.agents/memory/daily/<date>/events/`
 5. The publish step rebuilds `summary.md`, stages only the published shard plus summary, and removes the consumed pending captures
@@ -530,7 +533,7 @@ Each skill is a Markdown file installed to `~/.agent/skills/<skill>/SKILL.md`. P
 ```
 agent completes a file-changing turn
     → pending capture written locally
-    → background checkpoint evaluation inspects the bounded local workstream episode
+    → background checkpoint evaluation inspects the bounded local episode cluster
     → if validation succeeds: published shard + summary auto-staged
 
 developer commits (same commit as the code change)
