@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""common.py -- Shared utilities for all shared-repo-memory scripts.
+"""common.py -- Shared utilities for all agentmemory helper scripts.
 
 This module is imported by every other helper script in this package.
 It covers six areas:
@@ -48,7 +48,7 @@ SECTION_ALIASES = {
 }
 
 # Shared repo-memory system version embedded into generated repo-local artifacts.
-SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.4.2"
+SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.4.3"
 
 # Repo-local state that must be ignored because it is derived or workstation-only.
 # bootstrap-repo.py appends these to each wired repository's .gitignore, and
@@ -90,37 +90,53 @@ _RUNTIME_VERSION_COMMANDS: dict[str, list[str]] = {
     "gemini": ["gemini", "--version"],
     "codex": ["codex", "--version"],
 }
-_LOG_CONTEXT_AGENT_ID: str | None = None
-_LOG_CONTEXT_PROVIDER_VERSION: str | None = None
+_SCRIPT_RUNTIME_DEFAULTS: dict[str, str] = {
+    "bootstrap-repo.py": "bootstrap",
+    "build-catchup.py": "catchup-cli",
+    "install.py": "installer",
+    "pre-commit-memory-guard.py": "pre-commit",
+    "rebuild-summary.py": "summary-rebuild",
+}
+_LOG_CONTEXT_RUNTIME_ID: str | None = None
+_LOG_CONTEXT_RUNTIME_VERSION: str | None = None
+_NON_AGENT_RUNTIME_VERSION: str = "n/a"
+_RUNTIME_ID_ENV_KEYS: tuple[str, ...] = (
+    "AGENTMEMORY_RUNTIME_ID",
+    "SHARED_REPO_MEMORY_AGENT_ID",
+)
+_RUNTIME_VERSION_ENV_KEYS: tuple[str, ...] = (
+    "AGENTMEMORY_RUNTIME_VERSION",
+    "SHARED_REPO_MEMORY_PROVIDER_VERSION",
+)
 
 
 def set_runtime_log_context(
-    str_agent_id: str, str_provider_version: str | None = None
+    str_runtime_id: str, str_runtime_version: str | None = None
 ) -> None:
     """Pin runtime metadata for future log lines emitted by this process.
 
     Hook entrypoints call this after they determine the active runtime so later
-    warn()/info() messages and hook-trace records use the exact launcher agent
+    warn()/info() messages and hook-trace records use the exact launcher runtime
     rather than relying on environment heuristics alone.
 
     Args:
-        str_agent_id: Short runtime identifier such as "claude", "gemini",
-            "codex", or "unknown".
-        str_provider_version: Optional explicit CLI version string for the
-            active runtime. When omitted, later log calls probe it lazily.
+        str_runtime_id: Short runtime identifier such as "claude", "gemini",
+            "codex", "git-hook", or "installer".
+        str_runtime_version: Optional explicit version string for the active
+            runtime. When omitted, later log calls probe it lazily.
 
     Returns:
         None: The module-level logging context is updated in place.
     """
-    global _LOG_CONTEXT_AGENT_ID, _LOG_CONTEXT_PROVIDER_VERSION
+    global _LOG_CONTEXT_RUNTIME_ID, _LOG_CONTEXT_RUNTIME_VERSION
 
-    str_clean_agent_id: str = str_agent_id.strip() or "unknown"
-    str_clean_provider_version: str | None = None
-    if str_provider_version:
-        str_clean_provider_version = str_provider_version.strip() or None
+    str_clean_runtime_id: str = str_runtime_id.strip() or "system"
+    str_clean_runtime_version: str | None = None
+    if str_runtime_version:
+        str_clean_runtime_version = str_runtime_version.strip() or None
 
-    _LOG_CONTEXT_AGENT_ID = str_clean_agent_id
-    _LOG_CONTEXT_PROVIDER_VERSION = str_clean_provider_version
+    _LOG_CONTEXT_RUNTIME_ID = str_clean_runtime_id
+    _LOG_CONTEXT_RUNTIME_VERSION = str_clean_runtime_version
 
 
 def clear_runtime_log_context() -> None:
@@ -132,29 +148,49 @@ def clear_runtime_log_context() -> None:
     Returns:
         None: The module-level logging override state is reset.
     """
-    global _LOG_CONTEXT_AGENT_ID, _LOG_CONTEXT_PROVIDER_VERSION
+    global _LOG_CONTEXT_RUNTIME_ID, _LOG_CONTEXT_RUNTIME_VERSION
 
-    _LOG_CONTEXT_AGENT_ID = None
-    _LOG_CONTEXT_PROVIDER_VERSION = None
+    _LOG_CONTEXT_RUNTIME_ID = None
+    _LOG_CONTEXT_RUNTIME_VERSION = None
 
 
-def detect_runtime_agent_id() -> str:
-    """Return the best-known runtime agent identifier for the current process.
+def _env_override(names: Sequence[str]) -> str | None:
+    """Return the first non-empty environment override from the given keys.
+
+    Args:
+        names: Environment variable names to inspect in priority order.
+
+    Returns:
+        str | None: First non-empty stripped value, or None when none are set.
+    """
+    str_env_name: str
+    for str_env_name in names:
+        str_value: str = os.environ.get(str_env_name, "").strip()
+        if str_value:
+            return str_value
+    return None
+
+
+def detect_runtime_id() -> str:
+    """Return the best-known runtime identifier for the current process.
 
     Resolution order is:
       1. Explicit override set by set_runtime_log_context().
-      2. Shared subagent-launch env override passed through by this system.
+      2. Explicit runtime env override passed through by this system.
       3. Native runtime env vars or Codex desktop heuristics.
-      4. "unknown" when no trustworthy signal exists.
+      4. Script-specific defaults for non-agent helpers.
+      5. "system" when no more specific signal exists.
 
     Returns:
-        str: One of "claude", "gemini", "codex", or "unknown".
+        str: Runtime identifier such as "claude", "gemini", "codex",
+            "git-hook", "installer", or "system".
     """
     str_bundle_id: str = os.environ.get("__CFBundleIdentifier", "")
-    if _LOG_CONTEXT_AGENT_ID:
-        return _LOG_CONTEXT_AGENT_ID
-    if os.environ.get("SHARED_REPO_MEMORY_AGENT_ID"):
-        return os.environ["SHARED_REPO_MEMORY_AGENT_ID"].strip() or "unknown"
+    if _LOG_CONTEXT_RUNTIME_ID:
+        return _LOG_CONTEXT_RUNTIME_ID
+    str_runtime_override: str | None = _env_override(_RUNTIME_ID_ENV_KEYS)
+    if str_runtime_override is not None:
+        return str_runtime_override
     if os.environ.get("CLAUDECODE"):
         return "claude"
     if os.environ.get("GEMINI_CLI"):
@@ -167,33 +203,47 @@ def detect_runtime_agent_id() -> str:
         or str_bundle_id == "com.openai.codex"
     ):
         return "codex"
-    return "unknown"
+    str_script_name: str = Path(sys.argv[0]).name
+    if str_script_name in _SCRIPT_RUNTIME_DEFAULTS:
+        return _SCRIPT_RUNTIME_DEFAULTS[str_script_name]
+    return "system"
+
+
+def detect_runtime_agent_id() -> str:
+    """Backward-compatible alias for detect_runtime_id().
+
+    Returns:
+        str: Runtime identifier for the current process.
+    """
+    str_runtime_id: str = detect_runtime_id()
+    return str_runtime_id
 
 
 @cache
-def _probe_provider_version(str_agent_id: str) -> str:
+def _probe_runtime_version(str_runtime_id: str) -> str:
     """Probe the locally installed CLI version for one supported runtime.
 
-    The probe runs at most once per agent id per process thanks to the cache.
+    The probe runs at most once per runtime id per process thanks to the cache.
     Version strings are extracted from stdout/stderr using a permissive semantic
     version regex because each CLI formats `--version` output differently.
 
     Args:
-        str_agent_id: Runtime identifier to probe, such as "claude" or "codex".
+        str_runtime_id: Runtime identifier to probe, such as "claude" or
+            "codex".
 
     Returns:
-        str: Parsed version string like "0.118.0", or "unknown" when the CLI
-            is unavailable or its output cannot be parsed.
+        str: Parsed version string like "0.118.0", or "n/a" for non-agent
+            runtimes, or "unavailable" when a supported CLI cannot be probed.
     """
-    list_str_command: list[str] | None = _RUNTIME_VERSION_COMMANDS.get(str_agent_id)
+    list_str_command: list[str] | None = _RUNTIME_VERSION_COMMANDS.get(str_runtime_id)
     if list_str_command is None:
-        return "unknown"
+        return _NON_AGENT_RUNTIME_VERSION
     try:
         completed_process: subprocess.CompletedProcess[str] = run(
             list_str_command, check=False
         )
     except OSError:
-        return "unknown"
+        return "unavailable"
 
     list_str_output_parts: list[str] = [
         str_part
@@ -210,53 +260,70 @@ def _probe_provider_version(str_agent_id: str) -> str:
     if match_version is None:
         match_version = re.search(r"(\d+\.\d+)", str_output)
     if match_version is None:
-        return "unknown"
+        return "unavailable"
     return match_version.group(1)
 
 
-def runtime_provider_version(str_agent_id: str | None = None) -> str:
-    """Return the provider version string that should appear in log metadata.
+def runtime_version(str_runtime_id: str | None = None) -> str:
+    """Return the runtime version string that should appear in log metadata.
 
     Args:
-        str_agent_id: Optional explicit runtime identifier. When omitted, the
+        str_runtime_id: Optional explicit runtime identifier. When omitted, the
             current runtime is detected from the process context.
 
     Returns:
-        str: Provider version string for the resolved runtime, or "unknown"
-            when it cannot be determined.
+        str: Runtime version string for the resolved runtime, or "n/a" /
+            "unavailable" when a CLI version does not apply or cannot be probed.
     """
-    str_resolved_agent_id: str = str_agent_id or detect_runtime_agent_id()
-    if _LOG_CONTEXT_PROVIDER_VERSION and _LOG_CONTEXT_AGENT_ID == str_resolved_agent_id:
-        return _LOG_CONTEXT_PROVIDER_VERSION
-    if os.environ.get("SHARED_REPO_MEMORY_PROVIDER_VERSION"):
-        return os.environ["SHARED_REPO_MEMORY_PROVIDER_VERSION"].strip() or "unknown"
-    return _probe_provider_version(str_resolved_agent_id)
+    str_resolved_runtime_id: str = str_runtime_id or detect_runtime_id()
+    if (
+        _LOG_CONTEXT_RUNTIME_VERSION
+        and _LOG_CONTEXT_RUNTIME_ID == str_resolved_runtime_id
+    ):
+        return _LOG_CONTEXT_RUNTIME_VERSION
+    str_runtime_version_override: str | None = _env_override(_RUNTIME_VERSION_ENV_KEYS)
+    if str_runtime_version_override is not None:
+        return str_runtime_version_override
+    return _probe_runtime_version(str_resolved_runtime_id)
+
+
+def runtime_provider_version(str_agent_id: str | None = None) -> str:
+    """Backward-compatible alias for runtime_version().
+
+    Args:
+        str_agent_id: Optional explicit runtime identifier.
+
+    Returns:
+        str: Runtime version string for the resolved runtime.
+    """
+    str_runtime_version: str = runtime_version(str_agent_id)
+    return str_runtime_version
 
 
 def format_log_prefix(
-    str_agent_id: str | None = None, str_provider_version: str | None = None
+    str_runtime_id: str | None = None, str_runtime_version: str | None = None
 ) -> str:
     """Render the canonical agentmemory log prefix with runtime metadata.
 
     Args:
-        str_agent_id: Optional explicit runtime identifier. When omitted, the
+        str_runtime_id: Optional explicit runtime identifier. When omitted, the
             current runtime is detected automatically.
-        str_provider_version: Optional explicit version string. When omitted,
+        str_runtime_version: Optional explicit version string. When omitted,
             the version is resolved from overrides, env vars, or CLI probing.
 
     Returns:
         str: Prefix in the form
-            "[agentmemory][version=<agentmemory-version>][agent=<id>][provider-version=<version>]".
+            "[agentmemory][version=<agentmemory-version>][runtime=<id>][runtime-version=<version>]".
     """
-    str_resolved_agent_id: str = str_agent_id or detect_runtime_agent_id()
-    str_resolved_provider_version: str = (
-        str_provider_version or runtime_provider_version(str_resolved_agent_id)
+    str_resolved_runtime_id: str = str_runtime_id or detect_runtime_id()
+    str_resolved_runtime_version: str = str_runtime_version or runtime_version(
+        str_resolved_runtime_id
     )
     return (
         "[agentmemory]"
         f"[version={SHARED_REPO_MEMORY_SYSTEM_VERSION}]"
-        f"[agent={str_resolved_agent_id}]"
-        f"[provider-version={str_resolved_provider_version}]"
+        f"[runtime={str_resolved_runtime_id}]"
+        f"[runtime-version={str_resolved_runtime_version}]"
     )
 
 
@@ -1112,7 +1179,7 @@ def safe_main(main_fn: Any, hook_name: str) -> int:
 
 
 def warn(message: str) -> None:
-    """Write a warning message to stderr with shared-memory runtime metadata.
+    """Write a warning message to stderr with agentmemory runtime metadata.
 
     Messages written here appear in the agent's hook output stream but do not
     affect the hook response payload read by the agent.
@@ -1124,7 +1191,7 @@ def warn(message: str) -> None:
 
 
 def info(message: str) -> None:
-    """Write an info message to stderr with shared-memory runtime metadata.
+    """Write an info message to stderr with agentmemory runtime metadata.
 
     Args:
         message: Human-readable info text (no trailing newline needed).
@@ -1145,8 +1212,8 @@ def append_hook_trace(
     primary diagnostic tool when hooks run but produce unexpected behavior.
     Each invocation of SessionStart and post-turn-notify.py appends one or more
     records covering start, success, error, noop, and bootstrapping phases.
-    Every record also includes the resolved runtime agent id and provider
-    version so mixed-runtime debugging is possible from a single trace file.
+    Every record also includes the resolved runtime id and runtime version so
+    mixed-runtime debugging is possible from a single trace file.
 
     Write failures are silently ignored so a missing state directory never causes
     a hook to abort.
@@ -1159,14 +1226,14 @@ def append_hook_trace(
             Path values are coerced to str; list values have their items coerced
             to str; None values are omitted.
     """
-    str_agent_id: str = detect_runtime_agent_id()
-    str_provider_version: str = runtime_provider_version(str_agent_id)
+    str_runtime_id: str = detect_runtime_id()
+    str_runtime_version: str = runtime_version(str_runtime_id)
     payload: dict[str, Any] = {
         "timestamp": utc_timestamp(),
         "hook": hook,
         "status": status,
-        "agent": str_agent_id,
-        "provider_version": str_provider_version,
+        "runtime": str_runtime_id,
+        "runtime_version": str_runtime_version,
     }
     if repo_root is not None:
         payload["repo_root"] = str(Path(repo_root).resolve())

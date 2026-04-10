@@ -42,6 +42,7 @@ from common import (
     load_json,
     relative_link,
     safe_main,
+    set_runtime_log_context,
     utc_now,
     utc_timestamp,
     write_text,
@@ -165,6 +166,10 @@ def main() -> int:
         int: Always 0 (errors are surfaced via exceptions).
     """
     args = parse_args()
+    str_runtime_id: str = (
+        "git-hook" if args.trigger.startswith("post-") else "catchup-cli"
+    )
+    set_runtime_log_context(str_runtime_id, "n/a")
     repo_root = Path(args.repo_root).resolve()
     local_root = ensure_dir(repo_root / ".codex" / "local")
     catchup_path = local_root / "catchup.md"

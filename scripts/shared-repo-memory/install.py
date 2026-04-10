@@ -33,7 +33,7 @@ from pathlib import Path
 
 from adapters import ClaudeAdapter, CodexAdapter, GeminiAdapter, InstallerContext
 from agent_support import support_summary_lines
-from common import format_log_prefix
+from common import format_log_prefix, set_runtime_log_context
 
 # Scripts copied verbatim from scripts/shared-repo-memory/ into ~/.agent/shared-repo-memory/.
 # The order here is for readability; installation processes them in sequence.
@@ -420,6 +420,7 @@ def main() -> int:
     Returns:
         int: 0 on success; 1 if the repo root cannot be determined.
     """
+    set_runtime_log_context("installer", "n/a")
     parser = argparse.ArgumentParser(
         description="Install shared-repo-memory user assets and wire agent hooks."
     )

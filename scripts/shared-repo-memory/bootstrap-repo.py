@@ -45,6 +45,7 @@ from common import (
     format_log_prefix,
     missing_gitignore_entries,
     safe_main,
+    set_runtime_log_context,
     try_repo_root,
     warn,
     write_text,
@@ -231,6 +232,8 @@ def git_hook_text(str_hook_name: str) -> str:
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
+export AGENTMEMORY_RUNTIME_ID="pre-commit"
+export AGENTMEMORY_RUNTIME_VERSION="n/a"
 python3 "$HOME/.agent/shared-repo-memory/pre-commit-memory-guard.py" --repo-root "$repo_root"
 project_hook="$repo_root/{PROJECT_PRE_COMMIT_RELATIVE_PATH}"
 if [ -f "$project_hook" ]; then
@@ -244,7 +247,9 @@ fi
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[agentmemory][version=unknown][agent=unknown][provider-version=unknown]')"
+export AGENTMEMORY_RUNTIME_ID="git-hook"
+export AGENTMEMORY_RUNTIME_VERSION="n/a"
+log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[agentmemory][version={SHARED_REPO_MEMORY_SYSTEM_VERSION}][runtime=git-hook][runtime-version=n/a]')"
 if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" {str_hook_name} "$@"; then
     echo "$log_prefix warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
 fi
@@ -286,6 +291,7 @@ def main() -> int:
     Returns:
         int: 0 on success; 1 if the repo root cannot be determined.
     """
+    set_runtime_log_context("bootstrap", "n/a")
     args = parse_args()
     dry_run = args.dry_run
 

@@ -30,6 +30,7 @@ from common import (
     PENDING_SHARDS_RELATIVE_DIR,
     parse_frontmatter,
     safe_main,
+    set_runtime_log_context,
     try_repo_root,
     warn,
 )
@@ -200,6 +201,7 @@ def main() -> int:
         int: 0 when staged content passes validation, or 1 when the commit must
             be rejected because it includes pending or raw shared-memory artifacts.
     """
+    set_runtime_log_context("pre-commit", "n/a")
     args: argparse.Namespace = parse_args()
     path_repo_root: Path | None = try_repo_root(args.repo_root)
     if path_repo_root is None:

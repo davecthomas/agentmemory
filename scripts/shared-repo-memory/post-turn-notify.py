@@ -828,8 +828,8 @@ def _write_local_notify_metadata(
     """
     local_root: Path = ensure_dir(repo_root / ".codex" / "local")
     dict_metadata: dict[str, object] = {
-        "agent_id": adapter.agent_id(),
-        "provider_version": runtime_provider_version(adapter.agent_id()),
+        "runtime_id": adapter.agent_id(),
+        "runtime_version": runtime_provider_version(adapter.agent_id()),
         "hook_event": getattr(req, "hook_event", ""),
         "session_id": getattr(req, "session_id", ""),
         "thread_id": getattr(req, "thread_id", ""),
@@ -877,9 +877,9 @@ def _resolve_bootstrap_command(
 
     Returns:
         tuple[list[str] | None, str, str]: The CLI command to execute, the
-            launcher agent id, and the launcher provider version. When no
+            launcher runtime id, and the launcher runtime version. When no
             launch path exists, the command element is None and the metadata is
-            set to "unknown".
+            set to non-agent fallback values.
     """
     list_str_cmd: list[str] | None = adapter.build_bootstrap_command(
         skill_content, task, repo_root
@@ -891,7 +891,7 @@ def _resolve_bootstrap_command(
         )
         str_launcher_agent_id = ClaudeAdapter.agent_id()
     if list_str_cmd is None:
-        return None, "unknown", "unknown"
+        return None, "system", "n/a"
 
     str_launcher_provider_version: str = runtime_provider_version(str_launcher_agent_id)
     return list_str_cmd, str_launcher_agent_id, str_launcher_provider_version
@@ -908,10 +908,12 @@ def _subagent_env(
         str_launcher_provider_version: Resolved CLI version for the launcher.
 
     Returns:
-        dict[str, str]: Copy of os.environ plus explicit shared-memory runtime
+        dict[str, str]: Copy of os.environ plus explicit agentmemory runtime
             metadata consumed by common.py log helpers in descendant processes.
     """
     dict_env: dict[str, str] = dict(os.environ)
+    dict_env["AGENTMEMORY_RUNTIME_ID"] = str_launcher_agent_id
+    dict_env["AGENTMEMORY_RUNTIME_VERSION"] = str_launcher_provider_version
     dict_env["SHARED_REPO_MEMORY_AGENT_ID"] = str_launcher_agent_id
     dict_env["SHARED_REPO_MEMORY_PROVIDER_VERSION"] = str_launcher_provider_version
     return dict_env
@@ -938,7 +940,7 @@ def _write_subagent_log_header(
     Returns:
         None: One header line is appended and flushed to the log file.
     """
-    str_command_name: str = cmd[0] if cmd else "unknown"
+    str_command_name: str = cmd[0] if cmd else "none"
     str_prefix: str = format_log_prefix(
         str_launcher_agent_id, str_launcher_provider_version
     )

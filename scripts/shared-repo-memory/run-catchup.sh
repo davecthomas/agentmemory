@@ -20,6 +20,8 @@ trigger="${1:-manual}"
 shift || true
 
 repo_root="$(git rev-parse --show-toplevel)"
+export AGENTMEMORY_RUNTIME_ID="${AGENTMEMORY_RUNTIME_ID:-git-hook}"
+export AGENTMEMORY_RUNTIME_VERSION="${AGENTMEMORY_RUNTIME_VERSION:-n/a}"
 
 # exec replaces this shell with the Python script, passing the resolved repo
 # root and trigger label as arguments.
