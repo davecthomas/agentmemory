@@ -447,7 +447,7 @@ Also writes `.codex/local/sync_state.json` with `last_seen_head`, last ADR/summa
 
 ### Automatic triggers
 
-`.githooks/post-checkout`, `post-merge`, and `post-rewrite` each call `scripts/shared-repo-memory/run-catchup.sh`. A normal `git pull`, branch switch, or rebase automatically rebuilds the local digest. `.githooks/pre-commit` separately protects the publication boundary by rejecting raw shared-memory artifacts.
+`.githooks/post-checkout`, `post-merge`, and `post-rewrite` each call `build-catchup.py` from the central install at `$HOME/.agent/shared-repo-memory/`. A normal `git pull`, branch switch, or rebase automatically rebuilds the local digest. `.githooks/pre-commit` separately protects the publication boundary by rejecting raw shared-memory artifacts.
 
 ---
 

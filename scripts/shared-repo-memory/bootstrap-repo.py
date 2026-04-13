@@ -250,7 +250,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 export AGENTMEMORY_RUNTIME_ID="git-hook"
 export AGENTMEMORY_RUNTIME_VERSION="n/a"
 log_prefix="$("$HOME/.agent/shared-repo-memory/runtime-log-prefix.sh" 2>/dev/null || printf '[agentmemory][version={SHARED_REPO_MEMORY_SYSTEM_VERSION}][runtime=git-hook][runtime-version=n/a]')"
-if ! "$repo_root/scripts/shared-repo-memory/run-catchup.sh" {str_hook_name} "$@"; then
+if ! python3 "$HOME/.agent/shared-repo-memory/build-catchup.py" --repo-root "$repo_root" --trigger {str_hook_name}; then
     echo "$log_prefix warning: {str_hook_name} memory catch-up failed (non-fatal)" >&2
 fi
 """
