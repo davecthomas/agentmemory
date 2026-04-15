@@ -828,7 +828,7 @@ def _write_local_notify_metadata(
     """
     local_root: Path = ensure_dir(repo_root / ".codex" / "local")
     dict_metadata: dict[str, object] = {
-        "runtime_id": adapter.agent_id(),
+        "runtime": adapter.agent_id(),
         "runtime_version": runtime_provider_version(adapter.agent_id()),
         "hook_event": getattr(req, "hook_event", ""),
         "session_id": getattr(req, "session_id", ""),

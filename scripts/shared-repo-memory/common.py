@@ -66,7 +66,7 @@ PROJECT_PRE_COMMIT_RELATIVE_PATH: str = (
 
 REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
     "# agentmemory-managed local repo wiring and state",
-    "# Added by the shared repo-memory SessionStart/bootstrap flow.",
+    "# Added by the agentmemory SessionStart/bootstrap flow.",
     "# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.",
     f"{GITHOOKS_RELATIVE_DIR}/",
     ".codex/local/",

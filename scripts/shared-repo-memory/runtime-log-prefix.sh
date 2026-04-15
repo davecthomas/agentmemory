@@ -23,7 +23,7 @@ then
   if [ -z "$str_version" ]; then
     str_version="unavailable"
   fi
-  str_runtime_id="${AGENTMEMORY_RUNTIME_ID:-shell-fallback}"
+  str_runtime_id="${AGENTMEMORY_RUNTIME_ID:-system}"
   str_runtime_version="${AGENTMEMORY_RUNTIME_VERSION:-n/a}"
   printf '%s\n' "[agentmemory][version=$str_version][runtime=$str_runtime_id][runtime-version=$str_runtime_version]"
 fi

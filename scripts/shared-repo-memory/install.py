@@ -422,7 +422,7 @@ def main() -> int:
     """
     set_runtime_log_context("installer", "n/a")
     parser = argparse.ArgumentParser(
-        description="Install shared-repo-memory user assets and wire agent hooks."
+        description="Install agentmemory user assets and wire agent hooks."
     )
     parser.add_argument(
         "--dry-run",

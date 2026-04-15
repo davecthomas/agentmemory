@@ -426,7 +426,7 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
         return False
 
     skill_content = skill_path.read_text(encoding="utf-8")
-    task = "Bootstrap shared repo memory from recent commits and design docs."
+    task = "Bootstrap agentmemory from recent commits and design docs."
     cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
     if cmd is None:
         log_file = _open_bootstrap_log(repo_root)
