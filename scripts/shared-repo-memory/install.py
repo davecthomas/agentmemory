@@ -42,6 +42,7 @@ SCRIPTS = [
     "runtime-log-prefix.sh",
     "models.py",
     "agent_support.py",
+    "dedup.py",
     "episode_graph.py",
     "bootstrap-repo.py",
     "pre-commit-memory-guard.py",

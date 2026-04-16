@@ -848,18 +848,19 @@ def test_post_turn_notify_contextless_turn_stays_pending_only(repo):
     assert dict_trace_payload["checkpoint_spawned"] is False
 
 
-def test_episode_graph_clusters_related_captures_but_separates_same_branch_noise(
+def test_episode_graph_clusters_related_captures_but_separates_cross_branch_noise(
     repo,
 ):
-    """Verify that the episode graph prefers strong repo-grounded associations.
+    """Verify that the episode graph clusters same-branch captures together
+    while keeping captures from a different branch in a separate cluster.
 
     Args:
         repo: Pytest fixture returning the bootstrapped temporary repo and home path.
 
     Returns:
-        None: Assertions verify that related branch-scoped captures cluster
-            together while unrelated same-branch noise remains outside the
-            active episode manifest.
+        None: Assertions verify that same-branch captures cluster together
+            while a capture on a different branch stays outside the active
+            episode manifest.
     """
     repo_dir, _home_dir = repo
 
@@ -976,7 +977,8 @@ def test_episode_graph_clusters_related_captures_but_separates_same_branch_noise
     )
 
     path_cleanup_capture: Path = (
-        path_pending_dir / "2026-04-08T10-12-00Z--test--thread_branch-main--turn_t3.md"
+        path_pending_dir
+        / "2026-04-08T10-12-00Z--test--thread_branch-feature-cleanup--turn_t3.md"
     )
     path_cleanup_capture.write_text(
         "\n".join(
@@ -984,10 +986,10 @@ def test_episode_graph_clusters_related_captures_but_separates_same_branch_noise
                 "---",
                 'timestamp: "2026-04-08T10:12:00Z"',
                 'author: "test"',
-                'branch: "main"',
-                'thread_id: "generated-branch-main"',
+                'branch: "feature/cleanup"',
+                'thread_id: "generated-branch-feature-cleanup"',
                 'turn_id: "t3"',
-                'workstream_id: "branch-main"',
+                'workstream_id: "branch-feature-cleanup"',
                 'workstream_scope: "branch"',
                 "decision_candidate: false",
                 "enriched: false",

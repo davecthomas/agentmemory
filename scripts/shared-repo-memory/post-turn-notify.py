@@ -69,6 +69,12 @@ from common import (
     warn,
     write_text,
 )
+from dedup import (
+    already_captured,
+    diff_fingerprint,
+    file_is_tracked,
+    record_capture,
+)
 from episode_graph import rebuild_episode_graph
 from models import HookResponse
 
@@ -131,134 +137,6 @@ def _normalize_identifier_component(
 
 
 # ---------------------------------------------------------------------------
-# Diff-hash deduplication
-# ---------------------------------------------------------------------------
-
-_DIFF_STATE_FILE = ".codex/local/last-shard-diff-state.json"
-_UNTRACKED_FILE_HASH_SAMPLE_BYTES: int = 64 * 1024
-
-
-def _file_is_tracked(repo_root: Path, str_path: str) -> bool:
-    """Return True when a path is already tracked by Git in the given repo.
-
-    Args:
-        repo_root: Absolute path to the repository root.
-        str_path: Repo-relative file path to check.
-
-    Returns:
-        bool: True when git ls-files resolves the path; False for untracked files
-            or any lookup error.
-    """
-    try:
-        result: subprocess.CompletedProcess[bytes] = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", str_path],
-            cwd=str(repo_root),
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
-
-
-def _untracked_file_fingerprint(path_file: Path) -> bytes:
-    """Return a bounded content fingerprint for one untracked file.
-
-    The post-turn hook runs synchronously, so dedupe hashing must avoid loading
-    large untracked files fully into memory. This helper records file size plus
-    head and tail samples, which keeps hashing bounded while still tracking
-    meaningful changes for typical source files and documents.
-
-    Args:
-        path_file: Absolute path to the untracked file.
-
-    Returns:
-        bytes: Stable byte payload suitable for hashing into the turn diff state.
-    """
-    int_sample_bytes: int = _UNTRACKED_FILE_HASH_SAMPLE_BYTES
-    path_stat = path_file.stat()
-    int_file_size: int = path_stat.st_size
-    with path_file.open("rb") as file_handle:
-        bytes_head: bytes = file_handle.read(int_sample_bytes)
-        bytes_tail: bytes = b""
-        if int_file_size > int_sample_bytes:
-            int_tail_offset: int = max(int_file_size - int_sample_bytes, 0)
-            file_handle.seek(int_tail_offset)
-            bytes_tail = file_handle.read(int_sample_bytes)
-    bytes_size_prefix: bytes = f"SIZE:{int_file_size}\0".encode()
-    bytes_tail_separator: bytes = b"\0TAIL\0"
-    bytes_fingerprint: bytes = (
-        bytes_size_prefix + bytes_head + bytes_tail_separator + bytes_tail
-    )
-    return bytes_fingerprint
-
-
-def _diff_hash(repo_root: Path, files: list[str]) -> str:
-    """Return a stable hash of the current change content for the given files.
-
-    The hash includes both tracked Git diff output and a bounded fingerprint of
-    any untracked files. This prevents new-file turns from collapsing to the
-    same empty-diff hash while keeping synchronous hook memory use bounded on
-    large local files.
-    """
-    try:
-        digest = hashlib.md5()
-        result_unstaged = subprocess.run(
-            ["git", "diff", "HEAD", "--"] + files,
-            cwd=str(repo_root),
-            capture_output=True,
-            check=False,
-        )
-        result_staged = subprocess.run(
-            ["git", "diff", "--cached", "--"] + files,
-            cwd=str(repo_root),
-            capture_output=True,
-            check=False,
-        )
-        digest.update(result_unstaged.stdout)
-        digest.update(result_staged.stdout)
-        for str_path in files:
-            if _file_is_tracked(repo_root, str_path):
-                continue
-            path_file: Path = repo_root / str_path
-            digest.update(b"\0UNTRACKED\0")
-            digest.update(str_path.encode("utf-8", errors="replace"))
-            if path_file.is_file():
-                digest.update(_untracked_file_fingerprint(path_file))
-            elif path_file.is_dir():
-                digest.update(b"<directory>")
-            else:
-                digest.update(b"<missing>")
-        return digest.hexdigest()
-    except Exception:
-        return ""
-
-
-def _load_diff_state(repo_root: Path) -> dict:
-    state_path = repo_root / _DIFF_STATE_FILE
-    try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_diff_state(repo_root: Path, thread_id: str, diff_hash_val: str) -> None:
-    state_path = repo_root / _DIFF_STATE_FILE
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state = _load_diff_state(repo_root)
-    state[thread_id] = diff_hash_val
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def _already_captured(repo_root: Path, thread_id: str, current_hash: str) -> bool:
-    """Return True if this exact diff was already captured in a shard this session."""
-    if not current_hash:
-        return False
-    state = _load_diff_state(repo_root)
-    return state.get(thread_id) == current_hash
-
-
-# ---------------------------------------------------------------------------
 # Git diff summary for pending-capture evidence
 # ---------------------------------------------------------------------------
 
@@ -272,7 +150,7 @@ def _diff_summary(repo_root: Path, files: list[str]) -> str:
     """
     try:
         list_str_untracked_files: list[str] = [
-            str_path for str_path in files if not _file_is_tracked(repo_root, str_path)
+            str_path for str_path in files if not file_is_tracked(repo_root, str_path)
         ]
         stat = subprocess.run(
             ["git", "diff", "HEAD", "--stat", "--"] + files,
@@ -1186,12 +1064,11 @@ def main() -> int:
         thread_id if req.thread_id else "", branch
     )
 
-    # Diff-hash deduplication gate: git status is sticky -- once a file is
-    # modified it appears in every subsequent turn until committed.  Hash the
-    # actual diff content so we only write a new shard when the working-tree
-    # content has genuinely changed since the last captured shard for this workstream.
-    current_diff_hash = _diff_hash(repo_root, files_touched)
-    if _already_captured(repo_root, workstream_id, current_diff_hash):
+    # Diff-hash dedup: skip when the working-tree diff is identical to the
+    # last captured shard for this workstream OR this branch.  The branch
+    # check catches Codex-style runtimes that create a new thread per turn.
+    current_diff_hash = diff_fingerprint(repo_root, files_touched)
+    if already_captured(repo_root, workstream_id, branch, current_diff_hash):
         append_hook_trace(
             "Notify",
             "noop",
@@ -1320,9 +1197,9 @@ def main() -> int:
     ]
     write_text(path_pending_shard, "\n".join(body_lines))
 
-    # Persist the diff hash so subsequent turns can detect unchanged diffs and
-    # skip writing duplicate pending shards for the same working-tree state.
-    _save_diff_state(repo_root, workstream_id, current_diff_hash)
+    # Persist the diff hash under both workstream and branch keys so subsequent
+    # turns can detect unchanged diffs regardless of workstream identity.
+    record_capture(repo_root, workstream_id, branch, current_diff_hash)
 
     dict_episode_manifest: dict[str, object] | None = None
     path_episode_manifest: Path | None = None

@@ -55,6 +55,7 @@ from common import (
     warn,
     write_text,
 )
+from dedup import published_event_exists
 
 _PLACEHOLDER_PHRASES: tuple[str, ...] = (
     "pending workstream capture",
@@ -475,6 +476,33 @@ def _flatten_lines(dict_sections: OrderedDict[str, list[str]]) -> list[str]:
     return list_str_all_lines
 
 
+def _collect_files_touched(
+    list_dict_source_metadata: Sequence[dict[str, Any]],
+) -> list[str]:
+    """Gather deduplicated files_touched from all source pending captures."""
+    set_files: set[str] = set()
+    for dict_meta in list_dict_source_metadata:
+        object_files: object = dict_meta.get("files_touched", [])
+        if isinstance(object_files, list):
+            set_files.update(str(f) for f in object_files if str(f).strip())
+    return sorted(set_files)
+
+
+def _extract_date_from_published_path(str_published_path: str) -> str:
+    """Extract the YYYY-MM-DD date segment from a published shard path.
+
+    Returns an empty string when the path does not contain a recognisable
+    daily date directory.
+    """
+    parts: list[str] = Path(str_published_path).parts
+    if "daily" not in parts:
+        return ""
+    idx: int = len(parts) - 1 - list(reversed(parts)).index("daily")
+    if idx + 1 < len(parts):
+        return parts[idx + 1]
+    return ""
+
+
 def _validate_candidate(
     dict_context: dict[str, Any],
     list_path_source_shards: Sequence[Path],
@@ -586,6 +614,25 @@ def _validate_candidate(
         list_str_failures.append(
             "branch-scoped single-capture checkpoints require either multiple related captures or design-doc grounding"
         )
+
+    # --- Published-event dedup gate (safety net) ---
+    str_branch: str = str(dict_context.get("branch", "")).strip()
+    str_published_path: str = str(
+        dict_context.get("published_shard_path", "")
+    ).strip()
+    str_repo_root: str = str(dict_context.get("repo_root", "")).strip()
+    list_str_candidate_files: list[str] = _collect_files_touched(
+        list_dict_source_metadata
+    )
+    if str_branch and str_published_path and str_repo_root:
+        path_repo_root: Path = Path(str_repo_root).resolve()
+        str_date: str = _extract_date_from_published_path(str_published_path)
+        if str_date and published_event_exists(
+            path_repo_root, str_date, str_branch, list_str_candidate_files
+        ):
+            list_str_failures.append(
+                "equivalent checkpoint already published for this branch today"
+            )
 
     return list_str_failures
 
