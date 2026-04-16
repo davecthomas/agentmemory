@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    SHARED_REPO_MEMORY_SYSTEM_VERSION,
     info,
     parse_frontmatter,
     render_frontmatter,
@@ -55,6 +56,7 @@ from common import (
     warn,
     write_text,
 )
+from dedup import published_event_exists
 
 _PLACEHOLDER_PHRASES: tuple[str, ...] = (
     "pending workstream capture",
@@ -475,6 +477,30 @@ def _flatten_lines(dict_sections: OrderedDict[str, list[str]]) -> list[str]:
     return list_str_all_lines
 
 
+def _collect_files_touched(
+    list_dict_source_metadata: Sequence[dict[str, Any]],
+) -> list[str]:
+    """Gather deduplicated files_touched from all source pending captures."""
+    set_files: set[str] = set()
+    for dict_meta in list_dict_source_metadata:
+        object_files: object = dict_meta.get("files_touched", [])
+        if isinstance(object_files, list):
+            set_files.update(str(f) for f in object_files if str(f).strip())
+    return sorted(set_files)
+
+
+def _extract_date_from_published_path(str_published_path: str) -> str:
+    """Extract the YYYY-MM-DD date segment from a published shard path.
+
+    Delegates to ``_summary_date_from_published_path`` and returns an empty
+    string instead of raising when the path is malformed.
+    """
+    try:
+        return _summary_date_from_published_path(Path(str_published_path))
+    except ValueError:
+        return ""
+
+
 def _validate_candidate(
     dict_context: dict[str, Any],
     list_path_source_shards: Sequence[Path],
@@ -587,6 +613,27 @@ def _validate_candidate(
             "branch-scoped single-capture checkpoints require either multiple related captures or design-doc grounding"
         )
 
+    # --- Published-event dedup gate (safety net) ---
+    str_branch: str = str(dict_context.get("branch", "")).strip()
+    str_published_path: str = str(
+        dict_context.get("published_shard_path", "")
+    ).strip()
+    str_repo_root: str = str(dict_context.get("repo_root", "")).strip()
+    list_str_candidate_files: list[str] = _collect_files_touched(
+        list_dict_source_metadata
+    )
+    if str_branch and str_published_path and str_repo_root:
+        path_repo_root: Path = Path(str_repo_root).resolve()
+        str_date: str = _extract_date_from_published_path(str_published_path)
+        if str_date and published_event_exists(
+            path_repo_root, str_date, str_branch, list_str_candidate_files
+        ):
+            list_str_failures.append(
+                "equivalent checkpoint already published for this branch today"
+            )
+    elif not str_branch:
+        warn("publication dedup gate skipped: branch not set in checkpoint context")
+
     return list_str_failures
 
 
@@ -675,6 +722,7 @@ def _build_published_metadata(
 
     ordered_metadata: OrderedDict[str, Any] = OrderedDict(
         [
+            ("agentmemory_version", SHARED_REPO_MEMORY_SYSTEM_VERSION),
             ("timestamp", str(dict_latest_metadata.get("timestamp", ""))),
             ("author", str(dict_latest_metadata.get("author", "unknown"))),
             ("branch", str(dict_latest_metadata.get("branch", "HEAD"))),

@@ -289,7 +289,7 @@ def _temporal_score(
         return 0, None
     float_delta_seconds: float = abs(float_left_timestamp - float_right_timestamp)
     if float_delta_seconds <= 15 * 60:
-        return 3, "captured within 15 minutes"
+        return 5, "captured within 15 minutes"
     if float_delta_seconds <= 2 * 60 * 60:
         return 2, "captured within 2 hours"
     if float_delta_seconds <= 24 * 60 * 60:
@@ -297,14 +297,34 @@ def _temporal_score(
     return 0, None
 
 
+def _thread_id_counts(list_dict_nodes: Sequence[dict[str, Any]]) -> Counter[str]:
+    """Count how many nodes share each thread_id across the graph.
+
+    Singleton thread_ids (count == 1) indicate ephemeral sessions like Codex
+    where the runtime creates a new thread per turn.  The edge scorer uses
+    this to avoid awarding thread-match points to ephemeral ids.
+    """
+    counter: Counter[str] = Counter()
+    for dict_node in list_dict_nodes:
+        str_tid: str = str(dict_node.get("thread_id", "")).strip()
+        if str_tid and str(dict_node.get("workstream_scope", "")) == "thread":
+            counter[str_tid] += 1
+    return counter
+
+
 def score_episode_edge(
-    dict_left_node: dict[str, Any], dict_right_node: dict[str, Any]
+    dict_left_node: dict[str, Any],
+    dict_right_node: dict[str, Any],
+    counter_thread_ids: Counter[str] | None = None,
 ) -> dict[str, Any]:
     """Score one weighted edge between two pending-capture graph nodes.
 
     Args:
         dict_left_node: First node dictionary returned by load_pending_capture_node().
         dict_right_node: Second node dictionary returned by load_pending_capture_node().
+        counter_thread_ids: Pre-computed thread_id frequency counts across all
+            graph nodes.  When provided, singleton thread_ids (count == 1) are
+            treated as ephemeral and receive no thread-match score.
 
     Returns:
         dict[str, Any]: Edge record with `score` and `reasons` describing the
@@ -313,22 +333,32 @@ def score_episode_edge(
     int_score: int = 0
     list_str_reasons: list[str] = []
 
+    # --- Thread match (only for persistent threads with >1 capture) ---
     str_left_thread_id: str = str(dict_left_node.get("thread_id", "")).strip()
     str_right_thread_id: str = str(dict_right_node.get("thread_id", "")).strip()
-    if (
-        str_left_thread_id
-        and str_right_thread_id
+    bool_threads_match: bool = (
+        bool(str_left_thread_id)
         and str_left_thread_id == str_right_thread_id
         and str(dict_left_node.get("workstream_scope", "")) == "thread"
         and str(dict_right_node.get("workstream_scope", "")) == "thread"
-    ):
-        int_score += 100
-        list_str_reasons.append("same explicit thread_id")
+    )
+    if bool_threads_match:
+        int_thread_count: int = (
+            counter_thread_ids.get(str_left_thread_id, 0)
+            if counter_thread_ids is not None
+            else 2  # legacy callers without counts get full score
+        )
+        if int_thread_count > 1:
+            int_score += 100
+            list_str_reasons.append("same persistent thread_id")
+        else:
+            list_str_reasons.append("same thread_id (singleton, ephemeral — no score)")
 
+    # --- Branch match (primary clustering signal for ephemeral-thread runtimes) ---
     str_left_branch: str = str(dict_left_node.get("branch", "")).strip()
     str_right_branch: str = str(dict_right_node.get("branch", "")).strip()
     if str_left_branch and str_left_branch == str_right_branch:
-        int_score += 2
+        int_score += 10
         list_str_reasons.append(f"same branch: {str_left_branch}")
 
     list_str_shared_issue_ids: list[str] = _shared_sorted_strings(
@@ -793,6 +823,7 @@ def rebuild_episode_graph(
             f"current pending capture is missing from episode graph rebuild: {path_current_pending_shard}"
         )
 
+    counter_thread_ids: Counter[str] = _thread_id_counts(list_dict_nodes)
     dict_edge_records: dict[tuple[str, str], dict[str, Any]] = {}
     int_left_idx: int
     for int_left_idx in range(len(list_dict_nodes)):
@@ -809,7 +840,7 @@ def rebuild_episode_graph(
                 )
             )
             dict_edge_records[tuple_pair_key] = score_episode_edge(
-                dict_left_node, dict_right_node
+                dict_left_node, dict_right_node, counter_thread_ids
             )
 
     list_list_dict_clusters: list[list[dict[str, Any]]] = _cluster_nodes(

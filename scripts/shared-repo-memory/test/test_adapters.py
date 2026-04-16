@@ -406,7 +406,7 @@ class TestRuntimeLogMetadata:
         set_runtime_log_context("codex", "0.118.0")
         assert format_log_prefix() == (
             f"[agentmemory][version={SHARED_REPO_MEMORY_SYSTEM_VERSION}]"
-            "[agent=codex][provider-version=0.118.0]"
+            "[runtime=codex][runtime-version=0.118.0]"
         )
 
     def test_append_hook_trace_includes_runtime_metadata(self, tmp_path: Path):
@@ -420,5 +420,5 @@ class TestRuntimeLogMetadata:
         payload: dict[str, object] = json.loads(
             trace_path.read_text(encoding="utf-8").splitlines()[0]
         )
-        assert payload["agent"] == "gemini"
-        assert payload["provider_version"] == "0.36.0"
+        assert payload["runtime"] == "gemini"
+        assert payload["runtime_version"] == "0.36.0"

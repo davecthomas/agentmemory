@@ -19,6 +19,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+export AGENTMEMORY_RUNTIME_ID="installer"
+export AGENTMEMORY_RUNTIME_VERSION="n/a"
 log_prefix="$("$script_dir/runtime-log-prefix.sh")"
 
 DRY_RUN=false

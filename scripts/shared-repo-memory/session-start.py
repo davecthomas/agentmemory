@@ -374,23 +374,23 @@ def _open_bootstrap_log(repo_root: Path) -> TextIO:
 def _write_bootstrap_log_line(
     log_file: TextIO,
     *,
-    str_launcher_agent_id: str,
-    str_launcher_provider_version: str,
+    str_launcher_runtime_id: str,
+    str_launcher_runtime_version: str,
     str_message: str,
 ) -> None:
     """Write one agentmemory-prefixed bootstrap log line.
 
     Args:
         log_file: Open bootstrap log handle.
-        str_launcher_agent_id: Runtime id associated with this bootstrap path.
-        str_launcher_provider_version: Resolved CLI version for that runtime.
+        str_launcher_runtime_id: Runtime id associated with this bootstrap path.
+        str_launcher_runtime_version: Resolved CLI version for that runtime.
         str_message: Human-readable bootstrap log message suffix.
 
     Returns:
         None: One line is appended and flushed immediately.
     """
     log_file.write(
-        f"{format_log_prefix(str_launcher_agent_id, str_launcher_provider_version)} "
+        f"{format_log_prefix(str_launcher_runtime_id, str_launcher_runtime_version)} "
         f"{str_message}\n"
     )
     log_file.flush()
@@ -416,23 +416,25 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
 
     skill_path = Path.home() / ".agent" / "skills" / "memory-bootstrap" / "SKILL.md"
     adapter = detect_adapter()
-    str_launcher_agent_id: str = adapter.agent_id()
-    str_launcher_provider_version: str = runtime_provider_version(str_launcher_agent_id)
+    str_launcher_runtime_id: str = adapter.agent_id()
+    str_launcher_runtime_version: str = runtime_provider_version(
+        str_launcher_runtime_id
+    )
 
     if not skill_path.exists():
         _release_lock(repo_root)
         return False
 
     skill_content = skill_path.read_text(encoding="utf-8")
-    task = "Bootstrap shared repo memory from recent commits and design docs."
+    task = "Bootstrap agentmemory from recent commits and design docs."
     cmd = adapter.build_bootstrap_command(skill_content, task, repo_root)
     if cmd is None:
         log_file = _open_bootstrap_log(repo_root)
         try:
             _write_bootstrap_log_line(
                 log_file,
-                str_launcher_agent_id=str_launcher_agent_id,
-                str_launcher_provider_version=str_launcher_provider_version,
+                str_launcher_runtime_id=str_launcher_runtime_id,
+                str_launcher_runtime_version=str_launcher_runtime_version,
                 str_message=(
                     "background bootstrap skipped: current runtime does not expose "
                     "a supported non-interactive bootstrap command; run "
@@ -448,8 +450,8 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
     try:
         _write_bootstrap_log_line(
             log_file,
-            str_launcher_agent_id=str_launcher_agent_id,
-            str_launcher_provider_version=str_launcher_provider_version,
+            str_launcher_runtime_id=str_launcher_runtime_id,
+            str_launcher_runtime_version=str_launcher_runtime_version,
             str_message=f"starting bootstrap via {cmd[0]}",
         )
         subprocess.Popen(
@@ -459,8 +461,10 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
             stderr=log_file,
             env={
                 **os.environ,
-                "SHARED_REPO_MEMORY_AGENT_ID": str_launcher_agent_id,
-                "SHARED_REPO_MEMORY_PROVIDER_VERSION": (str_launcher_provider_version),
+                "AGENTMEMORY_RUNTIME_ID": str_launcher_runtime_id,
+                "AGENTMEMORY_RUNTIME_VERSION": str_launcher_runtime_version,
+                "SHARED_REPO_MEMORY_AGENT_ID": str_launcher_runtime_id,
+                "SHARED_REPO_MEMORY_PROVIDER_VERSION": (str_launcher_runtime_version),
             },
             start_new_session=True,
         )
@@ -468,15 +472,15 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
     except OSError as error:
         _write_bootstrap_log_line(
             log_file,
-            str_launcher_agent_id=str_launcher_agent_id,
-            str_launcher_provider_version=str_launcher_provider_version,
+            str_launcher_runtime_id=str_launcher_runtime_id,
+            str_launcher_runtime_version=str_launcher_runtime_version,
             str_message=(
-                f"bootstrap launch failed for {str_launcher_agent_id}: {error}. "
+                f"bootstrap launch failed for {str_launcher_runtime_id}: {error}. "
                 "Run /memory-bootstrap manually."
             ),
         )
         warn(
-            f"SessionStart: {str_launcher_agent_id} bootstrap launch failed; manual /memory-bootstrap required"
+            f"SessionStart: {str_launcher_runtime_id} bootstrap launch failed; manual /memory-bootstrap required"
         )
         _release_lock(repo_root)
         return False
@@ -595,7 +599,7 @@ def main() -> int:
         for item in missing:
             warn(f"SessionStart missing required path: {item}")
         emit_session_response(
-            "Shared repo memory setup incomplete: required paths are missing. Re-run ./install.sh.",
+            "agentmemory setup incomplete: required paths are missing. Re-run ./install.sh.",
         )
         return 1
 
@@ -609,7 +613,7 @@ def main() -> int:
             repo_root=repo_root,
             details={"wiring_issues": issues},
         )
-        info_message = "SessionStart detected incomplete repo wiring; bootstrapping shared repo-memory layout."
+        info_message = "SessionStart detected incomplete repo wiring; bootstrapping agentmemory layout."
         warn(info_message)
         if not run_repo_bootstrap(bootstrap_helper, repo_root):
             append_hook_trace(
@@ -619,7 +623,7 @@ def main() -> int:
                 details={"reason": "repo_bootstrap_failed"},
             )
             emit_session_response(
-                "Shared repo memory bootstrap failed. Check ~/.agent/state/shared-repo-memory-hook-trace.jsonl.",
+                "agentmemory bootstrap failed. Check ~/.agent/state/shared-repo-memory-hook-trace.jsonl.",
             )
             return 1
         bootstrapped_repo = True
@@ -638,7 +642,7 @@ def main() -> int:
             for item in issues:
                 warn(f"SessionStart missing required path: {item}")
             emit_session_response(
-                "Shared repo memory wiring incomplete after bootstrap. Check the hook trace log.",
+                "agentmemory wiring incomplete after bootstrap. Check the hook trace log.",
             )
             return 1
 
@@ -658,14 +662,12 @@ def main() -> int:
     has_shards = any(daily_dir.glob("*/events/*.md")) if daily_dir.is_dir() else False
     suffix = " Repo wiring was bootstrapped this session." if bootstrapped_repo else ""
     warn(
-        "SessionStart OK: installed assets, refresh state, and repo wiring are reachable. "
+        "SessionStart OK: installed assets, refresh state, and repo wiring are reachable for agentmemory. "
         f"Last shared-asset refresh: {last_refresh}.{suffix}"
     )
     if memory_context and has_shards:
         memory_text: str = memory_context
-        status_msg: str = (
-            f"Shared repo memory loaded. Last refresh: {last_refresh}.{suffix}"
-        )
+        status_msg: str = f"agentmemory loaded. Last refresh: {last_refresh}.{suffix}"
     else:
         # No event shard history yet. Spawn a current-runtime subagent when the
         # runtime exposes a supported non-interactive bootstrap command so the
@@ -684,12 +686,14 @@ def main() -> int:
         if memory_context:
             memory_text = memory_context + "\n\n" + bg_note
             status_msg = (
-                f"Shared repo memory loaded (ADRs present, no event history). "
+                f"agentmemory loaded (ADRs present, no event history). "
                 f"Last refresh: {last_refresh}.{suffix}"
             )
         else:
             memory_text = bg_note
-            status_msg = f"Shared repo memory wired but empty. Last refresh: {last_refresh}.{suffix}"
+            status_msg = (
+                f"agentmemory wired but empty. Last refresh: {last_refresh}.{suffix}"
+            )
 
     emit_session_response(status_msg, additional_context=memory_text)
     return 0

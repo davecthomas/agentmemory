@@ -98,14 +98,13 @@ def main() -> int:
     if not memory_context:
         return 0  # nothing to re-inject
 
-    warn("PostCompact: re-injecting shared repo memory context after compaction.")
+    warn("PostCompact: re-injecting agentmemory context after compaction.")
 
     response: dict[str, object] = {
         "hookSpecificOutput": {
             "hookEventName": "PostCompact",
             "additionalContext": (
-                "Context was compacted. Re-injecting shared repo memory:\n\n"
-                + memory_context
+                "Context was compacted. Re-injecting agentmemory:\n\n" + memory_context
             ),
         }
     }
