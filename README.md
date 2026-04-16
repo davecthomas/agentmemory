@@ -2,7 +2,7 @@
 
 A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
 
-Current version: `0.4.3`
+Current version: `0.4.4`
 
 ---
 
@@ -352,7 +352,7 @@ tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl
 Every hook invocation appends a JSONL entry. If `SessionStart` fired successfully you will see `"status": "success"` entries.
 
 Shared-memory stderr logs and helper-script logs now include product and runtime
-metadata in their prefix, for example `[agentmemory][version=0.4.3][runtime=codex][runtime-version=0.118.0]`.
+metadata in their prefix, for example `[agentmemory][version=0.4.4][runtime=codex][runtime-version=0.118.0]`.
 Non-agent helper flows use explicit runtime ids too, for example `runtime=git-hook`
 for post-checkout catch-up or `runtime=installer` during installation, rather
 than falling back to `unknown`.

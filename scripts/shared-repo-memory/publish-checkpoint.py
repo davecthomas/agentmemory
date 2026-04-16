@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    SHARED_REPO_MEMORY_SYSTEM_VERSION,
     info,
     parse_frontmatter,
     render_frontmatter,
@@ -721,6 +722,7 @@ def _build_published_metadata(
 
     ordered_metadata: OrderedDict[str, Any] = OrderedDict(
         [
+            ("agentmemory_version", SHARED_REPO_MEMORY_SYSTEM_VERSION),
             ("timestamp", str(dict_latest_metadata.get("timestamp", ""))),
             ("author", str(dict_latest_metadata.get("author", "unknown"))),
             ("branch", str(dict_latest_metadata.get("branch", "HEAD"))),

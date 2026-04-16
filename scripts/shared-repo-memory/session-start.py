@@ -598,9 +598,9 @@ def main() -> int:
         )
         for item in missing:
             warn(f"SessionStart missing required path: {item}")
-            emit_session_response(
-                "agentmemory setup incomplete: required paths are missing. Re-run ./install.sh.",
-            )
+        emit_session_response(
+            "agentmemory setup incomplete: required paths are missing. Re-run ./install.sh.",
+        )
         return 1
 
     # Validate repo wiring; bootstrap any missing structure automatically.

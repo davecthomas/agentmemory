@@ -48,6 +48,7 @@ from adapters import ClaudeAdapter, detect_adapter, detect_adapter_from_hook_eve
 from common import (
     CHECKPOINT_CONTEXT_RELATIVE_DIR,
     PENDING_SHARDS_RELATIVE_DIR,
+    SHARED_REPO_MEMORY_SYSTEM_VERSION,
     append_hook_trace,
     author_slug,
     changed_repo_files,
@@ -1154,6 +1155,7 @@ def main() -> int:
     # that is easier to scan in a Markdown viewer.
     metadata = OrderedDict(
         [
+            ("agentmemory_version", SHARED_REPO_MEMORY_SYSTEM_VERSION),
             ("timestamp", timestamp),
             ("author", author),
             ("branch", branch),
