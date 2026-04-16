@@ -46,7 +46,15 @@ _BRANCH_KEY_PREFIX: str = "branch:"
 
 
 def file_is_tracked(repo_root: Path, str_path: str) -> bool:
-    """Return True when a repo-relative path is tracked by Git."""
+    """Return True when a repo-relative path is tracked by Git.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        str_path: Repo-relative file path to check.
+
+    Returns:
+        bool: True when ``git ls-files`` resolves the path.
+    """
     try:
         result: subprocess.CompletedProcess[bytes] = subprocess.run(
             ["git", "ls-files", "--error-unmatch", "--", str_path],
@@ -88,8 +96,13 @@ def diff_fingerprint(repo_root: Path, files: list[str]) -> str:
     Includes both tracked Git diff output and bounded fingerprints of untracked
     files so new-file turns do not collapse to the same empty-diff hash.
 
-    Returns an empty string on any error (callers treat empty as "unhashable,
-    do not deduplicate").
+    Args:
+        repo_root: Absolute path to the repository root.
+        files: Repo-relative paths of changed files to hash.
+
+    Returns:
+        str: Hex digest of the diff content, or an empty string on any error
+            (callers treat empty as "unhashable, do not deduplicate").
     """
     try:
         digest = hashlib.md5()
@@ -163,9 +176,17 @@ def already_captured(
       - The workstream key (e.g. ``thread-<uuid>``) for same-session dedup.
       - The branch key (e.g. ``branch:feature/foo``) for cross-session dedup.
 
-    The branch-scoped check is the fix for Codex, where every turn creates a
-    new thread_id.  Without it, the same diff is captured hundreds of times
-    under different workstream keys.
+    The branch-scoped check is critical for runtimes like Codex where every
+    turn creates a new thread_id.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        workstream_id: Workstream identifier (``thread-<uuid>`` or ``branch-<slug>``).
+        branch: Current Git branch name.
+        current_hash: Diff fingerprint from ``diff_fingerprint()``.
+
+    Returns:
+        bool: True when the same hash was already recorded for either key.
     """
     if not current_hash:
         return False
@@ -186,7 +207,14 @@ def record_capture(
     branch: str,
     diff_hash: str,
 ) -> None:
-    """Record a successful capture under both the workstream and branch keys."""
+    """Record a successful capture under both the workstream and branch keys.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        workstream_id: Workstream identifier to record.
+        branch: Current Git branch name.
+        diff_hash: Diff fingerprint to store. No-op when empty.
+    """
     if not diff_hash:
         return
     state: dict[str, str] = _load_state(repo_root)
@@ -202,8 +230,6 @@ def record_capture(
 
 def _jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
     """Return the Jaccard similarity coefficient for two string sets."""
-    if not set_a and not set_b:
-        return 1.0
     if not set_a or not set_b:
         return 0.0
     return len(set_a & set_b) / len(set_a | set_b)
@@ -221,6 +247,16 @@ def published_event_exists(
     branch and has Jaccard file-overlap above the threshold.  This prevents
     the same logical change from being published as multiple checkpoints even
     when upstream dedup and clustering fail.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        date: Calendar date string (``YYYY-MM-DD``) to scan.
+        branch: Branch name the candidate checkpoint belongs to.
+        files_touched: Repo-relative files in the candidate checkpoint.
+
+    Returns:
+        bool: True when an existing event on the same branch has file overlap
+            at or above ``_JACCARD_OVERLAP_THRESHOLD``.
     """
     day_dir: Path = repo_root / ".agents" / "memory" / "daily" / date
     if not day_dir.is_dir():

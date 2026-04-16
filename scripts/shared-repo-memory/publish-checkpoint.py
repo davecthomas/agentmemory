@@ -491,16 +491,13 @@ def _collect_files_touched(
 def _extract_date_from_published_path(str_published_path: str) -> str:
     """Extract the YYYY-MM-DD date segment from a published shard path.
 
-    Returns an empty string when the path does not contain a recognisable
-    daily date directory.
+    Delegates to ``_summary_date_from_published_path`` and returns an empty
+    string instead of raising when the path is malformed.
     """
-    parts: list[str] = Path(str_published_path).parts
-    if "daily" not in parts:
+    try:
+        return _summary_date_from_published_path(Path(str_published_path))
+    except ValueError:
         return ""
-    idx: int = len(parts) - 1 - list(reversed(parts)).index("daily")
-    if idx + 1 < len(parts):
-        return parts[idx + 1]
-    return ""
 
 
 def _validate_candidate(
@@ -633,6 +630,8 @@ def _validate_candidate(
             list_str_failures.append(
                 "equivalent checkpoint already published for this branch today"
             )
+    elif not str_branch:
+        warn("publication dedup gate skipped: branch not set in checkpoint context")
 
     return list_str_failures
 

@@ -49,7 +49,7 @@ class TestJaccardSimilarity:
         assert abs(result - 0.5) < 1e-9
 
     def test_both_empty(self):
-        assert dedup._jaccard_similarity(set(), set()) == 1.0
+        assert dedup._jaccard_similarity(set(), set()) == 0.0
 
     def test_one_empty(self):
         assert dedup._jaccard_similarity({"a"}, set()) == 0.0
