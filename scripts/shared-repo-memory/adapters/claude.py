@@ -24,6 +24,17 @@ _HOOK_EVENTS = {
     "PostCompact",
 }
 
+# Hook events that only Claude Code emits -- used by matches_payload to
+# distinguish Claude from Gemini without requiring CLAUDECODE. SessionStart is
+# intentionally excluded because all three runtimes emit it; disambiguation for
+# that event relies on transcript_path or process ancestry.
+_CLAUDE_UNIQUE_HOOK_EVENTS: frozenset[str] = frozenset(
+    {"Stop", "SubagentStop", "UserPromptSubmit", "PostCompact"}
+)
+
+_HOOK_EVENT_KEYS = {"hook_event_name", "hookEventName"}
+_TRANSCRIPT_KEYS = {"transcript_path", "transcriptPath"}
+
 # Payload key aliases -- Claude Code uses camelCase and snake_case variants.
 _THREAD_KEYS = {
     "thread_id",
@@ -61,6 +72,26 @@ class ClaudeAdapter:
     @staticmethod
     def matches_hook_event(hook_event: str) -> bool:
         return hook_event in _HOOK_EVENTS
+
+    @staticmethod
+    def matches_payload(raw: dict[str, Any]) -> bool:
+        """Return True when the payload carries Claude-specific markers.
+
+        Claude Code fingerprints: a ``transcript_path`` / ``transcriptPath``
+        field (Gemini and Codex do not set one) or a ``hook_event_name`` in the
+        Claude-unique set (``Stop``, ``SubagentStop``, ``UserPromptSubmit``,
+        ``PostCompact``). SessionStart alone is not sufficient because every
+        runtime emits it; that case falls through to process ancestry.
+        """
+        for key in _TRANSCRIPT_KEYS:
+            value = raw.get(key)
+            if isinstance(value, str) and value:
+                return True
+        for key in _HOOK_EVENT_KEYS:
+            value = raw.get(key)
+            if isinstance(value, str) and value in _CLAUDE_UNIQUE_HOOK_EVENTS:
+                return True
+        return False
 
     @staticmethod
     def normalize_hook_request(raw: dict[str, Any]) -> HookRequest:

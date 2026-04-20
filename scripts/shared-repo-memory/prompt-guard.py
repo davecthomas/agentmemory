@@ -165,6 +165,9 @@ def main() -> int:
     Returns:
         int: Always 0 -- this hook never blocks the turn.
     """
+    # Seed the log context from process ancestry / env before reading stdin so
+    # any warn() emitted while parsing gets tagged with the correct runtime.
+    # Overwritten with the stronger payload-fingerprint result after parsing.
     adapter = detect_adapter_from_hook_event("")
     set_runtime_log_context(adapter.agent_id())
 
@@ -177,11 +180,13 @@ def main() -> int:
         warn("PromptGuard: invalid JSON payload on stdin")
         payload = {}
 
-    # Detect adapter and normalize the payload through it.
+    # Detect adapter using the hook event plus the full payload so payload
+    # fingerprints and process ancestry can identify the runtime when the
+    # legacy env vars are absent.
     hook_event_raw: str = str(
         payload.get("hook_event_name", payload.get("hookEventName", ""))
     )
-    adapter = detect_adapter_from_hook_event(hook_event_raw)
+    adapter = detect_adapter_from_hook_event(hook_event_raw, payload)
     set_runtime_log_context(adapter.agent_id())
     req = adapter.normalize_hook_request(payload)
     info(

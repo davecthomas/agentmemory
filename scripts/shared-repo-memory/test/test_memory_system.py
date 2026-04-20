@@ -439,7 +439,9 @@ def test_session_start_does_not_fallback_to_claude_for_codex_bootstrap(
         raise AssertionError("SessionStart should not fall back to Claude bootstrap")
 
     monkeypatch.setattr(
-        session_start_module, "detect_adapter", lambda: FakeCodexAdapter
+        session_start_module,
+        "detect_adapter",
+        lambda raw=None: FakeCodexAdapter,
     )
     monkeypatch.setattr(
         session_start_module, "runtime_provider_version", lambda _agent_id: "0.118.0"
@@ -1222,7 +1224,7 @@ def test_post_turn_notify_tolerates_episode_graph_io_failure(
     monkeypatch.setattr(
         post_turn_notify_module,
         "detect_adapter_from_hook_event",
-        lambda _hook_event: FakeAdapter,
+        lambda _hook_event, _raw=None: FakeAdapter,
     )
     monkeypatch.setattr(
         post_turn_notify_module,
