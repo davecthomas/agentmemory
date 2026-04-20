@@ -135,7 +135,12 @@ class AgentAdapter(Protocol):
 
 # ---- Registry ---------------------------------------------------------------
 
-# Import order matters: Claude is checked first, then Gemini, then Codex (fallback).
+# Registry order sets the priority used by the payload-match and env-match
+# stages of detect_adapter: the first adapter whose matches_payload() /
+# matches_environment() returns True wins. Order is Claude, Gemini, Codex --
+# when multiple signals collide (rare) this mirrors expected activity levels.
+# UnknownAdapter is NOT registered here; it is returned by detect_adapter only
+# when every stage (payload, process tree, env) fails to identify a runtime.
 from adapters.claude import ClaudeAdapter  # noqa: E402
 from adapters.codex import CodexAdapter  # noqa: E402
 from adapters.gemini import GeminiAdapter  # noqa: E402
@@ -150,6 +155,12 @@ _RUNTIME_BINARIES: frozenset[str] = frozenset({"claude", "gemini", "codex"})
 # Maximum ancestor depth walked when looking for a runtime binary. Bounded so a
 # pathological ancestry chain cannot hang SessionStart.
 _PROCESS_TREE_MAX_DEPTH: int = 6
+
+# Per-invocation timeout for `ps`. Healthy systems answer in <10ms; the cap
+# exists to bound a pathological freeze. With _PROCESS_TREE_MAX_DEPTH=6 this
+# keeps the total detection budget under 6s, well inside SessionStart's 30s
+# hook timeout.
+_PS_TIMEOUT_SECONDS: float = 1.0
 
 
 def _parent_comm(int_pid: int) -> tuple[int, str] | None:
@@ -168,7 +179,7 @@ def _parent_comm(int_pid: int) -> tuple[int, str] | None:
             ["ps", "-o", "ppid=,comm=", "-p", str(int_pid)],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=_PS_TIMEOUT_SECONDS,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):

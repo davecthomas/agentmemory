@@ -165,6 +165,12 @@ def main() -> int:
     Returns:
         int: Always 0 -- this hook never blocks the turn.
     """
+    # Seed the log context from process ancestry / env before reading stdin so
+    # any warn() emitted while parsing gets tagged with the correct runtime.
+    # Overwritten with the stronger payload-fingerprint result after parsing.
+    adapter = detect_adapter_from_hook_event("")
+    set_runtime_log_context(adapter.agent_id())
+
     payload_text: str = sys.stdin.read()
     try:
         payload: dict[str, object] = (
