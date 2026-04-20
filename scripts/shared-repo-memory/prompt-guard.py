@@ -165,9 +165,6 @@ def main() -> int:
     Returns:
         int: Always 0 -- this hook never blocks the turn.
     """
-    adapter = detect_adapter_from_hook_event("")
-    set_runtime_log_context(adapter.agent_id())
-
     payload_text: str = sys.stdin.read()
     try:
         payload: dict[str, object] = (
@@ -177,11 +174,13 @@ def main() -> int:
         warn("PromptGuard: invalid JSON payload on stdin")
         payload = {}
 
-    # Detect adapter and normalize the payload through it.
+    # Detect adapter using the hook event plus the full payload so payload
+    # fingerprints and process ancestry can identify the runtime when the
+    # legacy env vars are absent.
     hook_event_raw: str = str(
         payload.get("hook_event_name", payload.get("hookEventName", ""))
     )
-    adapter = detect_adapter_from_hook_event(hook_event_raw)
+    adapter = detect_adapter_from_hook_event(hook_event_raw, payload)
     set_runtime_log_context(adapter.agent_id())
     req = adapter.normalize_hook_request(payload)
     info(

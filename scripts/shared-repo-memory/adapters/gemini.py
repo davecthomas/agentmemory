@@ -18,6 +18,13 @@ from models import HookRequest, HookResponse, SessionResponse, ShardAttribution
 # Gemini CLI hook event names.
 _HOOK_EVENTS = {"SessionStart", "AfterAgent", "BeforeAgent"}
 
+# Hook events only Gemini CLI emits -- used by matches_payload to fingerprint
+# a Gemini-driven hook invocation. SessionStart is shared with Claude and
+# Codex and therefore excluded from the unique set.
+_GEMINI_UNIQUE_HOOK_EVENTS: frozenset[str] = frozenset({"AfterAgent", "BeforeAgent"})
+
+_HOOK_EVENT_KEYS = {"hook_event_name", "hookEventName"}
+
 # Payload key aliases -- same broad set for resilience.
 _THREAD_KEYS = {
     "thread_id",
@@ -55,6 +62,20 @@ class GeminiAdapter:
     @staticmethod
     def matches_hook_event(hook_event: str) -> bool:
         return hook_event in _HOOK_EVENTS
+
+    @staticmethod
+    def matches_payload(raw: dict[str, Any]) -> bool:
+        """Return True when the payload carries Gemini-specific markers.
+
+        Gemini CLI fingerprints: a ``hook_event_name`` of ``AfterAgent`` or
+        ``BeforeAgent``. SessionStart is shared across runtimes and is not
+        sufficient on its own; that case falls through to process ancestry.
+        """
+        for key in _HOOK_EVENT_KEYS:
+            value = raw.get(key)
+            if isinstance(value, str) and value in _GEMINI_UNIQUE_HOOK_EVENTS:
+                return True
+        return False
 
     @staticmethod
     def normalize_hook_request(raw: dict[str, Any]) -> HookRequest:

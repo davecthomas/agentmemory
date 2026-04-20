@@ -20,9 +20,13 @@ Execution path:
        - Codex / Gemini: flat {"status": "ok", "memory_context": ..., ...}
 
 Agent detection:
-  CLAUDECODE=1 env var is set by Claude Code for every hook invocation.  This
-  is more reliable than inspecting the hook event name in the payload because
-  Stop events and SessionStart events both share the same env var.
+  Layered deterministic detection: payload fingerprint first (when the hook
+  payload carries a runtime-unique marker like transcript_path or AfterAgent),
+  then process ancestry (walking ppid for claude/gemini/codex binaries), then
+  env vars as a legacy fallback. When no signal identifies a runtime,
+  ``UnknownAdapter`` is returned and the bootstrap path skips gracefully with
+  a diagnostic written to ``.agents/memory/logs/bootstrap.log``. This avoids
+  requiring client repos to set any env var for detection to work.
 
 Install location after `./install.sh`:
   ~/.agent/shared-repo-memory/session-start.py
@@ -37,7 +41,7 @@ import tomllib
 from pathlib import Path
 from typing import TextIO
 
-from adapters import detect_adapter
+from adapters import UnknownAdapter, detect_adapter
 from common import (
     append_hook_trace,
     format_log_prefix,
@@ -71,6 +75,7 @@ def emit_session_response(
     additional_context: str = "",
     *,
     continue_session: bool = True,
+    raw_payload: dict | None = None,
 ) -> None:
     """Print a SessionStart hook response using the detected runtime adapter.
 
@@ -79,8 +84,11 @@ def emit_session_response(
         additional_context: Memory text injected into the model context before
             the first turn.  Empty string omits the field.
         continue_session: When False, signals the agent to abort the session.
+        raw_payload: Optional parsed hook payload used to strengthen runtime
+            detection. When omitted, detection falls back to process ancestry
+            and env vars.
     """
-    adapter = detect_adapter()
+    adapter = detect_adapter(raw_payload)
     set_runtime_log_context(adapter.agent_id())
     resp = SessionResponse(
         system_message=system_message,
@@ -396,7 +404,9 @@ def _write_bootstrap_log_line(
     log_file.flush()
 
 
-def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
+def _spawn_subagent_bootstrap(
+    repo_root: Path, raw_payload: dict | None = None
+) -> bool:
     """Spawn a subagent to run memory bootstrap using the detected runtime adapter.
 
     The subagent receives the full SKILL.md content as its system prompt and a short
@@ -405,21 +415,48 @@ def _spawn_subagent_bootstrap(repo_root: Path) -> bool:
     instructions are injected into the main agent's context.
 
     This path never falls back to another provider. If the current runtime does
-    not expose a supported non-interactive bootstrap command, SessionStart
-    leaves bootstrap manual so agentmemory never presumes Claude or Anthropic
+    not expose a supported non-interactive bootstrap command -- or if runtime
+    detection itself fails -- SessionStart leaves bootstrap manual so
+    agentmemory never guesses a runtime and never presumes Claude or Anthropic
     credentials in another runtime.
 
-    Returns True if a process was launched, False if skipped.
+    Args:
+        repo_root: Absolute path to the repository root.
+        raw_payload: Optional parsed hook payload that strengthens runtime
+            detection. When omitted, detection falls back to process ancestry
+            and env vars.
+
+    Returns:
+        bool: True if a subagent process was launched, False if skipped.
     """
     if not _acquire_lock(repo_root):
         return False
 
     skill_path = Path.home() / ".agent" / "skills" / "memory-bootstrap" / "SKILL.md"
-    adapter = detect_adapter()
+    adapter = detect_adapter(raw_payload)
     str_launcher_runtime_id: str = adapter.agent_id()
     str_launcher_runtime_version: str = runtime_provider_version(
         str_launcher_runtime_id
     )
+
+    if adapter is UnknownAdapter:
+        log_file = _open_bootstrap_log(repo_root)
+        try:
+            _write_bootstrap_log_line(
+                log_file,
+                str_launcher_runtime_id=str_launcher_runtime_id,
+                str_launcher_runtime_version=str_launcher_runtime_version,
+                str_message=(
+                    "background bootstrap skipped: runtime detection failed "
+                    "(no payload fingerprint, no runtime binary in process "
+                    "ancestry, no runtime env var). Run /memory-bootstrap "
+                    "manually from a supported runtime."
+                ),
+            )
+        finally:
+            log_file.close()
+        _release_lock(repo_root)
+        return False
 
     if not skill_path.exists():
         _release_lock(repo_root)
@@ -529,18 +566,22 @@ def main() -> int:
     Returns:
         int: 0 on success or graceful noop; 1 on error.
     """
-    adapter = detect_adapter()
-    set_runtime_log_context(adapter.agent_id())
-
-    # Read and discard the stdin payload -- SessionStart does not consume it,
-    # but we parse it here so malformed JSON surfaces as a visible warning rather
-    # than a silent truncation error later.
+    # Read stdin first so the parsed payload can feed the runtime detector.
+    # The payload carries the most deterministic runtime signal available at
+    # SessionStart (e.g., transcript_path for Claude, AfterAgent for Gemini).
     payload_text = sys.stdin.read().strip()
+    raw_payload: dict | None = None
     if payload_text:
         try:
-            json.loads(payload_text)
+            parsed = json.loads(payload_text)
         except json.JSONDecodeError as error:
             warn(f"SessionStart ignored invalid JSON stdin: {error}")
+        else:
+            if isinstance(parsed, dict):
+                raw_payload = parsed
+
+    adapter = detect_adapter(raw_payload)
+    set_runtime_log_context(adapter.agent_id())
 
     home = Path.home()
     refresh_state = home / ".agent" / "state" / "shared_asset_refresh_state.json"
@@ -672,7 +713,7 @@ def main() -> int:
         # No event shard history yet. Spawn a current-runtime subagent when the
         # runtime exposes a supported non-interactive bootstrap command so the
         # seed pass runs in an isolated context without polluting this session.
-        spawned = _spawn_subagent_bootstrap(repo_root)
+        spawned = _spawn_subagent_bootstrap(repo_root, raw_payload)
         if spawned:
             bg_note = (
                 "Memory bootstrap subagent is running in the background. "

@@ -983,20 +983,21 @@ def main() -> int:
         int: 0 on success or graceful noop; 1 on hard error.
     """
     args = parse_args()
-    set_runtime_log_context(detect_adapter().agent_id())
     payload_text = sys.stdin.read()
     try:
         payload = json.loads(payload_text or "{}")
     except json.JSONDecodeError as error:
         warn(f"invalid notify payload JSON: {error}")
-        # Adapter detection requires the payload; fall back to env-based detection.
+        # Payload is unusable; fall back to process-tree + env detection.
         adapter = detect_adapter()
+        set_runtime_log_context(adapter.agent_id())
         _emit(adapter, "error", message="invalid JSON payload")
         return 1
 
-    # Detect the adapter from the hook event in the payload.
+    # Detect the adapter from the hook event in the payload, threading the full
+    # payload through so the fallback detector can use payload fingerprints.
     hook_event = find_first(payload, {"hook_event_name", "hookEventName"}) or ""
-    adapter = detect_adapter_from_hook_event(hook_event)
+    adapter = detect_adapter_from_hook_event(hook_event, payload)
     set_runtime_log_context(adapter.agent_id())
 
     # Normalize the payload into a canonical request.

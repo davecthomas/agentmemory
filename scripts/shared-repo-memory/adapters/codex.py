@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """codex.py -- Codex CLI runtime adapter.
 
-Handles all Codex CLI-specific concerns.  Codex is the fallback runtime when
-neither CLAUDECODE nor GEMINI_CLI environment variables are set.
+Handles all Codex CLI-specific concerns.  Codex has its own positive detection
+signals (``CODEX_THREAD_ID`` / ``CODEX_SHELL`` / ``CODEX_CI`` env vars, macOS
+bundle id, or a ``codex`` process in the hook ancestry) and is no longer used
+as a silent fallback by ``detect_adapter``. When no runtime can be identified,
+``UnknownAdapter`` is returned instead.
 
 Codex currently supports only SessionStart natively.  Post-turn shard capture
 is available only via the manual notify-wrapper.sh script.
@@ -10,6 +13,7 @@ is available only via the manual notify-wrapper.sh script.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from pathlib import Path
@@ -17,6 +21,19 @@ from typing import Any
 
 from common import find_first
 from models import HookRequest, HookResponse, SessionResponse, ShardAttribution
+
+_HOOK_EVENT_KEYS = {"hook_event_name", "hookEventName"}
+
+# Env vars Codex CLI exports into hook subprocesses. Kept in sync with
+# ``common.detect_runtime_id`` so the two detection paths agree.
+_CODEX_ENV_KEYS: tuple[str, ...] = (
+    "CODEX_THREAD_ID",
+    "CODEX_SHELL",
+    "CODEX_CI",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+)
+
+_CODEX_BUNDLE_IDENTIFIER: str = "com.openai.codex"
 
 # Payload key aliases -- same broad set for resilience.
 _THREAD_KEYS = {
@@ -42,7 +59,7 @@ _ASSISTANT_KEYS = {
 
 
 class CodexAdapter:
-    """Adapter for Codex CLI runtime (fallback when no env var matches)."""
+    """Adapter for Codex CLI runtime."""
 
     @staticmethod
     def agent_id() -> str:
@@ -50,14 +67,35 @@ class CodexAdapter:
 
     @staticmethod
     def matches_environment() -> bool:
-        # Codex is the fallback -- it matches when nothing else does.
-        # No dedicated CODEX env var exists today.
+        """Return True when env vars or the macOS bundle id indicate Codex.
+
+        Codex CLI exports ``CODEX_THREAD_ID``, ``CODEX_SHELL``, ``CODEX_CI``,
+        or ``CODEX_INTERNAL_ORIGINATOR_OVERRIDE`` into hook subprocesses; the
+        macOS Codex desktop sets ``__CFBundleIdentifier`` to
+        ``com.openai.codex``. Either is a positive Codex signal.
+        """
+        for str_key in _CODEX_ENV_KEYS:
+            if os.environ.get(str_key):
+                return True
+        if os.environ.get("__CFBundleIdentifier", "") == _CODEX_BUNDLE_IDENTIFIER:
+            return True
         return False
 
     @staticmethod
     def matches_hook_event(hook_event: str) -> bool:
         # Codex has no unique hook event names; it only fires SessionStart
         # and manual wrapper invocations that don't set a hook event.
+        return False
+
+    @staticmethod
+    def matches_payload(raw: dict[str, Any]) -> bool:
+        """Codex has no unique hook payload fingerprint today.
+
+        Its SessionStart payload shape overlaps with Claude's and Gemini's,
+        and post-turn capture arrives via a manual wrapper rather than a hook,
+        so there is no field we can trust as exclusively Codex. Detection for
+        Codex relies on ``matches_environment`` and process ancestry.
+        """
         return False
 
     @staticmethod
