@@ -122,7 +122,7 @@ Restart any open agent sessions. `SessionStart` validates and bootstraps repo-lo
 
 ### Uninstalling
 
-Two scopes, symmetric with install, run from the repo root:
+Two scopes, symmetric with install, run from the repo root. `./install.sh --uninstall` is an alias for `./uninstall.sh` that dispatches with the remaining flags forwarded verbatim, so `--dry-run`, `--repo`, and `--purge-memory` all behave identically under either entry point.
 
 ```bash
 ./uninstall.sh                          # global: remove ~/.agent/shared-repo-memory,
@@ -133,6 +133,7 @@ Two scopes, symmetric with install, run from the repo root:
 ./uninstall.sh --repo --purge-memory    # also stage git rm --cached .agents/memory
                                         # (review and commit manually)
 ./uninstall.sh --dry-run                # preview every action without making changes
+./install.sh --uninstall [flags]        # alias: dispatches to uninstall.py with flags
 ```
 
 Uninstall is idempotent and conservative: it removes only entries it can identify as its own (commands pointing at `~/.agent/shared-repo-memory/`, hook names starting with `shared-repo-memory-`, canonical git hook content produced by `bootstrap-repo.py`, and the specific `.gitignore` marker block). Any user-added hook, edited git hook, or custom config value is preserved. Committed memory artifacts under `.agents/memory/` are never touched without explicit `--purge-memory`.
