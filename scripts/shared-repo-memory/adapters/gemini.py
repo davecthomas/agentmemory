@@ -184,6 +184,76 @@ class GeminiAdapter:
         ctx.save_json(settings_path, settings)
 
     @staticmethod
+    def unwire_hooks(ctx: InstallerContext) -> None:  # noqa: F821
+        """Remove this adapter's entries from ``~/.gemini/settings.json``.
+
+        Removes only hooks whose inner ``name`` begins with ``shared-repo-memory-``
+        (the canonical prefix this adapter writes) and clears the two settings
+        keys the installer set. User-added hooks are preserved. Idempotent.
+        """
+        settings_path = ctx.home / ".gemini" / "settings.json"
+        if not settings_path.exists():
+            return
+
+        settings = ctx.load_json(settings_path)
+        if not settings:
+            return
+
+        bool_changed: bool = False
+
+        if settings.get("shared_repo_memory_configured") is True:
+            del settings["shared_repo_memory_configured"]
+            bool_changed = True
+        if isinstance(settings.get("shared_agent_assets_repo_path"), str):
+            del settings["shared_agent_assets_repo_path"]
+            bool_changed = True
+
+        hooks = settings.get("hooks")
+        if isinstance(hooks, dict):
+            for event_name in list(hooks.keys()):
+                event_list = hooks.get(event_name)
+                if not isinstance(event_list, list):
+                    continue
+                kept_entries: list[dict] = []
+                for entry in event_list:
+                    if not isinstance(entry, dict):
+                        kept_entries.append(entry)
+                        continue
+                    inner_hooks = entry.get("hooks")
+                    if not isinstance(inner_hooks, list):
+                        kept_entries.append(entry)
+                        continue
+                    kept_inner = [
+                        h
+                        for h in inner_hooks
+                        if not (
+                            isinstance(h, dict)
+                            and isinstance(h.get("name"), str)
+                            and h["name"].startswith("shared-repo-memory-")
+                        )
+                    ]
+                    if len(kept_inner) == len(inner_hooks):
+                        kept_entries.append(entry)
+                    elif kept_inner:
+                        new_entry = dict(entry)
+                        new_entry["hooks"] = kept_inner
+                        kept_entries.append(new_entry)
+                        bool_changed = True
+                    else:
+                        bool_changed = True
+                if kept_entries:
+                    hooks[event_name] = kept_entries
+                else:
+                    del hooks[event_name]
+                    bool_changed = True
+            if not hooks:
+                del settings["hooks"]
+                bool_changed = True
+
+        if bool_changed:
+            ctx.save_json(settings_path, settings)
+
+    @staticmethod
     def build_bootstrap_command(
         skill_content: str, task: str, repo_root: Path
     ) -> list[str] | None:

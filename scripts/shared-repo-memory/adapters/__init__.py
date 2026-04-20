@@ -118,6 +118,18 @@ class AgentAdapter(Protocol):
         ...
 
     @staticmethod
+    def unwire_hooks(ctx: InstallerContext) -> None:
+        """Reverse wire_hooks: remove only this adapter's entries.
+
+        Must be idempotent: running on a clean system or twice in a row is a
+        no-op. Must never remove hook entries added by the user for other tools
+        -- identify the adapter's own entries by commands pointing at
+        ``ctx.install_root`` or by the canonical hook names this adapter
+        writes. Honors ``ctx.dry_run``.
+        """
+        ...
+
+    @staticmethod
     def build_bootstrap_command(
         skill_content: str, task: str, repo_root: Path
     ) -> list[str] | None:
@@ -298,6 +310,10 @@ class UnknownAdapter:
 
     @staticmethod
     def wire_hooks(ctx: InstallerContext) -> None:
+        return None
+
+    @staticmethod
+    def unwire_hooks(ctx: InstallerContext) -> None:
         return None
 
     @staticmethod

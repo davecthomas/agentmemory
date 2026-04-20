@@ -56,6 +56,7 @@ SCRIPTS = [
     "promote-adr.py",
     "enrich-shard.py",
     "publish-checkpoint.py",
+    "uninstall.py",
 ]
 
 # Adapter package files, installed under adapters/ subdirectory.
