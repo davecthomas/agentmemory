@@ -246,6 +246,138 @@ class CodexAdapter:
         ctx.save_json(codex_hooks, hooks_data)
 
     @staticmethod
+    def unwire_hooks(ctx: InstallerContext) -> None:  # noqa: F821
+        """Reverse wire_hooks for Codex.
+
+        Reverses both halves of wire_hooks symmetrically:
+
+          - ``~/.codex/config.toml``: regex-remove the keys and comments the
+            installer wrote (``experimental_use_hooks``, ``hooks_config_path``,
+            ``features.codex_hooks``, ``shared_repo_memory_configured``,
+            ``shared_agent_assets_repo_path``) and the
+            ``[projects."<repo_root>"]`` trust block.
+          - ``~/.codex/hooks.json``: strip hook entries whose inner ``command``
+            points at scripts under ``ctx.install_root``; preserve any other
+            entries the user may have added.
+
+        Idempotent: safe to run on a clean system or repeatedly.
+        """
+        codex_config = ctx.home / ".codex" / "config.toml"
+        codex_hooks = ctx.home / ".codex" / "hooks.json"
+
+        if ctx.dry_run:
+            return
+
+        # --- Revert config.toml ---
+        if codex_config.exists():
+            text = codex_config.read_text(encoding="utf-8")
+            str_original: str = text
+
+            # Keys the installer upsert'd.
+            text = re.sub(
+                r"^\s*experimental_use_hooks\s*=.*$\n?", "", text, flags=re.MULTILINE
+            )
+            text = re.sub(
+                r"^\s*hooks_config_path\s*=.*$\n?", "", text, flags=re.MULTILINE
+            )
+
+            # Keys the installer appended with a preceding comment. Remove both
+            # the value line and the installer's canonical comment line.
+            appended_pairs: list[tuple[str, str]] = [
+                (
+                    "Enable Codex hook execution so SessionStart can validate installed shared memory assets.",
+                    r"features\.codex_hooks\s*=",
+                ),
+                (
+                    "Enable automatic shared repo-memory startup checks and repo bootstrap in Git repositories.",
+                    r"shared_repo_memory_configured\s*=",
+                ),
+                (
+                    "Shared repo-memory authoring checkout used to refresh installed shared assets.",
+                    r"shared_agent_assets_repo_path\s*=",
+                ),
+            ]
+            for str_comment, str_key_pattern in appended_pairs:
+                str_pattern = (
+                    rf"(?:^\s*#\s*{re.escape(str_comment)}\s*\n)?"
+                    rf"^\s*{str_key_pattern}.*$\n?"
+                )
+                text = re.sub(str_pattern, "", text, flags=re.MULTILINE)
+
+            # Trust block the installer appended for the authoring repo.
+            escaped = re.escape(str(ctx.repo_root))
+            text = re.sub(
+                rf"\n?# Trust this shared repo-memory authoring repo for local Codex work\.\n"
+                rf'\[projects\."{escaped}"\]\n'
+                r'trust_level = "trusted"\n',
+                "",
+                text,
+            )
+
+            # Collapse runs of blank lines the removals may have left behind.
+            text = re.sub(r"\n{3,}", "\n\n", text)
+            text = text.lstrip("\n")
+
+            if text != str_original:
+                if text.strip():
+                    codex_config.write_text(text, encoding="utf-8")
+                else:
+                    # File is now empty of meaningful content; remove it.
+                    codex_config.unlink()
+
+        # --- Revert hooks.json ---
+        if codex_hooks.exists():
+            hooks_data: dict[str, object] = ctx.load_json(codex_hooks)
+            dict_hooks_block: object = hooks_data.get("hooks")
+            if isinstance(dict_hooks_block, dict):
+                install_root_marker: str = str(ctx.install_root)
+                bool_hooks_changed: bool = False
+                for str_event in list(dict_hooks_block.keys()):
+                    list_event_entries = dict_hooks_block.get(str_event)
+                    if not isinstance(list_event_entries, list):
+                        continue
+                    list_kept_entries: list[dict] = []
+                    for dict_entry in list_event_entries:
+                        if not isinstance(dict_entry, dict):
+                            list_kept_entries.append(dict_entry)
+                            continue
+                        list_inner = dict_entry.get("hooks")
+                        if not isinstance(list_inner, list):
+                            list_kept_entries.append(dict_entry)
+                            continue
+                        list_kept_inner = [
+                            h
+                            for h in list_inner
+                            if not (
+                                isinstance(h, dict)
+                                and isinstance(h.get("command"), str)
+                                and install_root_marker in h["command"]
+                            )
+                        ]
+                        if len(list_kept_inner) == len(list_inner):
+                            list_kept_entries.append(dict_entry)
+                        elif list_kept_inner:
+                            dict_new_entry = dict(dict_entry)
+                            dict_new_entry["hooks"] = list_kept_inner
+                            list_kept_entries.append(dict_new_entry)
+                            bool_hooks_changed = True
+                        else:
+                            bool_hooks_changed = True
+                    if list_kept_entries:
+                        dict_hooks_block[str_event] = list_kept_entries
+                    else:
+                        del dict_hooks_block[str_event]
+                        bool_hooks_changed = True
+                if not dict_hooks_block:
+                    del hooks_data["hooks"]
+                    bool_hooks_changed = True
+                if bool_hooks_changed:
+                    if hooks_data:
+                        ctx.save_json(codex_hooks, hooks_data)
+                    else:
+                        codex_hooks.unlink()
+
+    @staticmethod
     def build_bootstrap_command(
         skill_content: str, task: str, repo_root: Path
     ) -> list[str] | None:

@@ -120,6 +120,26 @@ The installer:
 
 Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs the agentmemory-managed `.gitignore` block when local-only paths change, and restores the generated repo-local hook files when hook wiring drifts. Generated hook files include a provenance header so developers can see that agentmemory created them, and the generated `pre-commit` hook delegates to `scripts/shared-repo-memory/project-pre-commit.sh` when a repo wants tracked project-specific checks such as linting or tests.
 
+### Uninstalling
+
+Two scopes, symmetric with install, run from the repo root. `./install.sh --uninstall` is an alias for `./uninstall.sh` that dispatches with the remaining flags forwarded verbatim, so `--dry-run`, `--repo`, and `--purge-memory` all behave identically under either entry point.
+
+```bash
+./uninstall.sh                          # global: remove ~/.agent/shared-repo-memory,
+                                        # skill symlinks, and agent hook wiring
+./uninstall.sh --repo                   # per-repo: remove .githooks/, unset
+                                        # core.hooksPath, drop .codex/memory symlink,
+                                        # strip the installer's .gitignore block
+./uninstall.sh --repo --purge-memory    # also stage git rm --cached .agents/memory
+                                        # (review and commit manually)
+./uninstall.sh --dry-run                # preview every action without making changes
+./install.sh --uninstall [flags]        # alias: dispatches to uninstall.py with flags
+```
+
+Uninstall is idempotent and conservative: it removes only entries it can identify as its own (commands pointing at `~/.agent/shared-repo-memory/`, hook names starting with `shared-repo-memory-`, canonical git hook content produced by `bootstrap-repo.py`, and the specific `.gitignore` marker block). Any user-added hook, edited git hook, or custom config value is preserved. Committed memory artifacts under `.agents/memory/` are never touched without explicit `--purge-memory`.
+
+After a global uninstall, restart any open agent sessions so the removed hook wiring takes effect.
+
 ---
 
 ## Agent Support
