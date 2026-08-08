@@ -1580,6 +1580,97 @@ def test_pre_commit_hook_ignores_body_text_that_mentions_enriched_false(repo):
     assert result.returncode == 0
 
 
+def test_pre_commit_hook_accepts_bootstrap_shards_without_an_enriched_field(repo):
+    """Verify that the pre-commit guard accepts bootstrap shards omitting enrichment state.
+
+    Bootstrap shards are written straight into the daily event namespace by
+    `auto-bootstrap.py` and the `memory-bootstrap` skill.  They never pass
+    through the pending-to-publish pipeline that owns the `enriched` field, so
+    they carry no such key.  This pins that contract: absence of the field must
+    commit cleanly, so bootstrap output is never stranded in a state whose only
+    escape is asserting an enrichment that never happened.
+
+    Args:
+        repo: Pytest fixture returning the bootstrapped temporary repo and home path.
+
+    Returns:
+        None: Assertions verify that a bootstrap-style shard carrying no
+            `enriched` key is accepted at commit time.
+    """
+    repo_dir, home_dir = repo
+
+    path_code_file: Path = repo_dir / "feature.py"
+    path_code_file.write_text("# code change\n", encoding="utf-8")
+    subprocess.run(["git", "add", "feature.py"], cwd=repo_dir, check=True)
+
+    path_day_dir: Path = repo_dir / ".agents" / "memory" / "daily" / "2026-04-07"
+    path_event_dir: Path = path_day_dir / "events"
+    path_event_dir.mkdir(parents=True, exist_ok=True)
+    path_bootstrap_shard: Path = (
+        path_event_dir / "2026-04-07T12-00-00Z--test--auto-bootstrap.md"
+    )
+    path_bootstrap_shard.write_text(
+        "\n".join(
+            [
+                "---",
+                'timestamp: "2026-04-07T12:00:00Z"',
+                'author: "test"',
+                'branch: "main"',
+                'thread_id: "memory-bootstrap"',
+                'turn_id: "memory-bootstrap"',
+                "decision_candidate: true",
+                'bootstrapped_at: "2026-04-09T09:30:00Z"',
+                "ai_generated: true",
+                'ai_model: "gpt-5.4"',
+                'ai_tool: "codex"',
+                'ai_surface: "codex-cli"',
+                'ai_executor: "local-agent"',
+                "related_adrs:",
+                "files_touched:",
+                '  - "feature.py"',
+                "verification:",
+                '  - "bootstrap shard fixture"',
+                "---",
+                "",
+                "## Why",
+                "",
+                "- Bootstrap fixture derived from a design doc.",
+                "",
+                "## What changed",
+                "",
+                "- Recorded a durable decision seeded from repo history.",
+                "",
+                "## Evidence",
+                "",
+                "- doc docs/design.md: decision section.",
+                "",
+                "## Next",
+                "",
+                "- Promote to an ADR.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", str(path_bootstrap_shard.relative_to(repo_dir))],
+        cwd=repo_dir,
+        check=True,
+    )
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "should pass"],
+        cwd=repo_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ.copy(), "HOME": str(home_dir)},
+    )
+
+    assert result.returncode == 0
+    assert "enriched" not in path_bootstrap_shard.read_text(encoding="utf-8")
+
+
 def test_session_start_repairs_missing_gitignore_entries(repo):
     """Verify SessionStart re-runs bootstrap when required .gitignore entries drift.
 

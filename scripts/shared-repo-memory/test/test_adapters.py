@@ -496,20 +496,33 @@ class TestShardAttribution:
 
 
 class TestResolveModel:
-    def test_claude_env_var_priority(self):
-        with patch.dict(os.environ, {"CLAUDE_MODEL": "claude-opus-4-6"}):
+    # ClaudeAdapter.resolve_model consults ~/.claude/settings.json between the
+    # CLAUDE_MODEL env var and the payload, so these tests point Path.home() at an
+    # empty tmp_path. Without it they read the developer's real settings file and
+    # fail for anyone who has a `model` key set there.
+    def test_claude_env_var_priority(self, tmp_path):
+        with (
+            patch.dict(os.environ, {"CLAUDE_MODEL": "claude-opus-4-6"}),
+            patch.object(Path, "home", return_value=tmp_path),
+        ):
             model = ClaudeAdapter.resolve_model({})
             assert model == "claude-opus-4-6"
 
-    def test_claude_payload_fallback(self):
+    def test_claude_payload_fallback(self, tmp_path):
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_MODEL"}
-        with patch.dict(os.environ, env, clear=True):
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(Path, "home", return_value=tmp_path),
+        ):
             model = ClaudeAdapter.resolve_model({"model": "claude-sonnet-4-6"})
             assert model == "claude-sonnet-4-6"
 
-    def test_claude_default(self):
+    def test_claude_default(self, tmp_path):
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_MODEL"}
-        with patch.dict(os.environ, env, clear=True):
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(Path, "home", return_value=tmp_path),
+        ):
             model = ClaudeAdapter.resolve_model({})
             assert model == "claude-unknown"
 

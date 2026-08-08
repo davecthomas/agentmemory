@@ -51,6 +51,13 @@ If that returns nothing, `.agents/memory/daily/` has no event shards and you MUS
 - Deduplicate against existing ADRs under `.agents/memory/adr/` and recent decision-candidate shards under `.agents/memory/daily/`.
 - Emit a small batch by default: target three to five decision-candidate shards and stop at seven unless the user explicitly asks for more.
 - Write ordinary event shards under `.agents/memory/daily/YYYY-MM-DD/events/` using the existing shared repo-memory shard contract and set `decision_candidate: true` only on the selected bootstrap outputs.
+- **Never write an `enriched` field on a bootstrap shard — omit the key entirely.** That field records provenance, not content quality, and bootstrap shards are a separate lineage that never enters the pending-to-publish pipeline:
+  - `post-turn-notify.py` writes `enriched: false` on raw pending captures from live turns.
+  - `publish-checkpoint.py` and `enrich-shard.py` write `enriched: true`, and only after their gestalt, privacy, and anti-mechanical validators pass.
+  - `auto-bootstrap.py` writes no `enriched` key at all. Match it.
+
+  Writing `enriched: false` makes the shard permanently uncommittable, because `.githooks/pre-commit` rejects it and no enrichment path exists to clear the flag. Writing `enriched: true` is worse: it claims a validation the shard never received. The guard passes on absence, so omitting the key is both correct and sufficient.
+- If a bootstrap shard is ever found carrying `enriched: false`, delete the key rather than flipping it to `true`. Flipping the value silences the guard instead of satisfying it, and puts an unvalidated shard into durable memory wearing a validated shard's marker.
 - **Use the source event date, not today's date**, for the shard directory path, filename timestamp, and frontmatter `timestamp` field. Determine the source date from the commit date, design doc last-modified date, or the earliest commit in the cluster that the decision is derived from. Using today's date is wrong — it places historical decisions in the wrong daily directory and makes them appear as current activity.
 - Add a `bootstrapped_at` frontmatter field set to the current UTC timestamp (when the bootstrap ran). This distinguishes bootstrap shards from live-turn shards and preserves auditability.
 - After writing all shards, rebuild the daily summary for every distinct source date that received a shard by running `rebuild-summary.py --repo-root <repo-root> --date <YYYY-MM-DD>` for each affected date. Do not skip this step — without it the summary for that date will be missing.
