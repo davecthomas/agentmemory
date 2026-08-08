@@ -1,4 +1,5 @@
 """Tests for the dedup module — diff-state gate and published-event gate."""
+
 import importlib.util
 import json
 import sys
@@ -79,15 +80,16 @@ class TestDiffStateGate:
     def test_different_workstream_same_branch_same_hash_is_duplicate(self, tmp_path):
         """The core Codex fix: different thread_id but same branch + diff."""
         dedup.record_capture(tmp_path, "thread-aaa", "feature/foo", "abc123")
-        assert dedup.already_captured(
-            tmp_path, "thread-bbb", "feature/foo", "abc123"
-        ) is True
+        assert (
+            dedup.already_captured(tmp_path, "thread-bbb", "feature/foo", "abc123")
+            is True
+        )
 
     def test_different_branch_same_hash_is_not_duplicate(self, tmp_path):
         dedup.record_capture(tmp_path, "ws-1", "main", "abc123")
-        assert dedup.already_captured(
-            tmp_path, "ws-2", "feature/bar", "abc123"
-        ) is False
+        assert (
+            dedup.already_captured(tmp_path, "ws-2", "feature/bar", "abc123") is False
+        )
 
     def test_changed_hash_is_not_duplicate(self, tmp_path):
         dedup.record_capture(tmp_path, "ws-1", "main", "abc123")
@@ -111,11 +113,13 @@ def _write_event(day_dir: Path, name: str, branch: str, files: list[str]) -> Non
     """Write a minimal published event shard for testing."""
     events_dir = day_dir / "events"
     events_dir.mkdir(parents=True, exist_ok=True)
-    metadata = OrderedDict([
-        ("branch", branch),
-        ("files_touched", files),
-        ("enriched", True),
-    ])
+    metadata = OrderedDict(
+        [
+            ("branch", branch),
+            ("files_touched", files),
+            ("enriched", True),
+        ]
+    )
     lines = ["---"]
     for key, val in metadata.items():
         if isinstance(val, list):
@@ -137,39 +141,42 @@ class TestPublishedEventGate:
     def test_no_events_dir_returns_false(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
-        assert dedup.published_event_exists(
-            repo, "2026-04-15", "main", ["a.py"]
-        ) is False
+        assert (
+            dedup.published_event_exists(repo, "2026-04-15", "main", ["a.py"]) is False
+        )
 
     def test_different_branch_no_match(self, tmp_path):
         repo = tmp_path / "repo"
         day_dir = repo / ".agents" / "memory" / "daily" / "2026-04-15"
         _write_event(day_dir, "event1.md", "feature/other", ["a.py", "b.py"])
-        assert dedup.published_event_exists(
-            repo, "2026-04-15", "main", ["a.py", "b.py"]
-        ) is False
+        assert (
+            dedup.published_event_exists(repo, "2026-04-15", "main", ["a.py", "b.py"])
+            is False
+        )
 
     def test_same_branch_high_overlap_matches(self, tmp_path):
         repo = tmp_path / "repo"
         day_dir = repo / ".agents" / "memory" / "daily" / "2026-04-15"
         _write_event(day_dir, "event1.md", "main", ["a.py", "b.py", "c.py"])
-        assert dedup.published_event_exists(
-            repo, "2026-04-15", "main", ["a.py", "b.py"]
-        ) is True
+        assert (
+            dedup.published_event_exists(repo, "2026-04-15", "main", ["a.py", "b.py"])
+            is True
+        )
 
     def test_same_branch_low_overlap_no_match(self, tmp_path):
         repo = tmp_path / "repo"
         day_dir = repo / ".agents" / "memory" / "daily" / "2026-04-15"
         _write_event(day_dir, "event1.md", "main", ["a.py", "b.py", "c.py"])
         # Only 1 shared out of 5 total unique → 0.20 < threshold
-        assert dedup.published_event_exists(
-            repo, "2026-04-15", "main", ["a.py", "x.py", "y.py"]
-        ) is False
+        assert (
+            dedup.published_event_exists(
+                repo, "2026-04-15", "main", ["a.py", "x.py", "y.py"]
+            )
+            is False
+        )
 
     def test_empty_candidate_files_returns_false(self, tmp_path):
         repo = tmp_path / "repo"
         day_dir = repo / ".agents" / "memory" / "daily" / "2026-04-15"
         _write_event(day_dir, "event1.md", "main", ["a.py"])
-        assert dedup.published_event_exists(
-            repo, "2026-04-15", "main", []
-        ) is False
+        assert dedup.published_event_exists(repo, "2026-04-15", "main", []) is False

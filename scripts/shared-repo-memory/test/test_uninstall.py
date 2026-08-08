@@ -26,8 +26,11 @@ from adapters import (  # noqa: E402
 )
 
 
-def _install_ctx(tmp_home: Path, repo_root: Path, dry_run: bool = False) -> InstallerContext:
+def _install_ctx(
+    tmp_home: Path, repo_root: Path, dry_run: bool = False
+) -> InstallerContext:
     """Build an ``InstallerContext`` that writes only inside ``tmp_home``."""
+
     def load_json(path: Path) -> dict:
         if not path.exists():
             return {}
@@ -68,9 +71,7 @@ class TestClaudeUnwireHooks:
         ClaudeAdapter.unwire_hooks(ctx)
         assert not (ctx.home / ".claude" / "settings.json").exists()
 
-    def test_roundtrip_install_then_uninstall_matches_clean_state(
-        self, tmp_path: Path
-    ):
+    def test_roundtrip_install_then_uninstall_matches_clean_state(self, tmp_path: Path):
         tmp_home = tmp_path / "home"
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -276,7 +277,7 @@ class TestCodexUnwireHooks:
         config_path.write_text(
             "# user-managed config\n"
             'model = "gpt-5"\n'
-            "preferred_auth_method = \"chatgpt\"\n",
+            'preferred_auth_method = "chatgpt"\n',
             encoding="utf-8",
         )
 
@@ -351,9 +352,7 @@ def _load_uninstall_module():
     import importlib.util
 
     source_path: Path = SCRIPT_DIR / "uninstall.py"
-    spec = importlib.util.spec_from_file_location(
-        "uninstall_under_test", source_path
-    )
+    spec = importlib.util.spec_from_file_location("uninstall_under_test", source_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -390,14 +389,12 @@ class TestGlobalUninstaller:
         before_snapshot = snapshot()
 
         uninstall = _load_uninstall_module()
-        uninstall.GlobalUninstaller(
-            repo_root=repo, home=tmp_home, dry_run=True
-        ).run()
+        uninstall.GlobalUninstaller(repo_root=repo, home=tmp_home, dry_run=True).run()
 
         after_snapshot = snapshot()
-        assert before_snapshot == after_snapshot, (
-            "dry-run must preserve both file paths and contents"
-        )
+        assert (
+            before_snapshot == after_snapshot
+        ), "dry-run must preserve both file paths and contents"
 
     def test_global_uninstall_removes_install_root_and_hook_wiring(
         self, tmp_path: Path
@@ -408,7 +405,9 @@ class TestGlobalUninstaller:
         # Simulate a real skills/ directory in the repo so the uninstaller
         # knows which skill names to remove.
         (repo / "skills" / "memory-writer").mkdir(parents=True)
-        (repo / "skills" / "memory-writer" / "SKILL.md").write_text("---\nname: memory-writer\n---\n")
+        (repo / "skills" / "memory-writer" / "SKILL.md").write_text(
+            "---\nname: memory-writer\n---\n"
+        )
         ctx = _install_ctx(tmp_home, repo)
         ClaudeAdapter.wire_hooks(ctx)
         GeminiAdapter.wire_hooks(ctx)
@@ -433,9 +432,7 @@ class TestGlobalUninstaller:
         (state_dir / "shared_asset_refresh_state.json").write_text("{}\n")
 
         uninstall = _load_uninstall_module()
-        uninstall.GlobalUninstaller(
-            repo_root=repo, home=tmp_home, dry_run=False
-        ).run()
+        uninstall.GlobalUninstaller(repo_root=repo, home=tmp_home, dry_run=False).run()
 
         # Install root gone.
         assert not ctx.install_root.exists()
@@ -447,9 +444,7 @@ class TestGlobalUninstaller:
         # Canonical skill copy gone.
         assert not (tmp_home / ".agent" / "skills" / "memory-writer").exists()
 
-    def test_global_uninstall_preserves_unrelated_skill_symlink(
-        self, tmp_path: Path
-    ):
+    def test_global_uninstall_preserves_unrelated_skill_symlink(self, tmp_path: Path):
         """A symlink pointing outside ~/.agent/skills must be preserved."""
         tmp_home = tmp_path / "home"
         repo = tmp_path / "repo"
@@ -463,9 +458,7 @@ class TestGlobalUninstaller:
         (claude_skills / "memory-writer").symlink_to(external_target)
 
         uninstall = _load_uninstall_module()
-        uninstall.GlobalUninstaller(
-            repo_root=repo, home=tmp_home, dry_run=False
-        ).run()
+        uninstall.GlobalUninstaller(repo_root=repo, home=tmp_home, dry_run=False).run()
 
         # The user's external-target symlink should still exist.
         assert (claude_skills / "memory-writer").exists()
@@ -479,9 +472,7 @@ class TestGlobalUninstaller:
 
 def _init_git_repo(path: Path) -> None:
     """Initialize an empty git repo at ``path`` for tests."""
-    subprocess.run(
-        ["git", "init", "-q", str(path)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q", str(path)], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(path), "config", "user.email", "test@example.com"],
         check=True,
@@ -495,9 +486,7 @@ def _init_git_repo(path: Path) -> None:
 
 
 class TestRepoUninstaller:
-    def test_removes_canonical_hooks_and_preserves_edited_ones(
-        self, tmp_path: Path
-    ):
+    def test_removes_canonical_hooks_and_preserves_edited_ones(self, tmp_path: Path):
         repo = tmp_path / "repo"
         repo.mkdir()
         _init_git_repo(repo)
@@ -561,8 +550,7 @@ class TestRepoUninstaller:
         )
         # Add a user entry outside the block to verify it survives.
         gitignore.write_text(
-            gitignore.read_text(encoding="utf-8")
-            + "\n# user preference\n*.log\n",
+            gitignore.read_text(encoding="utf-8") + "\n# user preference\n*.log\n",
             encoding="utf-8",
         )
 
@@ -678,14 +666,18 @@ class TestRepoUninstaller:
             capture_output=True,
             env={**os.environ, "PYTHONPATH": str(SCRIPT_DIR)},
         )
-        before = sorted(p.relative_to(repo) for p in repo.rglob("*") if ".git/" not in str(p) + "/")
+        before = sorted(
+            p.relative_to(repo) for p in repo.rglob("*") if ".git/" not in str(p) + "/"
+        )
 
         uninstall = _load_uninstall_module()
         uninstall.RepoUninstaller(
             repo_root=repo, dry_run=True, purge_memory=False
         ).run()
 
-        after = sorted(p.relative_to(repo) for p in repo.rglob("*") if ".git/" not in str(p) + "/")
+        after = sorted(
+            p.relative_to(repo) for p in repo.rglob("*") if ".git/" not in str(p) + "/"
+        )
         assert before == after
 
 
@@ -725,4 +717,7 @@ class TestCliEntryPoint:
             cwd=str(tmp_path),
         )
         assert result.returncode == 1
-        assert "must be run inside" in result.stderr or "requires running inside" in result.stderr
+        assert (
+            "must be run inside" in result.stderr
+            or "requires running inside" in result.stderr
+        )

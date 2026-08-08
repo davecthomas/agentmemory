@@ -86,9 +86,7 @@ def _load_json_safe(path: Path) -> dict:
 def _save_json_pretty(path: Path, data: dict) -> None:
     """Write data as pretty-printed JSON, creating parents if needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 class GlobalUninstaller:
@@ -123,9 +121,7 @@ class GlobalUninstaller:
         self.skills_to_remove: set[str] = set()
         skills_src: Path = repo_root / "skills"
         if skills_src.is_dir():
-            self.skills_to_remove = {
-                p.name for p in skills_src.iterdir() if p.is_dir()
-            }
+            self.skills_to_remove = {p.name for p in skills_src.iterdir() if p.is_dir()}
 
     def _remove_path(self, path: Path) -> None:
         """Remove ``path`` if it exists, honoring ``dry_run``.
@@ -152,6 +148,7 @@ class GlobalUninstaller:
         cannot accidentally mutate real state. The Codex adapter also writes
         config.toml directly and guards its own dry-run early return.
         """
+
         def save_json(path: Path, payload: dict) -> None:
             if self.dry_run:
                 log(f"[DRY-RUN] would write {path}")
@@ -423,9 +420,9 @@ class RepoUninstaller:
         # blank lines. We compile the entries from REQUIRED_GITIGNORE_ENTRIES
         # so this stays in sync with the installer.
         list_str_entries: list[str] = list(REQUIRED_GITIGNORE_ENTRIES)
-        str_block_pattern: str = r"\n?" + r"\n".join(
-            re.escape(entry) for entry in list_str_entries
-        ) + r"\n?"
+        str_block_pattern: str = (
+            r"\n?" + r"\n".join(re.escape(entry) for entry in list_str_entries) + r"\n?"
+        )
 
         if not re.search(str_block_pattern, str_text):
             return
@@ -459,7 +456,13 @@ class RepoUninstaller:
         # ``--cached`` stages deletion of tracked files without removing the
         # working-tree copy. Operator can then manually review and commit.
         subprocess.run(
-            ["git", "rm", "-r", "--cached", str(memory_dir.relative_to(self.repo_root))],
+            [
+                "git",
+                "rm",
+                "-r",
+                "--cached",
+                str(memory_dir.relative_to(self.repo_root)),
+            ],
             cwd=str(self.repo_root),
             check=False,
         )
@@ -556,9 +559,7 @@ def main() -> int:
     # Global uninstall. We still need a repo_root for adapter context, but
     # only for identifying project-scoped entries; fall back to the current
     # directory if git is unavailable.
-    repo_root_global: Path = (
-        _resolve_repo_root(args.repo_root) or Path.cwd().resolve()
-    )
+    repo_root_global: Path = _resolve_repo_root(args.repo_root) or Path.cwd().resolve()
     GlobalUninstaller(
         repo_root=repo_root_global,
         home=Path.home(),

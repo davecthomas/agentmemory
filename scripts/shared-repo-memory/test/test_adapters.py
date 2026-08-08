@@ -73,30 +73,42 @@ class TestDetectAdapter:
     def test_claude_env_var(self):
         env = _empty_runtime_env()
         env["CLAUDECODE"] = "1"
-        with patch.dict(os.environ, env, clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             assert detect_adapter() is ClaudeAdapter
 
     def test_gemini_env_var(self):
         env = _empty_runtime_env()
         env["GEMINI_CLI"] = "1"
-        with patch.dict(os.environ, env, clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             assert detect_adapter() is GeminiAdapter
 
     def test_codex_env_var(self):
         env = _empty_runtime_env()
         env["CODEX_THREAD_ID"] = "thread-abc"
-        with patch.dict(os.environ, env, clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             assert detect_adapter() is CodexAdapter
 
     def test_no_signal_returns_unknown(self):
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             assert detect_adapter() is UnknownAdapter
 
@@ -104,62 +116,80 @@ class TestDetectAdapter:
         env = _empty_runtime_env()
         env["CLAUDECODE"] = "1"
         env["GEMINI_CLI"] = "1"
-        with patch.dict(os.environ, env, clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             assert detect_adapter() is ClaudeAdapter
 
     def test_payload_transcript_path_detects_claude(self):
         """Claude-shaped payload wins even when CLAUDECODE is absent."""
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
-            assert (
-                detect_adapter({"transcript_path": "/tmp/t.jsonl"}) is ClaudeAdapter
-            )
+            assert detect_adapter({"transcript_path": "/tmp/t.jsonl"}) is ClaudeAdapter
 
     def test_payload_stop_event_detects_claude(self):
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             assert detect_adapter({"hook_event_name": "Stop"}) is ClaudeAdapter
 
     def test_payload_after_agent_detects_gemini(self):
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
-            assert (
-                detect_adapter({"hook_event_name": "AfterAgent"}) is GeminiAdapter
-            )
+            assert detect_adapter({"hook_event_name": "AfterAgent"}) is GeminiAdapter
 
     def test_payload_takes_priority_over_env(self):
         """Claude-fingerprint payload beats a stale GEMINI_CLI env var."""
         env = _empty_runtime_env()
         env["GEMINI_CLI"] = "1"
-        with patch.dict(os.environ, env, clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
-            assert (
-                detect_adapter({"transcript_path": "/tmp/t.jsonl"}) is ClaudeAdapter
-            )
+            assert detect_adapter({"transcript_path": "/tmp/t.jsonl"}) is ClaudeAdapter
 
     def test_ambiguous_session_start_falls_through_to_process_tree(self):
         """SessionStart alone is ambiguous; process tree must resolve it."""
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value="claude"
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value="claude"
+            ),
         ):
             assert detect_adapter({"hook_event_name": "SessionStart"}) is ClaudeAdapter
 
     def test_process_tree_detects_runtime_without_env_var(self):
         """This is the chuckclose regression: Claude Code hook with no CLAUDECODE."""
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value="claude"
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value="claude"
+            ),
         ):
             assert detect_adapter() is ClaudeAdapter
 
     def test_process_tree_detects_codex(self):
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value="codex"
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value="codex"
+            ),
         ):
             assert detect_adapter() is CodexAdapter
 
@@ -180,8 +210,11 @@ class TestDetectAdapterFromHookEvent:
 
     def test_unknown_event_falls_back_to_detect_adapter(self):
         adapters._detect_runtime_from_process_tree.cache_clear()
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             # No adapter claims empty string; no env, no process tree, no
             # payload -> UnknownAdapter rather than silently picking Codex.
@@ -189,8 +222,11 @@ class TestDetectAdapterFromHookEvent:
 
     def test_unknown_event_with_payload_resolves_via_payload(self):
         adapters._detect_runtime_from_process_tree.cache_clear()
-        with patch.dict(os.environ, _empty_runtime_env(), clear=True), patch.object(
-            adapters, "_detect_runtime_from_process_tree", return_value=None
+        with (
+            patch.dict(os.environ, _empty_runtime_env(), clear=True),
+            patch.object(
+                adapters, "_detect_runtime_from_process_tree", return_value=None
+            ),
         ):
             result = detect_adapter_from_hook_event(
                 "", {"transcript_path": "/tmp/t.jsonl"}
