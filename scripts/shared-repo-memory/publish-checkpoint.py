@@ -615,9 +615,7 @@ def _validate_candidate(
 
     # --- Published-event dedup gate (safety net) ---
     str_branch: str = str(dict_context.get("branch", "")).strip()
-    str_published_path: str = str(
-        dict_context.get("published_shard_path", "")
-    ).strip()
+    str_published_path: str = str(dict_context.get("published_shard_path", "")).strip()
     str_repo_root: str = str(dict_context.get("repo_root", "")).strip()
     list_str_candidate_files: list[str] = _collect_files_touched(
         list_dict_source_metadata

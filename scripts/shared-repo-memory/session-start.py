@@ -404,9 +404,7 @@ def _write_bootstrap_log_line(
     log_file.flush()
 
 
-def _spawn_subagent_bootstrap(
-    repo_root: Path, raw_payload: dict | None = None
-) -> bool:
+def _spawn_subagent_bootstrap(repo_root: Path, raw_payload: dict | None = None) -> bool:
     """Spawn a subagent to run memory bootstrap using the detected runtime adapter.
 
     The subagent receives the full SKILL.md content as its system prompt and a short
