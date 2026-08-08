@@ -118,7 +118,7 @@ The installer:
 
 ### After installation
 
-Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs the agentmemory-managed `.gitignore` block when local-only paths change, and restores the generated repo-local hook files when hook wiring drifts. Generated hook files include a provenance header so developers can see that agentmemory created them, and the generated `pre-commit` hook delegates to `scripts/shared-repo-memory/project-pre-commit.sh` when a repo wants tracked project-specific checks such as linting or tests.
+Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs the agentmemory-managed `.gitignore` block when local-only paths change, and restores the generated repo-local hook files when hook wiring drifts. Generated hook files include a provenance header so developers can see that agentmemory created them, and the generated `pre-commit` hook delegates to `scripts/shared-repo-memory/project-pre-commit.sh` when a repo wants tracked project-specific checks such as formatting, linting, or tests.
 
 ### Uninstalling
 

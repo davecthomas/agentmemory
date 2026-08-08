@@ -8,13 +8,20 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 
+# black runs in --check mode alongside ruff. AGENTS.md requires both to be clean
+# before any change is complete. This hook is the only place that enforces it,
+# since the repo has no CI: unformatted code landed across several PRs while
+# black was documented but unchecked.
 if command -v poetry &>/dev/null; then
+  poetry run black --check .
   poetry run ruff check scripts/ skills/
   poetry run pytest scripts/shared-repo-memory/test/ -q
 elif [ -x "$repo_root/.venv/bin/ruff" ]; then
+  "$repo_root/.venv/bin/black" --check .
   "$repo_root/.venv/bin/ruff" check scripts/ skills/
   "$repo_root/.venv/bin/python" -m pytest scripts/shared-repo-memory/test/ -q
 else
+  black --check .
   ruff check scripts/ skills/
   pytest scripts/shared-repo-memory/test/ -q
 fi
