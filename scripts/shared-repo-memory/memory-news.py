@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Print a bounded, newest-first digest of recent decision memory.
+"""Print a story-shaped, newest-first digest of recent decision memory.
 
-Backs the ``news`` skill: the local catch-up, recent note entries with
-candidates flagged, the newest ADRs, and recent code commits that memory
-does not mention. Deterministic; no LLM.
+Backs the ``news`` skill. Instead of three flat lists, the digest groups
+what happened by day and, within a day, by branch or pull request, joining
+decision notes to the commits that produced them and leading with the
+largest cluster. ADRs that supersede others collapse to one line. Authors
+and decision text are cleaned so the skill can read the digest aloud.
+Deterministic; no LLM.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import (
@@ -26,70 +31,122 @@ from common import (
     section,
 )
 
-MAX_NOTE_ENTRIES: int = 8
-MAX_ADRS: int = 5
-MAX_COMMITS: int = 12
+MAX_DAYS: int = 7
+MAX_CLUSTERS_PER_DAY: int = 6
+MAX_ITEMS_PER_CLUSTER: int = 6
+MAX_COMMITS: int = 60
+DECISION_WORDS: int = 30
 
 
-def note_entries(root: Path, days: int) -> list[str]:
-    """Render recent note entries, newest first.
+@dataclass
+class Note:
+    date: str
+    author: str
+    branch: str
+    decision: str
+    why: str
+    commit: str
+    candidate: bool
+
+
+@dataclass
+class Commit:
+    sha: str
+    date: str
+    subject: str
+    branch: str
+    pr: str
+
+
+@dataclass
+class Cluster:
+    key: str
+    commits: list[Commit] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
+
+    @property
+    def size(self) -> int:
+        return len(self.commits) + len(self.notes)
+
+
+def clean_author(raw: str) -> str:
+    """``2355287-davecthomas`` -> ``davecthomas``.
+
+    Args:
+        raw: Author slug from a note header.
+
+    Returns:
+        str: Slug without a leading numeric id.
+    """
+    return re.sub(r"^\d+-", "", raw.strip())
+
+
+def strip_prefix(text: str, branch: str) -> str:
+    """Drop a leading ``<branch>: `` from decision or subject text.
+
+    Args:
+        text: Decision line or commit subject.
+        branch: Branch name that may prefix it.
+
+    Returns:
+        str: Text without the prefix.
+    """
+    if branch and text.startswith(f"{branch}: "):
+        return text[len(branch) + 2 :]
+    return re.sub(r"^[a-z]+/[\w.-]+: ", "", text)
+
+
+def parse_notes(root: Path, days: int) -> list[Note]:
+    """Load note entries within the window, newest first.
 
     Args:
         root: Repository root.
         days: Window in days.
 
     Returns:
-        list[str]: One line per entry.
+        list[Note]: Parsed entries.
     """
-    lines: list[str] = []
-    for note in list_notes(root, days):
-        for block in reversed(re.split(r"(?m)^## ", read_text(note))[1:]):
-            header = block.splitlines()[0].strip()
-            decision = re.search(r"\*\*Decision:\*\*\s*(.+)", block)
-            flag = (
-                " _(candidate, unreviewed)_" if "**Candidate:** true" in block else ""
+    notes: list[Note] = []
+    for path in list_notes(root, days):
+        for block in reversed(re.split(r"(?m)^## ", read_text(path))[1:]):
+            header = block.splitlines()[0]
+            parts = [p.strip() for p in header.split("·")]
+            author = clean_author(parts[1]) if len(parts) > 1 else "unknown"
+            branch = parts[2] if len(parts) > 2 else ""
+
+            def grab(key: str) -> str:
+                m = re.search(rf"^\*\*{key}:\*\*\s*(.+)$", block, re.MULTILINE)
+                return m.group(1).strip() if m else ""
+
+            notes.append(
+                Note(
+                    date=path.stem,
+                    author=author,
+                    branch=branch,
+                    decision=strip_prefix(grab("Decision"), branch),
+                    why=grab("Why"),
+                    commit=grab("Commit"),
+                    candidate="**Candidate:** true" in block,
+                )
             )
-            lines.append(
-                f"- {header}: {decision.group(1).strip() if decision else '(no decision line)'}{flag}"
-            )
-    return lines[:MAX_NOTE_ENTRIES]
+    return notes
 
 
-def news(root: Path, days: int) -> str:
-    """Build the digest.
+def parse_commits(root: Path, limit: int) -> list[Commit]:
+    """Load recent commits outside ``.agents/memory``, newest first.
 
     Args:
         root: Repository root.
-        days: Window for notes.
+        limit: Maximum commits.
 
     Returns:
-        str: Markdown.
+        list[Commit]: Parsed commits with branch and PR number when present.
     """
-    if not is_opted_in(root):
-        return "agentmemory: not opted in. Run `/agentmemory init` first.\n"
-    out: list[str] = ["# Repo news", ""]
-    catchup = read_text(root / LOCAL_DIR / "catchup.md").strip()
-    if catchup:
-        out += ["## Since this machine last looked", "", catchup, ""]
-    notes = note_entries(root, days)
-    if notes:
-        out += [f"## Decisions noted in the last {days} days", "", *notes, ""]
-    adrs = list(reversed(list_adrs(root)))[:MAX_ADRS]
-    if adrs:
-        out += ["## Newest ADRs", ""]
-        for adr in adrs:
-            meta = adr["meta"]
-            status = meta.get("status", "accepted")
-            out.append(
-                f"- {meta['id']} ({meta.get('date', '')}, {status}): {meta['title']} — "
-                f"{' '.join(section(adr['body'], 'Decision').split()[:40])}…"
-            )
-        out.append("")
-    commits = git(
+    raw = git(
         [
             "log",
-            f"--max-count={MAX_COMMITS}",
-            "--format=%h %ad %s",
+            f"--max-count={limit}",
+            "--format=%h%x1f%ad%x1f%s",
             "--date=short",
             "--",
             ".",
@@ -97,13 +154,150 @@ def news(root: Path, days: int) -> str:
         ],
         root,
     )
-    if commits:
+    commits: list[Commit] = []
+    for line in raw.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) != 3:
+            continue
+        sha, date, subject = parts
+        branch_m = re.match(r"^([a-z]+/[\w.-]+): ", subject)
+        pr_m = re.search(r"\(#(\d+)\)\s*$", subject)
+        commits.append(
+            Commit(
+                sha=sha,
+                date=date,
+                subject=subject,
+                branch=branch_m.group(1) if branch_m else "",
+                pr=pr_m.group(1) if pr_m else "",
+            )
+        )
+    return commits
+
+
+def build_clusters(
+    commits: list[Commit], notes: list[Note]
+) -> dict[str, list[Cluster]]:
+    """Group commits and notes by day, then by branch or PR.
+
+    Args:
+        commits: Parsed commits.
+        notes: Parsed notes.
+
+    Returns:
+        dict[str, list[Cluster]]: Day -> clusters, largest first.
+    """
+    by_day: dict[str, dict[str, Cluster]] = defaultdict(dict)
+    for c in commits:
+        key = c.branch or (f"#{c.pr}" if c.pr else "other")
+        by_day[c.date].setdefault(key, Cluster(key)).commits.append(c)
+    sha_to_key = {
+        c.sha: (c.date, c.branch or (f"#{c.pr}" if c.pr else "other")) for c in commits
+    }
+    for n in notes:
+        if n.commit and n.commit in sha_to_key:
+            day, key = sha_to_key[n.commit]
+        else:
+            day, key = n.date, n.branch or "notes"
+        by_day[day].setdefault(key, Cluster(key)).notes.append(n)
+    return {
+        day: sorted(clusters.values(), key=lambda cl: (-cl.size, cl.key))
+        for day, clusters in by_day.items()
+    }
+
+
+def adr_lines(root: Path, days_set: set[str]) -> dict[str, list[str]]:
+    """Render ADRs dated within the shown days, collapsing supersession.
+
+    Args:
+        root: Repository root.
+        days_set: Days present in the digest.
+
+    Returns:
+        dict[str, list[str]]: Day -> rendered lines.
+    """
+    out: dict[str, list[str]] = defaultdict(list)
+    for adr in reversed(list_adrs(root)):
+        meta = adr["meta"]
+        date = str(meta.get("date", ""))
+        if date not in days_set:
+            continue
+        decision = " ".join(section(adr["body"], "Decision").split()[:DECISION_WORDS])
+        verb = f" replaces {meta['supersedes']}: " if meta.get("supersedes") else ": "
+        must = "" if meta.get("must_read") is True else " _(not injected)_"
+        out[date].append(f"- {meta['id']}{verb}{meta['title']}{must} — {decision}…")
+    return out
+
+
+def news(root: Path, days: int) -> str:
+    """Build the digest.
+
+    Args:
+        root: Repository root.
+        days: Window for notes and commits.
+
+    Returns:
+        str: Markdown.
+    """
+    if not is_opted_in(root):
+        return "agentmemory: not opted in. Run `/agentmemory init` first.\n"
+    notes = parse_notes(root, days)
+    commits = parse_commits(root, MAX_COMMITS)
+    clusters = build_clusters(commits, notes)
+    shown_days = sorted(clusters, reverse=True)[:MAX_DAYS]
+    adrs = adr_lines(root, set(shown_days))
+
+    out: list[str] = ["# Repo news", ""]
+    catchup = read_text(root / LOCAL_DIR / "catchup.md").strip()
+    if catchup:
+        out += ["## Since this machine last pulled", "", catchup, ""]
+
+    for day in shown_days:
+        day_clusters = clusters[day]
+        n_commits = sum(len(c.commits) for c in day_clusters)
+        n_notes = sum(len(c.notes) for c in day_clusters)
+        n_adrs = len(adrs.get(day, []))
+        summary = ", ".join(
+            s
+            for s in (
+                (
+                    f"{n_commits} commit{'s' if n_commits != 1 else ''}"
+                    if n_commits
+                    else ""
+                ),
+                (
+                    f"{n_notes} decision note{'s' if n_notes != 1 else ''}"
+                    if n_notes
+                    else ""
+                ),
+                f"{n_adrs} ADR{'s' if n_adrs != 1 else ''}" if n_adrs else "",
+            )
+            if s
+        )
+        out += [f"## {day} — {summary}", ""]
+        for i, cl in enumerate(day_clusters[:MAX_CLUSTERS_PER_DAY]):
+            prs = sorted({c.pr for c in cl.commits if c.pr})
+            label = cl.key + (
+                f" (#{', #'.join(prs)})" if prs and not cl.key.startswith("#") else ""
+            )
+            lead = " — largest" if i == 0 and len(day_clusters) > 1 else ""
+            out.append(f"### {label}{lead}")
+            for n in cl.notes[:MAX_ITEMS_PER_CLUSTER]:
+                flag = " _(candidate, unreviewed)_" if n.candidate else ""
+                out.append(f"- decision ({n.author}): {n.decision}{flag}")
+            for c in cl.commits[:MAX_ITEMS_PER_CLUSTER]:
+                out.append(f"- {c.sha} {strip_prefix(c.subject, c.branch)}")
+            out.append("")
+        if adrs.get(day):
+            out += ["### ADRs", *adrs[day], ""]
+
+    candidates = [n for n in notes if n.candidate]
+    if candidates:
+        out += [f"## Unreviewed candidates ({len(candidates)})", ""]
         out += [
-            "## Recent code commits",
-            "",
-            *(f"- {c}" for c in commits.splitlines()),
-            "",
+            f"- {n.date} {n.decision} (promote with adr-promoter, or delete)"
+            for n in candidates
         ]
+        out.append("")
     if len(out) == 2:
         out.append(
             "No decision memory yet. Run `/memory-bootstrap` to seed it from docs and history."
