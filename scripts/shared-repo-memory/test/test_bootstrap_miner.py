@@ -30,12 +30,23 @@ def test_miner_ranks_docs_and_reasoned_commits(repo: Path) -> None:
     (repo / "other.py").write_text("y\n", encoding="utf-8")
     run_git(repo, "add", "-A")
     run_git(repo, "commit", "-q", "-m", "plain change with no reason")
+    (repo / "newest.py").write_text("z\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(
+        repo,
+        "commit",
+        "-q",
+        "-m",
+        "newest\n\nChosen instead of the old path because it is smaller.",
+    )
 
-    out = run_script("memory-bootstrap.py", cwd=repo)
+    out = run_script("memory-bootstrap.py", "--limit", "4", cwd=repo)
     assert out.returncode == 0, out.stderr
     text = out.stdout
     assert "## 1. Storage decision" in text
     assert "docs/design.md § Storage decision" in text
     assert "keep src synchronous" in text
+    assert "newest" in text  # first git-log record must not be dropped
+    assert text.count("Kind: commit") == 2 and text.count("Kind: doc") == 1
     assert "plain change" not in text
     assert "§ Install" not in text

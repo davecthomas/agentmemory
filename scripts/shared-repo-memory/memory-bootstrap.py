@@ -115,7 +115,11 @@ def commit_candidates(root: Path, limit: int) -> list[Candidate]:
         root,
     )
     found: list[Candidate] = []
-    for chunk in raw.split("\x1e")[1:]:
+    # git() strips the output and \x1e counts as whitespace, so the first
+    # record's separator is gone; split and skip empties instead of dropping [0].
+    for chunk in raw.split("\x1e"):
+        if not chunk.strip():
+            continue
         parts = chunk.split("\x1f")
         if len(parts) < 4:
             continue
@@ -151,7 +155,24 @@ def render(candidates: list[Candidate], limit: int) -> str:
     Returns:
         str: Markdown.
     """
-    ranked = sorted(candidates, key=lambda c: (-c.score, c.source))[:limit]
+    # Docs outscore commits by construction, so take the best of each kind
+    # before merging; otherwise a doc-heavy repo never shows a commit.
+    per_kind: int = max(1, (limit + 1) // 2)
+    docs = sorted(
+        (c for c in candidates if c.kind == "doc"), key=lambda c: (-c.score, c.source)
+    )
+    commits = sorted(
+        (c for c in candidates if c.kind == "commit"),
+        key=lambda c: (-c.score, c.source),
+    )
+    ranked = sorted(
+        docs[:per_kind] + commits[:per_kind], key=lambda c: (-c.score, c.source)
+    )
+    if len(ranked) < limit:
+        rest = [c for c in docs[per_kind:] + commits[per_kind:]]
+        ranked += sorted(rest, key=lambda c: (-c.score, c.source))[
+            : limit - len(ranked)
+        ]
     if not ranked:
         return "No decision candidates found in docs or commit bodies.\n"
     out = [

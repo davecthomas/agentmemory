@@ -524,6 +524,28 @@ def list_notes(root: Path, window_days: int | None = None) -> list[Path]:
     return [note for note in notes if note.stem >= cutoff]
 
 
+def note_index(root: Path, *, exclude: set[Path] | None = None) -> list[str]:
+    """One line per note entry: ``- YYYY-MM-DD: <decision>``, newest first.
+
+    Args:
+        root: Repository root.
+        exclude: Note files to skip (those already injected in full).
+
+    Returns:
+        list[str]: Markdown bullet lines.
+    """
+    lines: list[str] = []
+    for note in list_notes(root):
+        if exclude and note in exclude:
+            continue
+        for block in reversed(re.split(r"(?m)^## ", read_text(note))[1:]):
+            match = re.search(r"^\*\*Decision:\*\*\s*(.+)$", block, re.MULTILINE)
+            if match:
+                flag = " (candidate)" if "**Candidate:** true" in block else ""
+                lines.append(f"- {note.stem}: {match.group(1).strip()}{flag}")
+    return lines
+
+
 def memory_counts(root: Path) -> tuple[int, int]:
     """Count ADRs and note files.
 
@@ -540,9 +562,10 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
     """Build the bounded Markdown block injected at session start.
 
     Order: ADR index, the Decision section of each must-read ADR (newest
-    first), recent decision notes (newest first), then the local catch-up.
-    Later blocks are dropped once ``context_budget_words`` is reached and a
-    trailing line names what was omitted.
+    first), recent decision notes in full (newest first), a one-line index of
+    every older note entry so nothing recorded is invisible, then the local
+    catch-up. Later blocks are dropped once ``context_budget_words`` is
+    reached and a trailing line names what was omitted.
 
     Args:
         root: Repository root.
@@ -564,8 +587,17 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
             decision: str = section(adr["body"], "Decision")
             if decision:
                 blocks.append((f"{meta['id']}: {meta['title']}", decision))
-    for note in list_notes(root, int(cfg["notes_window_days"])):
+    recent: list[Path] = list_notes(root, int(cfg["notes_window_days"]))
+    for note in recent:
         blocks.append((f"Decision notes {note.stem}", read_text(note).strip()))
+    older: list[str] = note_index(root, exclude=set(recent))
+    if older:
+        blocks.append(
+            (
+                "Older decision notes (one line each; ask the `memory` skill for detail)",
+                "\n".join(older),
+            )
+        )
     catchup: str = read_text(root / LOCAL_DIR / "catchup.md").strip()
     if catchup:
         blocks.append(("Catch-up since last session", catchup))
