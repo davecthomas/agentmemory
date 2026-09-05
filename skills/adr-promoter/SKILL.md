@@ -1,33 +1,47 @@
 ---
 name: adr-promoter
-description: Promotes a decision-candidate shared repo-memory event shard into an ADR and refreshes the ADR index.
+description: Promotes a decision note, or an explicitly stated decision, into an Architecture Decision Record under .agents/memory/adr/ and rebuilds the index.
 license: MIT
 ---
 
-# Promote A Decision Candidate To An ADR
+# Promote A Decision To An ADR
 
 ## Keywords
 
-adr, promote adr, decision candidate, architecture decision record, shared repo memory, durable decision, adr index
+adr, promote adr, promote note, architecture decision record, make this an ADR, durable decision, adr index
 
 ## When to Use This Skill
 
-- A repository uses `.agents/memory/adr/` for durable decisions
-- A shared repo-memory event shard has `decision_candidate: true`
-- You need to create one ADR and refresh `.agents/memory/adr/INDEX.md`
+- A decision note in `.agents/memory/notes/` describes a choice that governs the codebase going forward
+- The developer states a decision and asks for it to be recorded durably
+- A commit hook wrote a `Candidate: true` note that deserves promotion
+
+Promotion is always explicit. Do not promote as a side effect of other work.
 
 ---
 
 ## Workflow
 
-- Treat missing folders inside `.agents/memory/` as normal repo-owned state. Create `.agents/memory/adr/` or other required subdirectories automatically without asking the user for confirmation.
-- Confirm the candidate shard exists under `.agents/memory/daily/YYYY-MM-DD/events/`.
-- Read the shard and use its `Why`, `What changed`, `Evidence`, and `Next` sections as the ADR source.
-- Create exactly one new ADR under `.agents/memory/adr/`.
-- Refresh `.agents/memory/adr/INDEX.md` in identifier order.
-- Keep the promotion explicit. Do not auto-commit or auto-push the ADR changes.
-- In this POC repo, prefer the installed helper:
+From a note (preferred, keeps provenance):
 
 ```bash
-./scripts/shared-repo-memory/promote-adr.sh .agents/memory/daily/YYYY-MM-DD/events/<shard>.md
+python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
+    --from-note .agents/memory/notes/YYYY-MM-DD.md --entry <N> \
+    [--title "<better title>"] [--consequences "<what follows>"] [--tags "<a,b>"]
 ```
+
+From explicit text:
+
+```bash
+python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
+    --title "<title>" --context "<why the decision was needed>" \
+    --decision "<what was decided>" [--alternatives "<rejected options>"] \
+    [--consequences "<what follows>"] [--source "<doc, commit, or note>"] \
+    [--no-must-read]
+```
+
+- Entries are numbered from 1 in file order. Read the note file first to pick the right one.
+- Write Consequences yourself when the note lacks them; an ADR without consequences is a wish.
+- `must_read` defaults to true, which injects the Decision section at every session start. Use `--no-must-read` for decisions that matter only when touching one area; the `memory` skill still finds them.
+- The script writes the ADR, rebuilds `INDEX.md`, and stages both. Do not commit.
+- To rebuild the index alone: `promote-adr.py --reindex`.
