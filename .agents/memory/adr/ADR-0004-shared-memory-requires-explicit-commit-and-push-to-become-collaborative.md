@@ -25,7 +25,7 @@ The system does not create separate memory-only publication paths. Memory moves 
 
 ## Alternatives
 
-None recorded.
+Auto-commit memory on every capture: rejected because it bypasses review and creates commits with no code change. Auto-push to a dedicated memory branch: rejected because it separates memory from the change it explains.
 
 ## Consequences
 

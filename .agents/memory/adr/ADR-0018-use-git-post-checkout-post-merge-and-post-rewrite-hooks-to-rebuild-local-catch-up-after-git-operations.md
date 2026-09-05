@@ -24,7 +24,7 @@ Local catch-up (`catchup.md`) is an uncommitted digest that reflects what change
 
 ## Alternatives
 
-None recorded.
+Rebuild catch-up at session start only, by comparing the last-seen sha: session start does read the digest, but rebuilding only then misses git operations inside a running session. Poll the working tree for changes: rejected as wasteful and late.
 
 ## Consequences
 

@@ -16,7 +16,8 @@ Agent makes a          →  memory-note skill appends 3 lines to
 non-obvious choice        .agents/memory/notes/YYYY-MM-DD.md (staged, not committed)
 
 Developer commits      →  post-commit hook appends a candidate note when the commit
-                         touches docs/** or carries a "Decision:" line
+                         touches docs/** or carries a "Decision:" line. The note is
+                         staged and rides in the next commit (or `git commit --amend`).
 
 Note proves durable    →  adr-promoter skill writes ADR-NNNN-<slug>.md, rebuilds INDEX.md
 
@@ -99,6 +100,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `post-compact.py` | Hook. Re-injects context after compaction. |
 | `bootstrap-repo.py` | `--init` opts a repo in; otherwise repairs wiring. |
 | `catchup.py` | Git hook. Writes `local/catchup.md` from memory changes since last seen. |
+| `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |
 | `memory-note.py` | Append a note. |
 | `commit-capture.py` | Git hook. Candidate note from a decision-bearing commit. |
 | `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--reindex`. |
@@ -111,7 +113,7 @@ Together they are about 2,100 lines of Python with no dependencies beyond the st
 
 Memory has to earn its context budget.
 
-- `evals/check_memory.py` runs in the pre-commit hook and rejects a commit whose ADR index, links, frontmatter, note format, or budget is broken.
+- `scripts/shared-repo-memory/check-memory.py` runs in the pre-commit hook and rejects a commit whose ADR index, links, frontmatter, note format, or budget is broken.
 - `evals/run_eval.py` asks `claude -p`, with tools disabled, the questions in `evals/questions.json` with and without the session-start context, scores `must_mention` coverage, writes `evals/results/<timestamp>.json`, and fails when memory does not beat the baseline.
 
 ```bash

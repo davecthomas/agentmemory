@@ -23,7 +23,7 @@ Claude Code's compaction (context window summarization) discards the full transc
 
 ## Alternatives
 
-None recorded.
+Rely on Claude Code's compaction summary to preserve the injected memory: rejected because the summary is lossy and does not know which lines are load-bearing. Re-read memory only on demand through a skill: rejected because the invariant is that every turn starts from prior decisions without being asked.
 
 ## Consequences
 

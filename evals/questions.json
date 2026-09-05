@@ -1,65 +1,119 @@
 {
-  "_comment": "Questions a fresh session should answer from this repo's decision memory. must_mention terms are matched case-insensitively; any one alternative inside a nested list counts.",
+  "_comment": "Questions a fresh session should answer from this repo's decision memory. must_mention terms are matched case-insensitively; any one alternative inside a nested list counts. expected is the reference answer for --judge. Questions tagged holdout were written from git history and AGENTS.md, not from the ADRs, so they measure gaps as well as coverage.",
   "questions": [
     {
       "id": "storage-location",
       "question": "Where does this repository keep shared agent memory, and why that location rather than a per-agent directory?",
-      "must_mention": [".agents/memory", ["agent-neutral", "neutral", "not owned by", "no single"]]
+      "must_mention": [".agents/memory", ["agent-neutral", "neutral", "not owned by", "no single"]],
+      "expected": "Under .agents/memory/ in the repo. The .agents namespace is agent-neutral: no single vendor's directory owns repo-wide state, and the memory travels with clones and PRs."
     },
     {
       "id": "no-service",
       "question": "Does agentmemory use a database, vector store, or external service for memory? What does it use instead?",
-      "must_mention": [["markdown", "plain text"], "git", ["no service", "no external", "no database", "no vector"]]
+      "must_mention": [["markdown", "plain text"], "git", ["no service", "no external", "no database", "no vector"]],
+      "expected": "No. Memory is plain Markdown committed to Git under .agents/memory/; there is no database, vector store, embedding pipeline, or external service."
     },
     {
       "id": "opt-in",
       "question": "If agentmemory is installed on my machine, is it active in every git repository I open? How does a repository opt in?",
-      "must_mention": ["config.json", ["init", "bootstrap-repo", "agentmemory skill", "/agentmemory"]]
+      "must_mention": ["config.json", ["init", "bootstrap-repo", "agentmemory skill", "/agentmemory"]],
+      "expected": "No. A repo opts in by committing .agents/memory/config.json, written by bootstrap-repo.py --init (the agentmemory skill, /agentmemory init). Without that file every hook exits silently."
     },
     {
       "id": "capture-unit",
       "question": "In v0.5, when is a decision captured into memory, and why was per-turn capture abandoned?",
-      "must_mention": [["note", "notes"], ["commit", "post-commit"], ["Decision:", "decision_surfaces", "docs/**"], ["claude -p", "subagent", "LLM", "background"]]
+      "must_mention": [["note", "notes"], ["commit", "post-commit"], ["Decision:", "decision_surfaces", "docs/**"], ["claude -p", "subagent", "LLM", "background"]],
+      "expected": "Two ways: a decision note written by the agent or a human when a non-obvious choice is made, and a candidate note appended by the post-commit hook when a commit touches decision_surfaces or has a Decision: line. Per-turn capture discarded the why and cost a background claude -p session per turn to reconstruct it, publishing almost nothing."
     },
     {
       "id": "commit-capture-rule",
       "question": "What makes a commit qualify for automatic decision capture?",
-      "must_mention": [["Decision:", "decision line"], ["decision_surfaces", "docs/**", "surface"]]
+      "must_mention": [["Decision:", "decision line"], ["decision_surfaces", "docs/**", "surface"]],
+      "expected": "The commit body carries a Decision: line, or the commit touches a path matching decision_surfaces in config.json (default docs/**). Commits touching only .agents/memory/ are skipped."
     },
     {
       "id": "adr-only-durable",
       "question": "Where do durable architectural decisions live, and can a hook promote one automatically?",
-      "must_mention": ["ADR", ["explicit", "never automatic", "not automatic", "manual"]]
+      "must_mention": ["ADR", ["explicit", "never automatic", "not automatic", "manual"]],
+      "expected": "Only in ADRs under .agents/memory/adr/. Promotion is always explicit (adr-promoter / promote-adr.py); no hook promotes automatically."
     },
     {
       "id": "session-context",
       "question": "What does the SessionStart hook inject into the agent's context, in what order, and what bounds it?",
-      "must_mention": [["index", "INDEX"], "must", ["note", "notes"], ["budget", "words"]]
+      "must_mention": [["index", "INDEX"], "must", ["note", "notes"], ["budget", "words"]],
+      "expected": "In order: the ADR INDEX, the Decision section of every must_read ADR newest first, notes from the last notes_window_days, then local/catchup.md. Bounded by context_budget_words (default 2500); later blocks are dropped and a trailing line names what was omitted."
     },
     {
       "id": "post-compact",
       "question": "What happens to memory context after Claude Code compacts the conversation?",
-      "must_mention": [["re-inject", "reinject", "injected again", "re-injected"], "PostCompact"]
+      "must_mention": [["re-inject", "reinject", "injected again", "re-injected"], "PostCompact"],
+      "expected": "The PostCompact hook re-injects the same bounded memory block so the session keeps the repo's decisions in context."
     },
     {
       "id": "catchup",
       "question": "How does a developer's session learn what changed in memory after a git pull?",
-      "must_mention": [["catch-up", "catchup"], ["post-merge", "post-checkout", "git hook"]]
+      "must_mention": [["catch-up", "catchup"], ["post-merge", "post-checkout", "git hook"]],
+      "expected": "Git hooks (post-checkout, post-merge, post-rewrite) run catchup.py, which writes local/catchup.md from git log over adr/ and notes/ since the last-seen sha; SessionStart includes it."
     },
     {
       "id": "runtime-support",
       "question": "Which agent runtimes does agentmemory v0.5 support, and what happened to Gemini and Codex support?",
-      "must_mention": ["Claude Code", ["removed", "dropped", "only", "no longer"]]
+      "must_mention": ["Claude Code", ["removed", "dropped", "only", "no longer"]],
+      "expected": "Claude Code only. The Gemini and Codex adapters were removed; scripts still install under agent-neutral ~/.agent/ paths so a runtime can be added later."
     },
     {
       "id": "no-auto-commit",
       "question": "Does agentmemory ever commit or push memory files on its own?",
-      "must_mention": [["never", "does not", "no"], ["stage", "staged", "staging"]]
+      "must_mention": [["never", "does not", "no"], ["stage", "staged", "staging"]],
+      "expected": "No. It only stages memory files (notes, ADRs, the index); committing and pushing are explicit so memory rides in the same PR as the code."
     },
     {
       "id": "query-path",
       "question": "How do I ask what has already been decided about a subsystem, and where does that search look?",
-      "must_mention": [["memory-query", "memory skill", "/memory"], "ADR", ["note", "notes"]]
+      "must_mention": [["memory-query", "memory skill", "/memory"], "ADR", ["note", "notes"]],
+      "expected": "The memory skill (memory-query.py <topic or path>) searches ADRs, decision notes, docs/*.md, and, for a path, its recent git log."
+    },
+    {
+      "id": "holdout-black-pin",
+      "holdout": true,
+      "question": "Why is black pinned to an exact version in this repo rather than a caret range?",
+      "must_mention": [["exact", "pinned"], ["reformat", "formatting diff", "output changes", "changes between releases"]],
+      "expected": "Black's output changes between releases, so a caret range would let poetry update reformat the tree and turn an unrelated PR into a formatting diff. The pin is raised in its own commit."
+    },
+    {
+      "id": "holdout-runtime-detection",
+      "holdout": true,
+      "question": "How did runtime detection in the hook layer resolve which agent was running, and why did it fail closed?",
+      "must_mention": [["payload"], ["process", "ancestry", "parent"], ["env", "environment"], ["unknown", "fail closed", "fails closed", "skip"]],
+      "expected": "Payload fingerprint, then process ancestry, then environment variables, then an UnknownAdapter that skips instead of guessing, because falling through to Codex misattributed shards and spawned bootstraps with the wrong credentials."
+    },
+    {
+      "id": "holdout-uninstall-safety",
+      "holdout": true,
+      "question": "What does the uninstaller refuse to remove, and how does it decide what is its own?",
+      "must_mention": [["canonical", "content", "matches", "identify", "its own", "user-added", "edited"]],
+      "expected": "It removes only what it can prove it created: hook entries whose command points into the install root, generated git hooks whose content still matches the canonical text, the managed .gitignore block, and the hooksPath only when .githooks is otherwise empty. Edited hooks and user-added settings survive; committed memory is untouched unless --purge-memory is passed."
+    },
+    {
+      "id": "holdout-quality-gate",
+      "holdout": true,
+      "question": "What enforces formatting and tests on commits in this repo?",
+      "must_mention": [["pre-commit", "hook"], "black", ["ruff", "pytest", "test"]],
+      "expected": "The generated pre-commit hook delegates to scripts/shared-repo-memory/project-pre-commit.sh, which runs black --check, ruff, pytest, and check-memory.py. A GitHub Actions workflow runs the same set."
+    },
+    {
+      "id": "holdout-hook-json",
+      "holdout": true,
+      "question": "How do the SessionStart and PostCompact hooks hand context back to Claude Code?",
+      "must_mention": [["additionalContext", "hookSpecificOutput", "JSON"]],
+      "expected": "They print a JSON object on stdout with hookSpecificOutput.additionalContext holding the memory block (and hookEventName), plus a systemMessage for SessionStart. Stderr is used for all human-facing logging."
+    },
+    {
+      "id": "holdout-codex-symlink",
+      "holdout": true,
+      "question": "Does the repo still create a .codex/memory symlink? Why or why not?",
+      "must_mention": [["no", "removed", "no longer"], ["Claude", "ADR-0021", "only runtime"]],
+      "expected": "No. Claude Code is the only supported runtime in v0.5, so .codex/memory and .codex/local are no longer created."
     }
   ]
 }

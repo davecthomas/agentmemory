@@ -16,15 +16,15 @@ if command -v poetry &>/dev/null; then
   poetry run black --check .
   poetry run ruff check scripts/ evals/
   poetry run pytest scripts/shared-repo-memory/test/ -q
-  poetry run python evals/check_memory.py
+  poetry run python scripts/shared-repo-memory/check-memory.py
 elif [ -x "$repo_root/.venv/bin/ruff" ]; then
   "$repo_root/.venv/bin/black" --check .
   "$repo_root/.venv/bin/ruff" check scripts/ evals/
   "$repo_root/.venv/bin/python" -m pytest scripts/shared-repo-memory/test/ -q
-  "$repo_root/.venv/bin/python" evals/check_memory.py
+  "$repo_root/.venv/bin/python" scripts/shared-repo-memory/check-memory.py
 else
   black --check .
   ruff check scripts/ evals/
   pytest scripts/shared-repo-memory/test/ -q
-  python3 evals/check_memory.py
+  python3 scripts/shared-repo-memory/check-memory.py
 fi

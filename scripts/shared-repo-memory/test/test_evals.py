@@ -11,7 +11,7 @@ EVALS: Path = SCRIPTS.parents[1] / "evals"
 
 
 def _check(root: Path) -> list[str]:
-    return common.load_module(EVALS / "check_memory.py").run(root)
+    return common.load_module(SCRIPTS / "check-memory.py").run(root)
 
 
 def test_check_memory_skips_repos_not_opted_in(repo: Path) -> None:
@@ -21,7 +21,16 @@ def test_check_memory_skips_repos_not_opted_in(repo: Path) -> None:
 def test_check_memory_passes_on_bootstrapped_repo_with_adr_and_note(repo: Path) -> None:
     assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
     run_script(
-        "promote-adr.py", "--title", "T", "--context", "c", "--decision", "d", cwd=repo
+        "promote-adr.py",
+        "--title",
+        "T",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        "--alternatives",
+        "None viable; recorded for the check.",
+        cwd=repo,
     )
     run_script("memory-note.py", "--decision", "D", "--why", "W", cwd=repo)
     assert _check(repo) == []
@@ -47,6 +56,28 @@ def test_check_memory_reports_each_problem(repo: Path) -> None:
     assert "2026-01-01.md entry 1: missing **Decision:** line" in problems
 
 
+def test_check_memory_flags_placeholder_alternatives(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    run_script(
+        "promote-adr.py", "--title", "T", "--context", "c", "--decision", "d", cwd=repo
+    )
+    assert any("placeholder Alternatives" in p for p in _check(repo))
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "U",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        "--alternatives",
+        "Considered X; rejected because Y.",
+        cwd=repo,
+    )
+    problems = _check(repo)
+    assert sum("placeholder Alternatives" in p for p in problems) == 1
+
+
 def test_check_memory_flags_must_read_over_budget(repo: Path) -> None:
     assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
     common.dump_json(
@@ -61,6 +92,8 @@ def test_check_memory_flags_must_read_over_budget(repo: Path) -> None:
             "c",
             "--decision",
             "word " * 15,
+            "--alternatives",
+            "a",
             cwd=repo,
         )
     problems = "\n".join(_check(repo))

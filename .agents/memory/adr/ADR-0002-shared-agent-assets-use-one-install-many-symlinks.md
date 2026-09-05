@@ -27,7 +27,7 @@ It does not apply to repo memory content, which lives in `<repo>/.agents/memory/
 
 ## Alternatives
 
-None recorded.
+Copy skills into each agent's directory on install: rejected because every update then needs N re-installs and the copies drift. Symlink each agent's skills directory straight into the agentmemory checkout: rejected because agents crawl the whole checkout as context when they load a skill.
 
 ## Consequences
 

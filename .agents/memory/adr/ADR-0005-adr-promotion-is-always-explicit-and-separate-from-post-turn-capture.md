@@ -4,7 +4,7 @@ title: "ADR promotion is always explicit and separate from post-turn capture"
 status: "accepted"
 date: "2026-04-02"
 tags: "adr,curation,workflow"
-must_read: false
+must_read: true
 supersedes: ""
 superseded_by: ""
 ---
@@ -23,7 +23,7 @@ A post-turn shard may have `decision_candidate: true` in its frontmatter when th
 
 ## Alternatives
 
-None recorded.
+Promote automatically when a capture is flagged as a decision candidate: rejected because hooks cannot pause for judgement, so ADRs would accumulate noise. Never promote and keep everything as notes: rejected because notes are dated and unbounded while ADRs are the curated set an agent must obey.
 
 ## Consequences
 

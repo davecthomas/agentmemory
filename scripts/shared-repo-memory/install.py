@@ -34,6 +34,7 @@ SCRIPTS: tuple[str, ...] = (
     "commit-capture.py",
     "promote-adr.py",
     "memory-query.py",
+    "check-memory.py",
     "uninstall.py",
 )
 

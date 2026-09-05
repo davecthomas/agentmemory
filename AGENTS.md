@@ -12,7 +12,7 @@ Follow standard pytest project folder structure for testing.
 ## Formatting & style
 
 - Keep code formatted with `black` (default settings). **CRITICAL:** Before completing any code changes or responding to the user that a fix is complete, you MUST run `poetry run black .` and `poetry run ruff check .`. If Ruff reports issues, you MUST fix them (for example, run `poetry run ruff check . --fix` when appropriate) and re-run `poetry run ruff check .` until all checks pass.
-- `scripts/shared-repo-memory/project-pre-commit.sh` runs `black --check`, `ruff`, the test suite, and `evals/check_memory.py` on every commit, so unformatted code and broken decision memory fail at commit time. The repo has no CI; this hook is the only thing enforcing it.
+- `scripts/shared-repo-memory/project-pre-commit.sh` runs `black --check`, `ruff`, the test suite, and `scripts/shared-repo-memory/check-memory.py` on every commit, so unformatted code and broken decision memory fail at commit time. The repo has no CI; this hook is the only thing enforcing it.
 - `black` is pinned to an exact version in `pyproject.toml`. Its output changes between releases, so a range would let `poetry update` reformat the tree and turn the next unrelated PR into a formatting diff. Raise the pin in its own commit.
 - Use US English for all documentation and comments.
 - Include type hints for every variable, parameter, and return value.

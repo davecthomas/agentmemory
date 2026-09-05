@@ -72,7 +72,10 @@ def hook_text(name: str) -> str:
     head += 'scripts="$HOME/.agent/shared-repo-memory"\n'
     if name == "pre-commit":
         return (
-            head + 'project_hook="$repo_root/scripts/shared-repo-memory/'
+            head + 'if [ -f "$scripts/check-memory.py" ]; then\n'
+            '  python3 "$scripts/check-memory.py" --repo-root "$repo_root"\n'
+            "fi\n"
+            'project_hook="$repo_root/scripts/shared-repo-memory/'
             'project-pre-commit.sh"\n'
             'if [ -f "$project_hook" ]; then bash "$project_hook" "$@"; fi\n'
         )
