@@ -7,6 +7,12 @@ decision notes to the commits that produced them and leading with the
 largest cluster. ADRs that supersede others collapse to one line. Authors
 and decision text are cleaned so the skill can read the digest aloud.
 Deterministic; no LLM.
+
+The digest remembers when it was last read (``news_last_read`` in
+``.agents/memory/local/state.json``) and defaults to what is new since
+then, so a quiet repo says "nothing new" instead of repeating the same
+two weeks. ``--all`` ignores the watermark; ``--no-mark`` reads without
+advancing it.
 """
 
 from __future__ import annotations
@@ -20,15 +26,18 @@ from pathlib import Path
 from common import (
     LOCAL_DIR,
     MEMORY_DIR,
+    dump_json,
     git,
     is_opted_in,
     list_adrs,
     list_notes,
+    load_json,
     log,
     read_text,
     repo_root,
     safe_main,
     section,
+    stamp,
 )
 
 MAX_DAYS: int = 7
@@ -41,6 +50,7 @@ DECISION_WORDS: int = 30
 @dataclass
 class Note:
     date: str
+    when: str
     author: str
     branch: str
     decision: str
@@ -121,6 +131,7 @@ def parse_notes(root: Path, days: int) -> list[Note]:
             notes.append(
                 Note(
                     date=path.stem,
+                    when=parts[0] if parts else path.stem,
                     author=author,
                     branch=branch,
                     decision=strip_prefix(grab("Decision"), branch),
@@ -228,25 +239,74 @@ def adr_lines(root: Path, days_set: set[str]) -> dict[str, list[str]]:
     return out
 
 
-def news(root: Path, days: int) -> str:
+def read_watermark(root: Path) -> tuple[str, str]:
+    """Return ``(last_read_stamp, last_read_sha)`` or empty strings.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        tuple[str, str]: Minute-precision UTC stamp and the HEAD sha at that read.
+    """
+    state = load_json(root / LOCAL_DIR / "state.json", {})
+    if not isinstance(state, dict):
+        return "", ""
+    return str(state.get("news_last_read", "")), str(
+        state.get("news_last_read_sha", "")
+    )
+
+
+def write_watermark(root: Path) -> None:
+    """Record now and HEAD as the last news read, keeping other state keys.
+
+    Args:
+        root: Repository root.
+    """
+    path = root / LOCAL_DIR / "state.json"
+    state = load_json(path, {})
+    if not isinstance(state, dict):
+        state = {}
+    state["news_last_read"] = stamp()
+    state["news_last_read_sha"] = git(["rev-parse", "HEAD"], root)
+    dump_json(path, state)
+
+
+def news(root: Path, days: int, *, since_last_read: bool = True) -> str:
     """Build the digest.
 
     Args:
         root: Repository root.
-        days: Window for notes and commits.
+        days: Window for notes and commits when there is no watermark or
+            ``since_last_read`` is False.
+        since_last_read: Show only what is new since the last read.
 
     Returns:
         str: Markdown.
     """
     if not is_opted_in(root):
         return "agentmemory: not opted in. Run `/agentmemory init` first.\n"
-    notes = parse_notes(root, days)
+    last_read, last_sha = read_watermark(root) if since_last_read else ("", "")
+    notes = parse_notes(root, days if not last_read else 3650)
     commits = parse_commits(root, MAX_COMMITS)
+    if last_read:
+        notes = [n for n in notes if n.when > last_read]
+        if last_sha and git(["cat-file", "-t", last_sha], root) == "commit":
+            new_shas = set(
+                git(["log", "--format=%h", f"{last_sha}..HEAD"], root).split()
+            )
+            commits = [c for c in commits if c.sha in new_shas]
+        if not notes and not commits:
+            return (
+                f"# Repo news\n\nNothing new since you last read news at {last_read}. "
+                "Run with --all for the recent history.\n"
+            )
     clusters = build_clusters(commits, notes)
     shown_days = sorted(clusters, reverse=True)[:MAX_DAYS]
     adrs = adr_lines(root, set(shown_days))
 
     out: list[str] = ["# Repo news", ""]
+    if last_read:
+        out += [f"_New since you last read news at {last_read}._", ""]
     catchup = read_text(root / LOCAL_DIR / "catchup.md").strip()
     if catchup:
         out += ["## Since this machine last pulled", "", catchup, ""]
@@ -309,12 +369,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=None)
     parser.add_argument("--days", type=int, default=14)
+    parser.add_argument("--all", action="store_true", help="ignore the read watermark")
+    parser.add_argument("--no-mark", action="store_true", help="do not advance it")
     args = parser.parse_args()
     root = repo_root(args.repo_root)
     if root is None:
         log("memory-news: not inside a git repository")
         return 1
-    print(news(root, args.days), end="")
+    print(news(root, args.days, since_last_read=not args.all), end="")
+    if not args.no_mark and is_opted_in(root):
+        write_watermark(root)
     return 0
 
 
