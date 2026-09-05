@@ -1,0 +1,102 @@
+{
+  "model": null,
+  "conditions": [
+    "none",
+    "memory"
+  ],
+  "means": {
+    "none": 0.125,
+    "memory": 0.917
+  },
+  "context_words": 1112,
+  "rows": [
+    {
+      "id": "storage-location",
+      "question": "Where does this repository keep shared agent memory, and why that location rather than a per-agent directory?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "missed": [
+            ".agents/memory",
+            "agent-neutral | neutral | not owned by | no single"
+          ],
+          "seconds": 5.6,
+          "answer": "The prompt gives me nothing about this repository \u2014 no files, docs, or description of an agent memory location (shared or per-agent) \u2014 so I can't say where it's kept or why."
+        },
+        "memory": {
+          "score": 1.0,
+          "missed": [],
+          "seconds": 13.0,
+          "answer": "Shared agent memory lives at `<repo>/.agents/memory/` (ADR-0001, accepted, must-read). All memory writes target that path. Agent-specific paths such as `<repo>/.codex/memory` are only symlinks to `../.agents/memory` \u2014 access paths, never the canonical store, and they must never receive direct writes.\n\nWhy there and not a per-agent directory:\n\n- **Agent neutrality.** ADR-0001 states the `.agents/` namespace is deliberately agent-neutral so that no single tool (Claude Code, Codex, Gemini, etc.) owns it. A per-agent directory like `.codex/` would tie the shared record to one runtime.\n- **Repo ownership, not user ownership.** ADR-0002 distinguishes memory *content* (lives in `<repo>/.agents/memory/`, owned by the repo) from installed *assets* (scripts and skills under `~/.agent/shared-repo-memory/`, with `~/.claude/skills/` and similar being symlinks). Memory content is explicitly excluded from the home-directory install model.\n- **Memory moves with code.** ADR-0004 requires memory to become collaborative only via explicit commit and push on the same branch/PR as the code it describes; a repo-resident, tool-neutral directory is what makes that possible.\n- **Opt-in marker.** ADR-0020 makes `.agents/memory/config.json` the opt-in marker and settings file (`decision_surfaces`, `context_budget_words`, `notes_window_days`); `session-start.py` and `post-compact.py` exit silently without it.\n\nInside that directory: decision notes go to `.agents/memory/notes/YYYY-MM-DD.md` (ADR-0019), and ADRs with `INDEX.md` are read by `build_memory_context()` (ADR-0022). The one exception is local continuity state \u2014 `.codex/local/catchup.md` and `sync_state.json` \u2014 which is explicitly local-only and never committed (ADR-0018)."
+        }
+      }
+    },
+    {
+      "id": "no-service",
+      "question": "Does agentmemory use a database, vector store, or external service for memory? What does it use instead?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "missed": [
+            "markdown | plain text",
+            "git",
+            "no service | no external | no database | no vector"
+          ],
+          "seconds": 11.5,
+          "answer": "The prompt gives me no information about agentmemory's storage implementation (no source files, README, or dependency list are included), so I can't say whether it uses a database, vector store, external service, or something else."
+        },
+        "memory": {
+          "score": 0.667,
+          "missed": [
+            "no service | no external | no database | no vector"
+          ],
+          "seconds": 14.9,
+          "answer": "No. Nothing in the ADR set describes a database, vector store, embedding index, or external service; every mechanism named is plain files in git plus small Python scripts.\n\nWhat it uses instead:\n\n- **Markdown files committed in the repo** (ADR-0001): canonical memory lives at `<repo>/.agents/memory/`. Decisions are ADR files (`ADR-NNNN-*.md`) indexed by `INDEX.md`; notes are appended to `.agents/memory/notes/YYYY-MM-DD.md` (ADR-0019). Agent-specific paths like `.codex/memory` are just symlinks to that directory.\n- **Git as the sync and sharing layer** (ADR-0004): memory files are staged by hooks but only become shared when a human/agent commits and pushes them on the same branch/PR as the code. There is no separate memory-only publication path \u2014 \"memory moves with code.\"\n- **Git hooks, not services, for capture** (ADR-0019, ADR-0018): `post-commit` \u2192 `commit-capture.py` writes a candidate note when a commit touches a `decision_surfaces` path or has a `Decision:` line; `post-checkout`/`post-merge`/`post-rewrite` \u2192 `build-catchup.py` regenerates a local `catchup.md` and `sync_state.json`. ADR-0019 is explicit that \"no hook spawns an LLM.\"\n- **A JSON config file as the opt-in/settings store** (ADR-0020): `.agents/memory/config.json` with `decision_surfaces`, `context_budget_words`, `notes_window_days`.\n- **Retrieval by deterministic assembly, not search** (ADR-0022): `build_memory_context()` in `common.py` concatenates `INDEX.md`, the Decision sections of `must_read: true` ADRs, recent notes, and `local/catchup.md` into one block trimmed to `context_budget_words` (default 2,500). Anything cut is reachable via the `memory` skill's `memory-query.py`, which (per the ADRs) reads the same files rather than querying an index.\n- **Local install of scripts and skills** (ADR-0002): one copy under `~/.agent/shared-repo-memory/` with symlinks into `~/.claude/skills/`, wired to Claude Code's `SessionStart`/`PostCompact` hooks in `~/.claude/settings.json` (ADR-0021, ADR-0012).\n\nEarlier designs (event shards, derived daily summaries, an episode graph \u2014 ADR-0003/0007/0011) were also file-based, and ADR-0019 removed them in favor of the simpler notes-plus-ADRs model."
+        }
+      }
+    },
+    {
+      "id": "opt-in",
+      "question": "If agentmemory is installed on my machine, is it active in every git repository I open? How does a repository opt in?",
+      "results": {
+        "none": {
+          "score": 0.5,
+          "missed": [
+            "config.json"
+          ],
+          "seconds": 11.1,
+          "answer": "The prompt gives me nothing about agentmemory's activation or opt-in mechanism \u2014 I have no repository files, README, config, or documentation in view, and the working directory (`/private/var/folders/.../agentmemory-eval-zm1db5px`) is not itself a git repository, so I can't ground an answer about per-repo activation or how a repository opts in.\n\nIf you can point me at the agentmemory source or docs (e.g. its README, a `plugin.json`/hook config, or wherever it looks for a repo-level marker such as a `.agentmemory/` directory or config file), I can tell you concretely whether it's global or per-repo and what the opt-in mechanism is."
+        },
+        "memory": {
+          "score": 1.0,
+          "missed": [],
+          "seconds": 12.6,
+          "answer": "No \u2014 installing agentmemory on your machine does not make it active in every repository. Activation is per-repository and requires an explicit opt-in (ADR-0020).\n\n**How it works**\n\n- **Machine-level install** (ADR-0002 / ADR-0021): `install.sh` (delegating to `scripts/shared-repo-memory/install.py`) puts the canonical scripts under `~/.agent/shared-repo-memory/`, wires the `SessionStart` and `PostCompact` hooks into `~/.claude/settings.json`, and symlinks skills into `~/.claude/skills/`. Those hooks therefore fire in every Claude Code session \u2014 but they're gated.\n\n- **The gate \u2014 the opt-in marker** (ADR-0020): a repository is \"on\" only if it has a committed `.agents/memory/config.json`. That file is both the marker and the settings file (`decision_surfaces`, `context_budget_words`, `notes_window_days`). Without it:\n  - `session-start.py` and `post-compact.py` exit silently \u2014 no memory context is injected.\n  - `bootstrap-repo.py` refuses to wire the repo (so the git hooks from ADR-0018 \u2014 `post-checkout`, `post-merge`, `post-rewrite` via `core.hooksPath .githooks` \u2014 and the `post-commit` capture from ADR-0019 aren't set up).\n\n**How to opt a repository in**\n\nRun `bootstrap-repo.py --init` in the repo, or use the `agentmemory` skill that wraps it \u2014 e.g. say \"turn on agentmemory for this repo\" or run `/agentmemory init`. That writes `.agents/memory/config.json`. Because the file lives under `<repo>/.agents/memory/` (the canonical, agent-neutral memory location, ADR-0001) and memory moves with code (ADR-0004), you commit it so the opt-in applies to everyone who clones the repo."
+        }
+      }
+    },
+    {
+      "id": "capture-unit",
+      "question": "In v0.5, when is a decision captured into memory, and why was per-turn capture abandoned?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "missed": [
+            "note | notes",
+            "commit | post-commit",
+            "Decision: | decision_surfaces | docs/**",
+            "claude -p | subagent | LLM | background"
+          ],
+          "seconds": 9.5,
+          "answer": "[claude exited 1: ]"
+        },
+        "memory": {
+          "score": 1.0,
+          "missed": [],
+          "seconds": 15.5,
+          "answer": "In v0.5 (per ADR-0019, \"Capture decisions as notes and at commit time, never per turn\"), a decision enters memory in exactly two ways:\n\n1. **As a note, at the moment a choice is made.** The agent or a human runs `memory-note.py`, which appends a structured note (Decision, Why, Alternatives, Scope) to `.agents/memory/notes/YYYY-MM-DD.md` when a non-obvious choice is being made.\n\n2. **At commit time, via the `post-commit` git hook.** `commit-capture.py` appends a *candidate* note when a commit either touches a path listed under `decision_surfaces` in `.agents/memory/config.json` (the opt-in/settings file from ADR-0020) or carries a `Decision:` line in its message. The commit body is copied verbatim as the \"why\".\n\nNeither path spawns an LLM \u2014 both hooks are deterministic.\n\n**Why per-turn capture was abandoned:** ADR-0019 explicitly removes the whole per-turn machinery \u2014 per-turn capture, pending shards, the episode graph, daily event shards, and the derived daily summaries. It supersedes the ADRs that built that pipeline: ADR-0003 (event shards as the canonical write unit), ADR-0007 (two-phase raw-capture \u2192 checkpoint publication), ADR-0008 (isolated bootstrap subagent), ADR-0011 (deterministic episode graph for clustering pending captures), ADR-0015 (write-protecting `decision_candidate` at raw capture time), and ADR-0016 (wiring `SubagentStop` to `post-turn-notify.py`). The prompt's summaries don't spell out a rationale paragraph, but the shape of the replacement makes the reasoning visible: the old design needed a chain of intermediate artifacts (shards \u2192 episode graph \u2192 checkpoint evaluation \u2192 summaries) and safeguards (write-protected `decision_candidate` flags, isolated subagents to avoid context contamination) just to sift real decisions out of raw turn logs. v0.5 replaces that with capture at the two points where a decision is actually known to exist \u2014 when the person/agent makes it, or when it lands in a commit on a decision surface \u2014 with no LLM in the hook path. The consumer side was simplified to match (ADR-0022): `build_memory_context()` reads the ADR index, must-read Decision sections, recent notes within `notes_window_days`, and `local/catchup.md`, rather than daily summaries."
+        }
+      }
+    }
+  ]
+}

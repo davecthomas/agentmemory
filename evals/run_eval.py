@@ -7,6 +7,14 @@ disabled, so the answer can come only from the prompt, in two conditions:
 * ``none``: the bare question
 * ``memory``: the question preceded by the session-start context block from
   ``session-start.py --print-context``
+* ``legacy``: the question preceded by what v0.4 injected, the ADR index
+  plus the three newest daily summaries, read from ``--legacy-ref``
+  (default ``main``) so the rebuild is measured against what it replaced
+
+Both run from an empty temporary directory with a replaced system prompt
+and no dynamic sections, so Claude Code loads no CLAUDE.md, AGENTS.md,
+per-project auto-memory, or installed skill descriptions; the prompt is
+the only source of repo knowledge in either condition.
 
 Score is the fraction of ``must_mention`` terms present in the answer (a
 nested list counts when any alternative matches). The run prints a table,
@@ -22,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -44,6 +53,7 @@ DISALLOWED_TOOLS: tuple[str, ...] = (
     "WebSearch",
     "NotebookEdit",
     "TodoWrite",
+    "Skill",
 )
 SYSTEM_PROMPT: str = (
     "You are answering questions about a software repository. Answer only "
@@ -88,6 +98,34 @@ def memory_block(root: Path) -> str:
     return result.stdout.strip()
 
 
+def legacy_block(root: Path, ref: str) -> str:
+    """Rebuild the v0.4 session-start block from a git ref.
+
+    Args:
+        root: Repository root.
+        ref: Commit or branch holding the v0.4 memory tree.
+
+    Returns:
+        str: ADR index plus up to three newest daily summaries, or ``""``.
+    """
+    sections: list[str] = []
+    index: str = common.git(["show", f"{ref}:.agents/memory/adr/INDEX.md"], root)
+    if index:
+        sections.append("### Architecture Decision Records\n\n" + index)
+    listing: str = common.git(
+        ["ls-tree", "-r", "--name-only", ref, "--", ".agents/memory/daily"], root
+    )
+    summaries: list[str] = sorted(
+        (p for p in listing.splitlines() if p.endswith("/summary.md")), reverse=True
+    )[:3]
+    for path in summaries:
+        day: str = path.split("/")[-2]
+        sections.append(
+            f"### Memory: {day}\n\n" + common.git(["show", f"{ref}:{path}"], root)
+        )
+    return "\n\n".join(sections)
+
+
 def ask(prompt: str, *, model: str | None, cwd: Path, timeout: int) -> str:
     cmd: list[str] = [
         "claude",
@@ -96,8 +134,9 @@ def ask(prompt: str, *, model: str | None, cwd: Path, timeout: int) -> str:
         "json",
         "--max-turns",
         "1",
-        "--append-system-prompt",
+        "--system-prompt",
         SYSTEM_PROMPT,
+        "--exclude-dynamic-system-prompt-sections",
         "--disallowedTools",
         *DISALLOWED_TOOLS,
     ]
@@ -128,7 +167,8 @@ def main() -> int:
     parser.add_argument("--model", default=None)
     parser.add_argument("--limit", type=int, default=0, help="first N questions only")
     parser.add_argument("--only", default=None, help="comma-separated question ids")
-    parser.add_argument("--conditions", default="none,memory")
+    parser.add_argument("--conditions", default="none,legacy,memory")
+    parser.add_argument("--legacy-ref", default="main")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -152,14 +192,24 @@ def main() -> int:
             "run_eval: repo has no memory context; nothing to measure", file=sys.stderr
         )
         return 1
+    legacy: str = legacy_block(root, args.legacy_ref) if "legacy" in conditions else ""
+    if "legacy" in conditions and not legacy:
+        print(
+            f"run_eval: no v0.4 memory at {args.legacy_ref}; dropping legacy",
+            file=sys.stderr,
+        )
+        conditions = [c for c in conditions if c != "legacy"]
 
     rows: list[dict[str, Any]] = []
+    neutral = Path(tempfile.mkdtemp(prefix="agentmemory-eval-"))
     for q in questions:
         row: dict[str, Any] = {"id": q["id"], "question": q["question"], "results": {}}
         for cond in conditions:
             prompt: str = q["question"]
             if cond == "memory":
                 prompt = f"Repository decision memory:\n\n{context}\n\n---\n\nQuestion: {q['question']}"
+            elif cond == "legacy":
+                prompt = f"Repository decision memory:\n\n{legacy}\n\n---\n\nQuestion: {q['question']}"
             if args.dry_run:
                 row["results"][cond] = {
                     "score": None,
@@ -167,7 +217,9 @@ def main() -> int:
                 }
                 continue
             started = time.time()
-            answer: str = ask(prompt, model=args.model, cwd=root, timeout=args.timeout)
+            answer: str = ask(
+                prompt, model=args.model, cwd=neutral, timeout=args.timeout
+            )
             value, missed = score(answer, q["must_mention"])
             row["results"][cond] = {
                 "score": round(value, 3),
@@ -206,6 +258,8 @@ def main() -> int:
                 "conditions": conditions,
                 "means": means,
                 "context_words": common.word_count(context),
+                "legacy_context_words": common.word_count(legacy),
+                "legacy_ref": args.legacy_ref if legacy else None,
                 "rows": rows,
             },
             indent=2,
@@ -213,9 +267,17 @@ def main() -> int:
         + "\n"
     )
     print(f"wrote {out.relative_to(HERE.parent)}")
-    if "memory" in means and "none" in means and means["memory"] <= means["none"]:
-        print("FAIL: memory did not improve on the no-memory baseline", file=sys.stderr)
-        return 1
+    for baseline in ("none", "legacy"):
+        if (
+            "memory" in means
+            and baseline in means
+            and means["memory"] <= means[baseline]
+        ):
+            print(
+                f"FAIL: memory did not improve on the {baseline} baseline",
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 

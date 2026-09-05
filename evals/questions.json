@@ -14,12 +14,12 @@
     {
       "id": "opt-in",
       "question": "If agentmemory is installed on my machine, is it active in every git repository I open? How does a repository opt in?",
-      "must_mention": ["config.json", ["opt in", "opt-in", "opts in"]]
+      "must_mention": ["config.json", ["init", "bootstrap-repo", "agentmemory skill", "/agentmemory"]]
     },
     {
       "id": "capture-unit",
       "question": "In v0.5, when is a decision captured into memory, and why was per-turn capture abandoned?",
-      "must_mention": [["note", "notes"], ["commit", "post-commit"], ["per-turn", "per turn", "every turn"]]
+      "must_mention": [["note", "notes"], ["commit", "post-commit"], ["Decision:", "decision_surfaces", "docs/**"], ["claude -p", "subagent", "LLM", "background"]]
     },
     {
       "id": "commit-capture-rule",
