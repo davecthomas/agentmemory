@@ -49,6 +49,31 @@ def test_status_and_news_before_and_after_opt_in(repo: Path) -> None:
     assert "one moving part" in with_context.stdout
 
 
+def test_news_groups_by_branch_and_cleans_names(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    note = common.load_module(Path(__file__).resolve().parents[1] / "memory-note.py")
+    for i in range(2):
+        (repo / f"f{i}.py").write_text("x\n", encoding="utf-8")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-q", "-m", f"feat/big: step {i}")
+    (repo / "g.py").write_text("y\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "fix/small: one thing (#7)")
+    note.append_note(
+        repo,
+        note.render_entry(
+            decision="feat/big: chose X", why="w", author="123-alice", branch="feat/big"
+        ),
+    )
+    out = run_script("memory-news.py", cwd=repo).stdout
+    assert "### feat/big — largest" in out
+    assert "### fix/small (#7)" in out
+    assert "decision (alice): chose X" in out
+    assert "123-alice" not in out and "feat/big: chose X" not in out
+    assert out.index("### feat/big") < out.index("### fix/small")
+    assert "4 commits, 1 decision note" in out  # fixture initial commit + 3
+
+
 def test_news_flags_candidates(repo: Path) -> None:
     assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
     note = common.load_module(Path(__file__).resolve().parents[1] / "memory-note.py")
