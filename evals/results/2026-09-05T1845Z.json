@@ -1,0 +1,811 @@
+{
+  "stamp": "2026-09-05T1845Z",
+  "model": null,
+  "conditions": [
+    "none",
+    "legacy",
+    "memory"
+  ],
+  "means": {
+    "none": 0.176,
+    "legacy": 0.759,
+    "memory": 0.954
+  },
+  "judge_means": {
+    "none": null,
+    "legacy": null,
+    "memory": null
+  },
+  "runs": 1,
+  "holdout_ids": [
+    "holdout-black-pin",
+    "holdout-runtime-detection",
+    "holdout-uninstall-safety",
+    "holdout-quality-gate",
+    "holdout-hook-json",
+    "holdout-codex-symlink"
+  ],
+  "context_words": 1467,
+  "legacy_context_words": 1748,
+  "legacy_ref": "29a591a",
+  "rows": [
+    {
+      "id": "storage-location",
+      "question": "Where does this repository keep shared agent memory, and why that location rather than a per-agent directory?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            ".agents/memory",
+            "agent-neutral | neutral | not owned by | no single"
+          ],
+          "seconds": 10.9,
+          "answers": [
+            "The prompt gives me no information about this repository's shared agent memory location or the reasoning behind it \u2014 no files, docs, or configuration were provided, and I have no file-reading tools available in this session to inspect the working directory."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 12.4,
+          "answers": [
+            "Shared agent memory lives in `.agents/memory/` at the repo root. Per ADR-0001 (\"`.agents/memory` is the canonical agent-neutral shared memory location\", accepted 2026-04-02, must-read), it was deliberately chosen as an **agent-neutral** path rather than a per-agent directory (e.g. `.claude/`, `.codex/`, `.gemini/`), so that Claude Code, Gemini CLI, and Codex all read from and write to the same store.\n\nWhat the prompt shows living under that location:\n\n- `.agents/memory/events/` \u2014 per-turn event shards, the canonical write unit (ADR-0003); daily summaries are derived read models built from them.\n- `.agents/memory/logs/bootstrap.log` \u2014 diagnostics, e.g. the line written when `UnknownAdapter` short-circuits the subagent bootstrap in `session-start.py`.\n\nWhy not per-agent: the repo's design has multiple runtimes wired into the same hooks (`post-turn-notify.py`, `prompt-guard.py`, `session-start.py`) via a single install with symlinks per agent (ADR-0002: \"shared agent assets use one install, many symlinks\"). A single neutral directory lets all of them share one memory; per-agent directories like `.codex/memory` are only symlinks the installer creates/removes (the uninstaller \"drops `.codex/memory`\"), and committed memory under `.agents/memory` is explicitly left untouched on uninstall unless `--purge-memory` is passed. Memory becomes collaborative only by explicit git commit and push (ADR-0004), which also depends on it being a normal, agent-agnostic path in the repo tree.\n\nThe prompt does not include ADR-0001's full rationale text, so the detailed reasoning beyond \"agent-neutral shared location\" is not available here."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 12.1,
+          "answers": [
+            "Shared agent memory lives at **`<repo>/.agents/memory/`** (ADR-0001, accepted, must-read). All memory writes target that path: ADRs under `.agents/memory/adr/` (with `INDEX.md`), decision notes under `.agents/memory/notes/YYYY-MM-DD.md`, and the opt-in/settings file `.agents/memory/config.json` (ADR-0020).\n\nWhy that location rather than a per-agent directory:\n\n- **Agent neutrality.** The `.agents/` namespace is deliberately not owned by any single tool. Per-agent paths such as `<repo>/.codex/memory` exist only as *access paths* \u2014 they are symlinks to `../.agents/memory` \u2014 and must never be the canonical storage or receive direct writes (ADR-0001).\n- **Memory belongs to the repo, not the user.** ADR-0002 draws the line: shared *assets* (scripts, skills) live in one install under `~/.agent/shared-repo-memory/` with per-agent symlinks, but repo memory *content* is explicitly excluded from that model \u2014 it lives in `<repo>/.agents/memory/` and is owned by the repo.\n- **Memory moves with code.** ADR-0004 requires memory to become collaborative only via normal commit/push, on the same branch and PR as the code it describes, with no separate memory-only publication path. That only works if memory is a committed, tool-independent part of the repository tree.\n- **Room to add runtimes.** Even though Claude Code is the only wired runtime in v0.5 (ADR-0021), keeping the canonical location agent-neutral means another runtime can be added later without migrating memory.\n\nOne contrast worth noting: purely local continuity state (`catchup.md`, `sync_state.json`, per ADR-0018) is kept under `.codex/local/` and is never committed \u2014 that's the one place a per-agent directory is used, precisely because it is *not* shared memory."
+          ]
+        }
+      }
+    },
+    {
+      "id": "no-service",
+      "question": "Does agentmemory use a database, vector store, or external service for memory? What does it use instead?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "markdown | plain text",
+            "git",
+            "no service | no external | no database | no vector"
+          ],
+          "seconds": 7.8,
+          "answers": [
+            "[claude exited 1: ]"
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 16.3,
+          "answers": [
+            "No. Based on the decision memory in the prompt, agentmemory has no database, vector store, or external service \u2014 it is a plain-files-plus-git system.\n\n**What it uses instead**\n\n- **Markdown files in the repo under `.agents/memory/`** \u2014 ADR-0001 establishes `.agents/memory` as \"the canonical agent-neutral shared memory location.\" Everything lives there: event shards (e.g. `events/2026-04-20T21-48-19Z--2355287-davecthomas--thread_\u2026--turn_\u2026.md`), daily summaries, ADRs (`ADR-000N-\u2026.md` with an ADR index), and logs (`.agents/memory/logs/bootstrap.log`).\n- **Event shards as the write unit; summaries as derived read models** \u2014 ADR-0003: \"Event shards are the canonical write unit; daily summaries are derived read models.\" Shards carry frontmatter (e.g. `ai_tool`, `decision_candidate`, which ADR-0015 write-protects at raw capture time). Summaries and ADRs are computed/promoted from shards, not stored separately in a datastore.\n- **Git as the sync/collaboration layer** \u2014 ADR-0004: shared memory \"requires explicit commit and push to become collaborative.\" There is no server; teammates get each other's memory by pulling. ADR-0018 uses git `post-checkout`, `post-merge`, and `post-rewrite` hooks to rebuild the local catch-up after git operations. Committed memory is treated as durable (the uninstaller leaves `.agents/memory` alone unless `--purge-memory` explicitly stages `git rm -r`).\n- **Local deterministic processing, not embeddings/search** \u2014 ADR-0011 clusters pending captures with \"a deterministic local episode graph,\" and ADR-0007 describes a two-phase publication pipeline from raw turn captures to durable checkpoints. Context retrieval is a \"bounded prioritized read set\" (ADR-0017) plus re-injection after `PostCompact` (ADR-0012) \u2014 i.e. reading files into the agent's context, not querying an index.\n- **Agent hooks + local scripts** \u2014 capture and injection run through Claude Code / Gemini CLI hooks (`session-start.py`, `post-turn-notify.py`, `prompt-guard.py`, `SubagentStop` wiring per ADR-0016), installed from `~/.agent/shared-repo-memory` via `install.sh` / `uninstall.sh` with symlinked shared assets (ADR-0002). The only \"service\" involved is the agent runtime itself; the 2026-04-20 work even added an `UnknownAdapter` fail-closed path so nothing runs when the runtime can't be confirmed.\n\nCaveat: this is drawn solely from the ADR index and memory summaries provided; I did not inspect the repository's source to rule out any optional backend."
+          ]
+        },
+        "memory": {
+          "score": 0.667,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "no service | no external | no database | no vector"
+          ],
+          "seconds": 18.7,
+          "answers": [
+            "No. Nothing in the repository memory describes a database, vector store, embeddings, or any external/network service for memory. Everything is plain files in the repo and git, with a small set of Python scripts and hooks around them:\n\n**Storage is Markdown/JSON files committed in the repo**\n- Canonical location is `<repo>/.agents/memory/` (ADR-0001); `.codex/memory` is only a symlink access path.\n- Decisions live as ADR Markdown files under `.agents/memory/adr/` with an `INDEX.md` (ADR-0005).\n- Notes live as daily Markdown files, `.agents/memory/notes/YYYY-MM-DD.md`, appended by `memory-note.py` with Decision / Why / Alternatives / Scope sections (ADR-0019).\n- Repo opt-in and settings are a committed JSON file, `.agents/memory/config.json` (`decision_surfaces`, `context_budget_words`, `notes_window_days`) (ADR-0020).\n- Local, uncommitted continuity state is also just files: `.codex/local/catchup.md` and `.codex/local/sync_state.json` (`last_seen_head`, hashes, rebuild timestamp), written by `build-catchup.py` (ADR-0018).\n\n**Git is the sync/distribution layer, not a service**\n- Memory becomes shared only by ordinary `git commit` and `git push` on the same branch/PR as the code; there is no separate memory-only publication path (ADR-0004).\n- Capture is driven by git hooks: `post-commit` \u2192 `commit-capture.py` appends a candidate note when a commit touches a `decision_surfaces` path or has a `Decision:` line (ADR-0019); `post-checkout` / `post-merge` / `post-rewrite` \u2192 `build-catchup.py` rebuild local catch-up (ADR-0018); a generated `pre-commit` runs `check-memory.py` as a structural gate (2026-09-05 note). Hooks are wired via `git config core.hooksPath .githooks`.\n- ADR-0019 also explicitly states \"No hook spawns an LLM.\"\n\n**Retrieval is file reading with a word budget, not vector search**\n- `build_memory_context()` in `common.py` assembles one block\u2014`INDEX.md`, Decision sections of `must_read: true` ADRs, notes from the last `notes_window_days`, then `local/catchup.md`\u2014and truncates at `context_budget_words` (default 2,500) (ADR-0022). This is injected at `SessionStart` and `PostCompact` via `session-start.py` / `post-compact.py`.\n- Anything omitted is queried through the `memory` skill (`memory-query.py`), which per the memory reads the same files; no index server or embedding store is mentioned.\n\n**Install is local files and symlinks**\n- Scripts and skills are installed once under `~/.agent/shared-repo-memory/` and symlinked into `~/.claude/skills/` etc. (ADR-0002, ADR-0021).\n\nHistorically the design did have derived artifacts (event shards, daily summaries, an \"episode graph\" for clustering captures \u2014 ADR-0003, 0007, 0011), but those were still local files, and all were removed by ADR-0019."
+          ]
+        }
+      }
+    },
+    {
+      "id": "opt-in",
+      "question": "If agentmemory is installed on my machine, is it active in every git repository I open? How does a repository opt in?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "config.json",
+            "init | bootstrap-repo | agentmemory skill | /agentmemory"
+          ],
+          "seconds": 6.5,
+          "answers": [
+            "The prompt gives me nothing about agentmemory \u2014 no repository files, docs, or configuration were provided in the conversation \u2014 so I can't say from the information here whether it activates globally or how a repository opts in.\n\nIf you point me at the agentmemory repository (or paste its README / config docs), I can answer concretely with the specific files, flags, and mechanisms it uses."
+          ]
+        },
+        "legacy": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "config.json",
+            "init | bootstrap-repo | agentmemory skill | /agentmemory"
+          ],
+          "seconds": 22.8,
+          "answers": [
+            "Short answer: the install has two distinct scopes, and a repo only gets the repo-level pieces when you run the per-repo install in it. The memory I have describes this mostly through the uninstaller (which mirrors the installer), so here's what it establishes:\n\n**Global scope (`./install.sh`, default)** \u2014 machine/agent-level wiring, not repo-specific:\n- Scripts installed under `~/.agent/shared-repo-memory` (`install.sh` execs `scripts/shared-repo-memory/\u2026`).\n- Hook entries wired into each agent runtime's config via `AgentAdapter.wire_hooks` \u2014 Claude, Gemini, and Codex (Codex also gets `config.toml` keys). These are the hooks like `SessionStart` \u2192 `session-start.py`, `Stop`/`SubagentStop` \u2192 `post-turn-notify.py`, `UserPromptSubmit` \u2192 `prompt-guard.py`, `PostCompact` re-injection (ADR-0012, ADR-0016).\n- Shared skill assets: one canonical copy plus per-agent symlinks (ADR-0002), tracked in `shared_asset_refresh_state.json`.\n\nBecause these hooks live in the agent runtime's global config, the hook *scripts* are invoked by Claude/Gemini/Codex regardless of which directory you're in. Whether they do meaningful work depends on the repo.\n\n**Per-repo scope (`./install.sh --repo`, run inside the target repo)** \u2014 this is the opt-in:\n- Creates `.githooks` and sets `core.hooksPath=.githooks` so `post-checkout`, `post-merge`, and `post-rewrite` rebuild local catch-up after git operations (ADR-0018).\n- Creates `.codex/memory` (symlink into the shared memory location) and, for Codex, appends a per-repo trust block to `config.toml`.\n- Adds an installer-owned marker block to `.gitignore`.\n- The memory itself lives in `.agents/memory` (ADR-0001) \u2014 event shards under `events/`, derived daily summaries, ADRs \u2014 and only becomes collaborative when explicitly committed and pushed (ADR-0004).\n\n`./uninstall.sh --repo` reverses exactly those repo-local artifacts (removes `.githooks` only if content still matches, unsets `core.hooksPath` only if it still equals `.githooks` and no other hooks remain, drops `.codex/memory`, strips the `.gitignore` block), while committed `.agents/memory` is left alone unless you pass `--purge-memory`.\n\n**What the prompt does not tell me:** the exact behavior of the globally wired hook scripts when they run in a repo that has *not* been `--repo`-installed (e.g., whether `session-start.py` checks for `.agents/memory` and exits quietly). The only fail-closed short-circuit described is runtime detection: if `detect_adapter()` can't confirm Claude/Gemini/Codex from the payload, process tree, or env vars, it resolves to `UnknownAdapter` and skips the bootstrap spawn with a diagnostic in `.agents/memory/logs/bootstrap.log` \u2014 but that's about *which agent*, not *which repo*. To confirm the repo-gating behavior you'd need to read `session-start.py` / `post-turn-notify.py` directly."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 11.8,
+          "answers": [
+            "No \u2014 installation alone does not activate agentmemory in every repo. Activation is per-repository, and the opt-in marker is a committed file.\n\n**What installation gives you (ADR-0002, ADR-0021)**\n- `install.sh` (delegating to `scripts/shared-repo-memory/install.py`) puts the canonical copy of the scripts and skills under `~/.agent/shared-repo-memory/`, with symlinks into `~/.claude/skills/`.\n- It wires the `SessionStart` and `PostCompact` hooks in `~/.claude/settings.json`. These hooks are global to Claude Code, so they *fire* in every repo you open \u2014 but they do nothing unless the repo has opted in.\n\n**How a repository opts in (ADR-0020)**\n- The opt-in marker is `<repo>/.agents/memory/config.json`, committed to the repo. It is also the settings file, holding `decision_surfaces`, `context_budget_words`, and `notes_window_days`.\n- It is written by `bootstrap-repo.py --init`, which is wrapped by the `agentmemory` skill \u2014 e.g. saying \"turn on agentmemory for this repo\" or running `/agentmemory init`.\n- `bootstrap-repo.py` also sets `git config core.hooksPath .githooks` so the repo's git hooks (`post-commit` \u2192 `commit-capture.py`, the generated `pre-commit` \u2192 `check-memory.py`, and `post-checkout`/`post-merge`/`post-rewrite` \u2192 `build-catchup.py`) are wired (ADR-0018, ADR-0019, notes 2026-09-05).\n\n**What happens without the marker**\n- `session-start.py` and `post-compact.py` exit silently, so no memory context is injected.\n- `bootstrap-repo.py` refuses to wire the repo.\n- The installed `pre-commit` only runs `check-memory.py` where `config.json` exists (decision note 2026-09-05).\n\nSo: install once per machine, then opt in each repo by committing `.agents/memory/config.json` via `bootstrap-repo.py --init` / `/agentmemory init`."
+          ]
+        }
+      }
+    },
+    {
+      "id": "capture-unit",
+      "question": "In v0.5, when is a decision captured into memory, and why was per-turn capture abandoned?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "note | notes",
+            "commit | post-commit",
+            "Decision: | decision_surfaces | docs/**",
+            "claude -p | subagent | LLM | background"
+          ],
+          "seconds": 10.6,
+          "answers": [
+            "The prompt gives me no information about v0.5's decision-capture timing or the abandonment of per-turn capture, and no file-reading tools are available in this session to inspect the repository, so I can't answer this from the material provided."
+          ]
+        },
+        "legacy": {
+          "score": 0.25,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "note | notes",
+            "Decision: | decision_surfaces | docs/**",
+            "claude -p | subagent | LLM | background"
+          ],
+          "seconds": 20.7,
+          "answers": [
+            "The prompt doesn't mention a v0.5 at all (the only version cited is `0.2.3` in the 2026-04-06 memory), and I only have ADR titles, not their bodies, so I can't give you the v0.5 rationale verbatim. What the index does establish about *when* decisions are captured, and the direction away from per-turn capture, is this:\n\n**When a decision is captured (per the ADR index):**\n\n- **ADR-0007** \u2014 \"Separate raw turn captures from durable checkpoints using a two-phase publication pipeline.\" Per-turn output is only a *raw capture*; a decision becomes durable memory only at a later *checkpoint* publication step.\n- **ADR-0011** \u2014 pending raw captures are clustered by \"a deterministic local episode graph\" and evaluated *as episodes* for checkpointing, i.e. decisions are judged across a cluster of turns, not one turn at a time.\n- **ADR-0015** \u2014 `decision_candidate` is write-protected at raw capture time; only \"trusted publication paths\" may set it true. So a turn hook cannot itself declare something a decision.\n- **ADR-0005** \u2014 ADR promotion is \"always explicit and separate from post-turn capture.\"\n- **ADR-0004** \u2014 memory only becomes collaborative after an explicit commit and push.\n\n**Why per-turn capture as the decision unit was moved away from \u2014 as far as the prompt shows:**\n\nThe ADR titles imply the reasoning (raw turns are noisy and untrusted; decisions need cross-turn clustering and a trusted publication path), but the actual ADR text isn't in the prompt, so I can't quote the stated motivation. The concrete evidence that per-turn capture produced bad data is in the 2026-04-20 memory: hook-time misdetection \"produced misattributed shard frontmatter, wrong runtime tags on log prefixes, and\u2026 bootstrap spawns that presumed Codex credentials,\" which is exactly the kind of untrusted per-turn signal ADR-0015's write-protection guards against.\n\nIf you want the exact v0.5 wording, the files to read are `ADR-0007-\u2026two-phase-publication-pipeline.md`, `ADR-0011-\u2026episode-graph\u2026md`, and `ADR-0015-\u2026write-protect-decision-candidate\u2026md`."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 15.4,
+          "answers": [
+            "Per **ADR-0019** (\"Capture decisions as notes and at commit time, never per turn\", accepted 2026-09-05), a decision enters memory in exactly two ways in v0.5:\n\n1. **At the moment of choice, as a note.** The agent or a human runs `memory-note.py` and appends a note with four fields (Decision, Why, Alternatives, Scope) to `.agents/memory/notes/YYYY-MM-DD.md` when a non-obvious choice is made.\n\n2. **At commit time, via the `post-commit` hook.** `commit-capture.py` appends a *candidate* note when a commit either touches a path listed under `decision_surfaces` in `.agents/memory/config.json` or carries a `Decision:` line in its message. The commit body is copied verbatim as the \"Why.\" A 2026-09-05 note adds the refinement that this stays on `post-commit` (so the note lands one commit late) rather than `commit-msg`, because post-commit has the sha for provenance and cannot corrupt the commit, whereas commit-msg runs before the commit exists and staging files from inside it depends on index timing git doesn't guarantee.\n\nNotably, **no hook spawns an LLM** in either path.\n\n**Why per-turn capture was abandoned:** ADR-0019 explicitly removes per-turn capture along with its supporting machinery \u2014 pending shards, the episode graph, daily event shards, and derived daily summaries. This superseded ADR-0003 (event shards as canonical write unit), ADR-0007 (two-phase raw-capture \u2192 checkpoint pipeline), ADR-0008 (isolated bootstrap subagent), ADR-0011 (deterministic episode graph for clustering captures), ADR-0015 (write-protecting `decision_candidate`), and ADR-0016 (SubagentStop wired to `post-turn-notify.py`). The provided memory states *that* this whole apparatus was removed in favor of the two explicit capture points, but the ADR-0019 excerpt given here doesn't spell out the detailed rationale beyond the design itself: capture happens only where a decision is actually made (a note) or actually lands (a commit), with no LLM-driven hooks. For the fuller reasoning you'd need to read the ADR-0019 file body via the `memory` skill."
+          ]
+        }
+      }
+    },
+    {
+      "id": "commit-capture-rule",
+      "question": "What makes a commit qualify for automatic decision capture?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "Decision: | decision line",
+            "decision_surfaces | docs/** | surface"
+          ],
+          "seconds": 9.7,
+          "answers": [
+            "The prompt gives me no information about this repository's decision-capture mechanism (no files, flags, or hook logic describing what qualifies a commit), so I can't say what makes a commit qualify."
+          ]
+        },
+        "legacy": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "Decision: | decision line",
+            "decision_surfaces | docs/** | surface"
+          ],
+          "seconds": 10.9,
+          "answers": [
+            "The provided context doesn't spell out concrete qualification criteria for automatic decision capture; it only gives adjacent constraints on how decision capture works:\n\n- **Post-turn capture is the entry point, not commits.** Capture is driven by hook events (`Stop`, `SubagentStop`, `AfterAgent`) routed through `post-turn-notify.py`, which writes raw event shards under `.agents/memory/events/` (ADR-0003, ADR-0016). Nothing in the prompt describes a commit-content or commit-message rule that triggers capture.\n- **`decision_candidate` is write-protected at raw capture time** (ADR-0015): the post-turn capture path may not set it to `true`; only trusted publication paths (the two-phase raw-capture \u2192 durable-checkpoint pipeline in ADR-0007, with clustering via the local episode graph in ADR-0011) may flag a shard as a decision candidate.\n- **Promotion to an ADR is always explicit** and separate from capture (ADR-0005), and shared memory only becomes collaborative after an explicit `git commit`/`push` (ADR-0004).\n\nSo, from what's here: a commit itself doesn't \"qualify\" for anything automatically \u2014 decision candidacy is assigned during the publication/checkpoint phase, and the specific heuristics used there aren't described in the prompt."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 18.0,
+          "answers": [
+            "Per ADR-0019, a commit qualifies for automatic decision capture when the `post-commit` hook (`scripts/shared-repo-memory/commit-capture.py`) finds either of two conditions:\n\n1. **The commit touches a path listed in `decision_surfaces`** \u2014 the array configured in the repo's `.agents/memory/config.json` (the opt-in marker/settings file per ADR-0020).\n2. **The commit message carries a `Decision:` line.**\n\nWhen either is true, `commit-capture.py` appends a *candidate* note to `.agents/memory/notes/YYYY-MM-DD.md`, copying the commit body verbatim as the \"Why\". No LLM is spawned by the hook.\n\nA few related mechanics from the memory:\n\n- **Timing:** the capture lives on `post-commit`, not `commit-msg`, so the note has the commit sha for provenance and cannot corrupt the commit itself. Consequence: the candidate note lands one commit late (2026-09-05 decision note; a commit-msg approach was rejected).\n- **Gating:** the hook only runs where `.agents/memory/config.json` exists; without it, the repo isn't wired (ADR-0020). Hooks are wired via `git config core.hooksPath .githooks` set by `bootstrap-repo.py` (ADR-0018).\n- **Contrast:** the other way a decision enters memory is manual \u2014 `memory-note.py` appending a note with Decision/Why/Alternatives/Scope at the moment a choice is made. Per-turn capture was removed entirely.\n\nThe prompt doesn't give the exact matching rules (e.g., glob vs. prefix for `decision_surfaces`, or case-sensitivity of `Decision:`), so I can't be more specific than that."
+          ]
+        }
+      }
+    },
+    {
+      "id": "adr-only-durable",
+      "question": "Where do durable architectural decisions live, and can a hook promote one automatically?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "ADR",
+            "explicit | never automatic | not automatic | manual"
+          ],
+          "seconds": 5.8,
+          "answers": [
+            "The prompt gives me nothing about this repository \u2014 no files, docs, or hook definitions were included \u2014 so I can't say where durable architectural decisions live or whether a hook can promote one automatically."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 12.4,
+          "answers": [
+            "Durable architectural decisions live in the **Architecture Decision Records (ADRs)** in the repository's decision memory \u2014 an indexed set of `ADR-NNNN-*.md` files (currently ADR-0001 through ADR-0018, all `accepted`, most flagged `Must Read`). Examples: ADR-0003 (event shards are the canonical write unit; daily summaries are derived read models) and ADR-0007 (two-phase publication pipeline separating raw turn captures from durable checkpoints).\n\n**No \u2014 a hook cannot promote one automatically.** Two ADRs explicitly forbid it:\n\n- **ADR-0005 \u2014 \"ADR promotion is always explicit and separate from post-turn capture.\"** Post-turn hooks (e.g. `post-turn-notify.py`, wired to `Stop` and, per ADR-0016, `SubagentStop`) only produce raw event shards under `.agents/memory/events/` and derived daily summaries. Turning anything into an ADR is a separate, deliberate human/operator action.\n- **ADR-0015 \u2014 \"Write-protect `decision_candidate` at raw capture time; only trusted publication paths may set it true.\"** The capture hook can't even mark a shard as a decision candidate on its own; that flag is reserved for trusted publication paths (the checkpoint stage of the ADR-0007 pipeline, with clustering via the deterministic episode graph in ADR-0011).\n\nSo the flow is: hook capture \u2192 shard \u2192 (trusted checkpoint evaluation may flag a *candidate*) \u2192 explicit, manual promotion to an ADR. The 2026-04-20 memory illustrates this: the UnknownAdapter runtime-detection work was recorded only as a \"decision candidate,\" with a \"next likely step\" of *considering* promoting it to an ADR that would supersede ADR-0006 \u2014 it was not auto-promoted. Note also that even shards/summaries only become shared once explicitly committed and pushed (ADR-0004)."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 14.4,
+          "answers": [
+            "Durable architectural decisions live as ADR files under `<repo>/.agents/memory/adr/`, indexed by `INDEX.md` in that directory (ADR-0001 makes `.agents/memory/` the canonical, agent-neutral memory location; agent-specific paths like `.codex/memory` are only symlinks). ADRs flagged `must_read: true` have their Decision sections injected into every session via `build_memory_context()` in `common.py` (ADR-0022).\n\nNo hook can promote one automatically. ADR-0005 states that ADR creation happens only through the explicit `adr-promoter` workflow, which requires a deliberate operator or agent action: it reads one candidate, writes one ADR under `.agents/memory/adr/`, and updates `INDEX.md`. Hooks only produce *candidates*, never ADRs:\n\n- Under the current model (ADR-0019), the `post-commit` hook runs `commit-capture.py`, which appends a candidate note to `.agents/memory/notes/YYYY-MM-DD.md` when a commit touches a `decision_surfaces` path (from `.agents/memory/config.json`) or carries a `Decision:` line. The commit body is copied verbatim as the \"why,\" and no hook spawns an LLM. Agents/humans can also write notes directly with `memory-note.py`.\n- The earlier per-turn mechanism (a shard with `decision_candidate: true`, write-protected per ADR-0015) is superseded by ADR-0019, but it too only marked candidates and never triggered ADR creation.\n\nSeparately, ADR-0004 adds that even the generated memory files are only staged by hooks \u2014 commit and push remain explicit steps."
+          ]
+        }
+      }
+    },
+    {
+      "id": "session-context",
+      "question": "What does the SessionStart hook inject into the agent's context, in what order, and what bounds it?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "index | INDEX",
+            "must",
+            "note | notes",
+            "budget | words"
+          ],
+          "seconds": 8.4,
+          "answers": [
+            "The prompt contains no information about a SessionStart hook, what it injects, its ordering, or its bounds, so I can't answer this from the material provided."
+          ]
+        },
+        "legacy": {
+          "score": 0.75,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "note | notes"
+          ],
+          "seconds": 22.3,
+          "answers": [
+            "Based only on what's in the prompt, here is what can be said \u2014 with the caveat that the ADR bodies themselves are not included, so exact numeric limits aren't visible.\n\n**What is injected**\n\nThe \"Repository decision memory\" block at the top of this very session is the SessionStart output, and it shows the shape:\n\n1. **Architecture Decision Records** \u2014 the ADR index table from `.agents/memory` (ADR-0001 is the canonical shared-memory location), listing each ADR's title, status, date, tags, `Must Read` flag, and supersedes/superseded-by links. Every listed ADR is marked `Must Read: true`, which is what earns it a place in the read set.\n2. **Daily memory summaries**, newest first (2026-04-20, then 2026-04-06, then 2026-04-02). Per ADR-0003 these are the *derived read models*; the event shards under `events/` are the canonical write unit and are only linked, not inlined.\n\n**Order**\n\nADR index \u2192 daily summaries in reverse-chronological order. The mechanism is ADR-0017: \"Define a bounded prioritized read set as the canonical agent context budget at session start\" \u2014 ADRs (especially `Must Read`) are prioritized ahead of recent summaries, and older summaries fall off first.\n\n**What bounds it**\n\n- ADR-0017 is the bounding rule: a *bounded, prioritized* read set acts as the context budget. The prompt does not state the actual size limits (token count, number of days, etc.).\n- ADR-0012 reuses the same bounded set after `PostCompact` to re-inject memory so the session-memory invariant survives compaction.\n- The injection is also gated by runtime detection in `session-start.py`: it parses the hook's stdin payload *before* `detect_adapter()` (payload \u2192 process tree \u2192 env vars \u2192 `UnknownAdapter`). If the result is `UnknownAdapter`, it fails closed \u2014 the isolated bootstrap subagent (ADR-0008) is not spawned and a diagnostic line is written to `.agents/memory/logs/bootstrap.log` instead.\n\n**Not in the prompt**\n\nThe concrete budget figures (how many summaries/days, token or byte caps, truncation strategy) and the exact ordering logic inside `session-start.py` are not described here; you would need to read ADR-0017 and `scripts/shared-repo-memory/session-start.py` for those."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 10.2,
+          "answers": [
+            "Per ADR-0022 (and ADR-0020/ADR-0012 for the wiring), the `SessionStart` hook (`session-start.py`, wired in `~/.claude/settings.json`) calls `build_memory_context()` in `common.py`, which is the single source of what the agent is given \u2014 the same function is used after `PostCompact` and in the evals.\n\n**What it injects, in order:**\n1. The ADR `INDEX.md`\n2. The Decision section of every ADR marked `must_read: true`, newest first\n3. Notes from the last `notes_window_days` (from `.agents/memory/notes/YYYY-MM-DD.md`)\n4. `local/catchup.md` (the local, never-committed catch-up built by `build-catchup.py` per ADR-0018)\n\n**What bounds it:**\n- `context_budget_words` from `.agents/memory/config.json` (default 2,500). Blocks are dropped once the budget is reached, and a trailing line names what was omitted. Anything omitted remains reachable through the `memory` skill (`memory-query.py`).\n- The hook only runs at all if the repo has opted in by committing `.agents/memory/config.json` (ADR-0020); without it, `session-start.py` exits silently.\n\nNote that ADR-0012's original description of the PostCompact read set (ADR index + three most recent daily summaries) predates ADR-0019/ADR-0022; daily summaries were removed, and the current bounded block is the four-part one above."
+          ]
+        }
+      }
+    },
+    {
+      "id": "post-compact",
+      "question": "What happens to memory context after Claude Code compacts the conversation?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "re-inject | reinject | injected again | re-injected",
+            "PostCompact"
+          ],
+          "seconds": 5.3,
+          "answers": [
+            "The prompt gives me nothing about how Claude Code handles memory context after compaction, so I can't answer that from the information provided."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 11.7,
+          "answers": [
+            "Based on the repository's decision memory, the relevant mechanism is **ADR-0012: \"Re-inject bounded memory context after PostCompact to preserve session memory invariant\"** (accepted 2026-04-13, marked Must Read).\n\nWhat the prompt tells us about it:\n\n- **Trigger:** Claude Code's `PostCompact` hook event. The 2026-04-20 memory notes that `PostCompact` is one of the Claude-unique hook events that `ClaudeAdapter.matches_payload()` keys on (alongside `Stop`, `SubagentStop`, `UserPromptSubmit`), so the runtime is positively identified as Claude when this fires rather than falling through to Codex/Unknown.\n- **Action:** After compaction, the system re-injects memory context into the session rather than letting the compacted conversation lose it. The intent is to preserve a \"session memory invariant\" \u2014 the agent should always have the shared-repo-memory context available, regardless of whether the conversation was compacted mid-session.\n- **Bounded, not unbounded:** The re-injected context is deliberately bounded. This lines up with **ADR-0017**, which defines a \"bounded prioritized read set as the canonical agent context budget at session start\" \u2014 i.e., the post-compaction re-injection reuses the same budgeted read set (ADR index, recent daily summaries, etc.) rather than dumping all shards back in.\n\nWhat the prompt does *not* give me: the exact hook script that handles `PostCompact` (the memory only names `session-start.py`, `post-turn-notify.py`, and `prompt-guard.py` by filename), the size of the context budget, or the ADR's full rationale text. If you want those specifics, the file to read is `ADR-0012-re-inject-bounded-memory-context-after-postcompact-to-preserve-session-memory-invariant.md` together with ADR-0017."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 11.3,
+          "answers": [
+            "After Claude Code compacts, the memory context is re-injected rather than lost.\n\n**Mechanism (ADR-0012, ADR-0022, ADR-0021):**\n\n- `post-compact.py` is wired to Claude Code's `PostCompact` event in `~/.claude/settings.json` (ADR-0012; ADR-0021 confirms `SessionStart` and `PostCompact` are the two Claude Code hooks wired in v0.5).\n- On firing, it re-injects the same bounded read set that `SessionStart` gives. Per ADR-0022, that block comes from the single source `build_memory_context()` in `common.py`, in this order: ADR `INDEX.md`, the Decision section of every `must_read: true` ADR (newest first), notes from the last `notes_window_days`, then `local/catchup.md`. Blocks are dropped once `context_budget_words` (default 2,500, set in `.agents/memory/config.json`) is hit, and a trailing line names what was omitted; omitted material is reachable via the `memory` skill (`memory-query.py`).\n- The stated intent is to preserve the \"session memory invariant\" \u2014 the agent always has the memory block in context, even after compaction.\n\n**Preconditions / caveats:**\n\n- Per ADR-0020, `post-compact.py` exits silently if the repo has no committed `.agents/memory/config.json` (the opt-in marker), so nothing is re-injected in un-opted-in repos.\n- ADR-0012's original wording says \"ADR index + three most recent daily summaries\"; daily summaries were removed by ADR-0019, so the current content is the ADR-0022 block described above.\n- Gemini CLI has no equivalent \u2014 its `PreCompress` event fires before compression and is advisory only \u2014 but per ADR-0021 Gemini is no longer a supported runtime anyway."
+          ]
+        }
+      }
+    },
+    {
+      "id": "catchup",
+      "question": "How does a developer's session learn what changed in memory after a git pull?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "catch-up | catchup",
+            "post-merge | post-checkout | git hook"
+          ],
+          "seconds": 5.7,
+          "answers": [
+            "The prompt gives me nothing on this topic \u2014 I have no repository contents, files, or documentation in front of me describing how a session detects memory changes after a git pull, so I can't answer concretely without that information."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 15.8,
+          "answers": [
+            "Based on the repository memory in the prompt, the mechanism is git hooks that rebuild a local \"catch-up\" artifact after git operations, combined with a bounded read set injected at session start:\n\n**1. Git-side: rebuild catch-up after pull (ADR-0018)**\n`ADR-0018-use-git-post-checkout-post-merge-and-post-rewrite-hooks-to-rebuild-local-catch-up-after-git-operations.md` records the decision to wire `post-checkout`, `post-merge`, and `post-rewrite` git hooks so that whenever a pull/merge/rebase/checkout lands new commits, the local catch-up view is regenerated. The 2026-04-20 memory shows how these are installed: the installer writes a `.githooks` directory and sets `core.hooksPath` to `.githooks` (the uninstaller's `--repo` scope reverses this, removing `.githooks` only when content still matches and unsetting `core.hooksPath` only when it still equals `.githooks`).\n\n**2. What is being rebuilt (ADR-0003, ADR-0004)**\nPer ADR-0003, event shards under `.agents/memory/events/` are the canonical write unit and daily summaries are derived read models. Per ADR-0004, memory only becomes collaborative when explicitly committed and pushed \u2014 so a teammate's shards arrive via `git pull`, and the git hooks then re-derive the local summaries/catch-up from the newly pulled shards.\n\n**3. Session-side: bounded read set at session start (ADR-0017, ADR-0008, ADR-0012)**\n- ADR-0017 defines a bounded, prioritized read set as the canonical agent context budget at session start \u2014 this is what the session actually consumes (ADR index, recent daily summaries, etc.).\n- ADR-0008 says bootstrap of shared memory happens via an isolated subagent (spawned from `session-start.py`, logging to `.agents/memory/logs/bootstrap.log`) to avoid contaminating the main context. The 2026-04-20 event notes `session-start.py` parses stdin, runs `detect_adapter()`, and short-circuits the bootstrap spawn with a diagnostic if the runtime resolves to `UnknownAdapter`.\n- ADR-0012 re-injects bounded memory context after `PostCompact` so the invariant survives context compaction mid-session.\n\n**Net flow:** teammate commits/pushes shards \u2192 developer runs `git pull` \u2192 `post-merge` (via `core.hooksPath=.githooks`) rebuilds the local catch-up/summaries \u2192 next `SessionStart` (or `PostCompact`) injects the bounded read set, which now reflects the pulled changes.\n\nOne caveat: the prompt only gives ADR titles and the 2026-04-20 summary, not the hook script contents, so the exact filename of the catch-up artifact and the script the git hooks invoke aren't specified here."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 13.6,
+          "answers": [
+            "Through the git-hook catch-up mechanism described in ADR-0018, surfaced by the session context block from ADR-0022:\n\n1. **Git hooks fire on the pull.** `bootstrap-repo.py` sets `git config core.hooksPath .githooks`, so `.githooks/post-merge` (for a pull/merge), `.githooks/post-checkout`, and `.githooks/post-rewrite` (rebase) run automatically. Each calls `build-catchup.py --trigger <event>` from the central install at `$HOME/.agent/shared-repo-memory/` (ADR-0002's one-install location).\n\n2. **`build-catchup.py` computes the delta.** It writes two local-only files: `local/catchup.md` (the human/agent-readable summary of what changed) and `local/sync_state.json`, which records `last_seen_head`, the last-seen ADR/summary hashes, and a rebuild timestamp. The next run diffs against that recorded state to know what's new since the developer last looked. These files are never committed \u2014 they are per-clone continuity state (ADR-0018 puts them under `.codex/local/`).\n\n3. **The session reads it at start.** `build_memory_context()` in `common.py` (ADR-0022) assembles one budgeted block for `SessionStart` (`session-start.py`) and again after `PostCompact` (`post-compact.py`, ADR-0012). Its fixed order is: ADR `INDEX.md`, the Decision sections of `must_read: true` ADRs, notes from the last `notes_window_days`, then `local/catchup.md`. So the catch-up is the final block the agent sees; if `context_budget_words` (default 2,500) is exhausted, a trailing line names what was dropped and the `memory` skill (`memory-query.py`) can retrieve it.\n\nTwo prerequisites: the repo must have committed `.agents/memory/config.json` (ADR-0020), otherwise `session-start.py`/`post-compact.py` exit silently; and the memory content itself only arrives in the pull because it is committed and pushed alongside code on the same branch/PR (ADR-0004) \u2014 there is no separate memory sync channel."
+          ]
+        }
+      }
+    },
+    {
+      "id": "runtime-support",
+      "question": "Which agent runtimes does agentmemory v0.5 support, and what happened to Gemini and Codex support?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "Claude Code",
+            "removed | dropped | only | no longer"
+          ],
+          "seconds": 6.7,
+          "answers": [
+            "The prompt gives me no information about agentmemory v0.5, its supported agent runtimes, or the status of Gemini and Codex support, so I can't answer this from what's provided."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 12.1,
+          "answers": [
+            "The prompt gives me nothing about an agentmemory v0.5 release or any removal of Gemini/Codex support, so I can't answer that directly. What the provided memory does say about runtime support:\n\n- **ADR-0006** (accepted 2026-04-02): Claude Code and Gemini CLI are the *primary* agent runtimes; Codex is *deprioritized* due to weak hook support \u2014 but not removed.\n- **2026-04-20 memory**: all three adapters (Claude, Gemini, Codex) still exist. That turn added an `UnknownAdapter` sentinel, `AgentAdapter.matches_payload()` (Claude matches on `transcript_path` / Stop, SubagentStop, UserPromptSubmit, PostCompact; Gemini on AfterAgent/BeforeAgent; Codex abstains), a bounded ppid walk `_detect_runtime_from_process_tree`, and `CodexAdapter.matches_environment()` detecting `CODEX_THREAD_ID` / `CODEX_SHELL` / `CODEX_CI` / `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`. `detect_adapter()` resolves payload \u2192 process tree \u2192 env vars \u2192 `UnknownAdapter`. The same day's uninstaller work implemented `unwire_hooks` for Claude, Codex, and Gemini.\n- The only stated forward-looking note is a suggestion to consider an ADR \"that supersedes the Codex-as-fallback assumption in ADR-0006\" \u2014 a proposal, not a recorded decision.\n- The latest version number mentioned is `0.2.3` (2026-04-06).\n\nSo per the available context: Claude, Gemini, and Codex were all supported as of 2026-04-20 (Codex deprioritized, fail-closed detection via `UnknownAdapter`), and there is no record of a v0.5 or of Gemini/Codex being dropped."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 11.7,
+          "answers": [
+            "**Supported runtime in v0.5: Claude Code only** (ADR-0021, accepted 2026-09-05, must-read).\n\nWhat that means concretely:\n- Hooks are wired only for Claude Code: `SessionStart` and `PostCompact` in `~/.claude/settings.json`, with skills symlinked into `~/.claude/skills/`.\n- Scripts still install under the agent-neutral `~/.agent/` paths (per ADR-0002, \"one install, many symlinks\") so another runtime can be added later, once the memory model has proven itself through the evals.\n\n**What happened to Gemini and Codex:**\n- **Earlier position (ADR-0006, 2026-04-02):** Claude Code and Gemini CLI were the primary runtimes; Codex was deprioritized because of weak hook support. ADR-0006 is now **superseded by ADR-0021**.\n- **Gemini:** ADR-0012 already noted a gap \u2014 Gemini CLI has no equivalent to `PostCompact`; its `PreCompress` event fires before compression and is advisory only, so no recovery hook was ever wired for Gemini. ADR-0021 then dropped Gemini as a supported runtime entirely in v0.5.\n- **Codex:** deprioritized in ADR-0006 for weak hook support and not brought back in ADR-0021. Some Codex-named paths still linger as access paths, not runtime support: `<repo>/.codex/memory` is a symlink to `../.agents/memory` (ADR-0001), and `build-catchup.py` writes its uncommitted local state to `.codex/local/catchup.md` and `.codex/local/sync_state.json` (ADR-0018).\n\nSo v0.5 is deliberately single-runtime, with the install layout kept agent-neutral to leave the door open for re-adding others."
+          ]
+        }
+      }
+    },
+    {
+      "id": "no-auto-commit",
+      "question": "Does agentmemory ever commit or push memory files on its own?",
+      "results": {
+        "none": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "stage | staged | staging"
+          ],
+          "seconds": 10.0,
+          "answers": [
+            "The prompt contains no information about agentmemory's source, docs, or configuration, so I can't say whether it ever commits or pushes memory files on its own."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 11.1,
+          "answers": [
+            "No. Per **ADR-0004** (\"shared memory requires explicit commit and push to become collaborative\", accepted 2026-04-02, must-read), agentmemory writes memory files locally but never commits or pushes them on its own \u2014 a human (or agent acting on explicit instruction) must commit and push for the memory to become collaborative.\n\nSupporting details from the memory in the prompt:\n\n- **Post-turn capture only writes files.** ADR-0003 makes event shards under `.agents/memory/events/` the canonical write unit and daily summaries derived read models; ADR-0007 describes a two-phase pipeline (raw turn captures \u2192 durable checkpoints). None of these steps include a `git commit` or `git push`. The 2026-04-06 summary's \"Next likely steps\" says explicitly: *\"Review the generated shard and summary, then explicitly commit and push them with the related code changes if ready.\"*\n- **ADR promotion is also explicit** (ADR-0005): promotion to an ADR is separate from post-turn capture and never automatic.\n- **The git hooks it installs are read-side, not write-side.** ADR-0018 wires `post-checkout`, `post-merge`, and `post-rewrite` hooks (via `.githooks` / `core.hooksPath`) to rebuild local catch-up after git operations \u2014 they react to your git activity; they don't create commits.\n- **Even the uninstaller doesn't commit.** `uninstall.sh` / `scripts/shared-repo-memory/uninstall.py` leaves committed memory under `.agents/memory` untouched by default; with `--purge-memory` it only *stages* `git rm -r` \"for operator review\" \u2014 it still doesn't commit."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 11.6,
+          "answers": [
+            "No. Per ADR-0004 (\"Shared memory requires explicit commit and push to become collaborative\"), agentmemory never commits or pushes memory files by itself:\n\n- **Hooks only stage, never commit.** The post-turn hooks stage generated memory files but \"do not commit or push.\" Commit and push are explicit steps done by a human or by an agent using the normal commit workflow.\n- **No separate memory-only publication path.** Memory travels with code: it becomes shared state only when the committed files under `.agents/memory/` are pushed to the remote on the same branch and in the same pull request as the code they describe.\n- **Under the current capture model (ADR-0019), git hooks only write local files.** The `post-commit` hook (`commit-capture.py`) appends a candidate note to `.agents/memory/notes/YYYY-MM-DD.md` when a commit touches a `decision_surfaces` path or carries a `Decision:` line \u2014 and per the 2026-09-05 note, that candidate deliberately \"lands one commit late.\" A `commit-msg` approach that would have inserted the note into the same commit was rejected because it \"cannot corrupt the commit\" was a requirement and index timing isn't guaranteed. So the hook creates an uncommitted file; you commit it yourself.\n- **Local-only artifacts are never committed at all.** `build-catchup.py` (run by the `post-checkout`, `post-merge`, `post-rewrite` hooks, ADR-0018) writes `.codex/local/catchup.md` and `.codex/local/sync_state.json`, which are \"explicitly never committed.\"\n\nThe only automated gate related to committing is the installed `pre-commit` hook calling `check-memory.py`, which validates memory structure \u2014 it checks, it doesn't commit."
+          ]
+        }
+      }
+    },
+    {
+      "id": "query-path",
+      "question": "How do I ask what has already been decided about a subsystem, and where does that search look?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "memory-query | memory skill | /memory",
+            "ADR",
+            "note | notes"
+          ],
+          "seconds": 5.3,
+          "answers": [
+            "The prompt gives me no information about this repository \u2014 no files, docs, or tooling describing how to query prior decisions about a subsystem or where such a search would look \u2014 so I can't answer from it."
+          ]
+        },
+        "legacy": {
+          "score": 0.667,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "note | notes"
+          ],
+          "seconds": 16.8,
+          "answers": [
+            "The prompt doesn't document a dedicated command, skill, or flag for querying \"what's been decided about X\" \u2014 no search entry point is named. What it does show is where decision memory lives, which is what any such search would have to read:\n\n**Where decisions are recorded (from the prompt)**\n\n1. **ADR index** \u2014 the canonical, promoted decisions. Files like `ADR-0006-claude-and-gemini-are-primary-runtimes-codex-deprioritized.md`, each with `Status`, `Date`, `Tags` (`poc`, `docs`), `Must Read`, and `Supersedes`/`Superseded By` columns. Per ADR-0005, entries only land here via explicit promotion, separate from post-turn capture \u2014 so this is the \"already decided\" tier.\n2. **Daily summaries** under `.agents/memory` (ADR-0001 names it the canonical shared-memory location) \u2014 e.g. `2026-04-20 summary`, with a **Decision candidates** section and **Top decision** line. Per ADR-0003 these are derived read models, not the source of truth.\n3. **Event shards** under `events/` (e.g. `events/2026-04-20T21-48-19Z--2355287-davecthomas--thread_\u2026--turn_02b10fb024.md`) \u2014 the canonical write unit (ADR-0003). Shards carry a `decision_candidate` flag that is write-protected at capture time (ADR-0015), so only trusted publication paths mark something as a candidate.\n4. **Session-start read set** \u2014 ADR-0017 defines a bounded, prioritized read set (with `Must Read` ADRs first) as what an agent is given at session start; ADR-0012 re-injects it after `PostCompact`.\n\n**Practical answer given only this material:** for a subsystem such as runtime detection, you'd check the ADR index for tagged/must-read entries (ADR-0006), then the summaries' \"Decision candidates\" (the 2026-04-20 UnknownAdapter fail-closed decision, explicitly flagged as a candidate to *supersede* ADR-0006), then the linked shard for the full rationale. Whether there is a `scripts/shared-repo-memory/\u2026` query tool or a skill that automates that walk is not stated in the prompt."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 13.1,
+          "answers": [
+            "You ask through the `memory` skill, which runs `memory-query.py`.\n\n**How to ask:** The session-start context you're already given is a single budgeted block built by `build_memory_context()` in `common.py` (ADR-0022): the ADR `INDEX.md`, the Decision section of every `must_read: true` ADR (newest first), notes from the last `notes_window_days`, then `local/catchup.md`. Anything that falls outside the `context_budget_words` budget (default 2,500) \u2014 or outside the notes window \u2014 is dropped with a trailing line naming what was omitted, and the ADR says explicitly that \"anything omitted is reachable through the `memory` skill (`memory-query.py`).\" So for a subsystem-specific question (\"what's been decided about X?\"), invoke the `memory` skill rather than relying on the context block, which is a bounded summary rather than a full search.\n\n**Where the search looks:** the canonical shared memory location `<repo>/.agents/memory/` (ADR-0001; `.codex/memory` is only a symlink access path). Within it, decisions live in exactly two places per ADR-0019:\n\n- `.agents/memory/adr/` \u2014 the ADRs plus `INDEX.md` (with `must_read` flags).\n- `.agents/memory/notes/YYYY-MM-DD.md` \u2014 decision notes appended by `memory-note.py` (Decision / Why / Alternatives / Scope) or by the `post-commit` hook's `commit-capture.py` when a commit touches a `decision_surfaces` path from `.agents/memory/config.json` or carries a `Decision:` line.\n\nNotes carry a **Scope** field naming files/paths (e.g. `scripts/shared-repo-memory/commit-capture.py`, `evals/`), which is the natural handle for narrowing to a subsystem. The older per-turn shards, episode graph, and daily summaries were removed by ADR-0019, so they are not part of the search surface.\n\nThe prompt doesn't include `memory-query.py`'s own flags or ranking mechanics, so I can't be more specific about its command-line interface than that."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-black-pin",
+      "question": "Why is black pinned to an exact version in this repo rather than a caret range?",
+      "results": {
+        "none": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "reformat | formatting diff | output changes | changes between releases"
+          ],
+          "seconds": 9.8,
+          "answers": [
+            "The prompt contains no information about this repository's dependency files or why black is pinned to an exact version, so I can't answer that from what's provided."
+          ]
+        },
+        "legacy": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "reformat | formatting diff | output changes | changes between releases"
+          ],
+          "seconds": 6.0,
+          "answers": [
+            "The prompt gives no information about a black pin (or any dependency pinning rationale) in this repo \u2014 the ADR index and memory summaries cover adapter detection, the uninstaller, and the memory pipeline, but nothing about pyproject/requirements or why black is pinned exactly."
+          ]
+        },
+        "memory": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "reformat | formatting diff | output changes | changes between releases"
+          ],
+          "seconds": 6.4,
+          "answers": [
+            "The prompt gives me nothing on this: ADR-0023 (\"Black is pinned to an exact version\", accepted 2026-09-05, `must_read: no`) appears only in the ADR index, so its Decision section was not included in the session context block and none of the decision notes cover it. The rationale can be retrieved by reading `.agents/memory/adr/ADR-0023-black-is-pinned-to-an-exact-version.md` directly or via the `memory` skill (`memory-query.py`)."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-runtime-detection",
+      "question": "How did runtime detection in the hook layer resolve which agent was running, and why did it fail closed?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "payload",
+            "process | ancestry | parent",
+            "env | environment",
+            "unknown | fail closed | fails closed | skip"
+          ],
+          "seconds": 5.4,
+          "answers": [
+            "The prompt gives me nothing on this topic \u2014 no repository files, hook-layer code, or runtime-detection logic were provided, so I can't say how agent detection worked or why it failed closed."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 20.9,
+          "answers": [
+            "Based on the 2026-04-20 memory summary (shard `events/2026-04-20T21-48-19Z--2355287-davecthomas--thread_28d776fa-...--turn_02b10fb024.md`):\n\n## How detection resolved the runtime\n\n`detect_adapter()` was reworked into an ordered chain: **payload \u2192 process tree \u2192 env vars \u2192 UnknownAdapter**.\n\n1. **Payload (`AgentAdapter.matches_payload()`, a new protocol method)**\n   - **Claude** matches on a `transcript_path` field or on Claude-unique hook events: `Stop`, `SubagentStop`, `UserPromptSubmit`, `PostCompact`.\n   - **Gemini** matches on `AfterAgent` / `BeforeAgent`.\n   - **Codex** explicitly abstains \u2014 its payload shape isn't unique enough to identify it.\n\n2. **Process tree (`_detect_runtime_from_process_tree`)** \u2014 a bounded ppid walk (depth 6, cached) that looks for `claude`, `gemini`, or `codex` binaries in the hook subprocess's ancestry.\n\n3. **Environment variables** \u2014 the older signals (`CLAUDECODE`, `GEMINI_CLI`), plus `CodexAdapter.matches_environment()` now *positively* detects `CODEX_THREAD_ID`, `CODEX_SHELL`, `CODEX_CI`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, and the `com.openai.codex` macOS bundle id.\n\n4. **`UnknownAdapter`** \u2014 a sentinel returned when nothing above matches. It renders neutrally in a Claude-compatible way and has no-op `wire`/`bootstrap` (and later `unwire_hooks`) behavior.\n\nHook entry points were changed to feed this chain: `session-start.py` parses stdin *before* detection so the payload reaches the resolver, and `post-turn-notify.py` and `prompt-guard.py` pass the full payload into `detect_adapter_from_hook_event`.\n\n## Why it fails closed\n\nPreviously, detection fell through to `CodexAdapter` whenever `CLAUDECODE` / `GEMINI_CLI` didn't propagate into the hook subprocess. That guess caused:\n- misattributed shard frontmatter,\n- wrong runtime tags on log prefixes,\n- and \u2014 worst \u2014 bootstrap spawns that presumed Codex credentials in Claude-only client repos.\n\nThe fix makes \"unknown\" an explicit outcome instead of defaulting to Codex: when `UnknownAdapter` is active, `session-start.py` short-circuits the subagent bootstrap spawn and writes a diagnostic line to `.agents/memory/logs/bootstrap.log` rather than crashing or guessing. The design goal, recorded as a decision candidate, was that agentmemory should never assume a runtime it cannot confirm, and that client repos should not need to export any discovery env var for detection to work.\n\nOpen follow-ups noted at the time: verify the UnknownAdapter path on a sandboxed CI runner, consider promoting this to an ADR superseding the Codex-as-fallback assumption in ADR-0006, and decide whether shard frontmatter should show `ai_tool=unknown` or suppress it."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 14.2,
+          "answers": [
+            "The prompt gives only a one-line summary of this, not the full note. What it says:\n\n**How detection resolved the runtime** (decision note dated 2026-04-20, listed under \"Older decision notes\"):\n\n> Runtime detection resolves payload, then process ancestry, then env vars, and fails closed to an UnknownAdapter.\n\nSo the order of precedence was:\n\n1. **Payload** \u2014 inspect the hook's input payload first (the most authoritative signal, since each runtime's hook event carries a distinguishable shape).\n2. **Process ancestry** \u2014 if the payload is inconclusive, walk the parent process chain to see which agent CLI spawned the hook.\n3. **Environment variables** \u2014 last resort, since env vars are the easiest signal to be inherited, stale, or spoofed.\n\n**Why it failed closed:** if none of those three signals identified a runtime, detection returned an `UnknownAdapter` rather than guessing a default (e.g., assuming Claude Code). Failing closed means an unrecognized runtime gets a no-op/inert adapter instead of memory being written under the wrong runtime's conventions or hooks misfiring.\n\n**Caveat:** the prompt only includes the one-line summary; the full Why/Alternatives/Scope for that note is not in what I was given. Per the index, the detail is reachable via the `memory` skill (`memory-query.py`). Note also that this predates ADR-0021 (Claude Code is the only supported runtime in v0.5), so multi-runtime detection may have been simplified or removed since."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-uninstall-safety",
+      "question": "What does the uninstaller refuse to remove, and how does it decide what is its own?",
+      "results": {
+        "none": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 5.9,
+          "answers": [
+            "The prompt gives me no information about an uninstaller or its ownership rules \u2014 no repository files, code, or documentation on the topic were included in the context, so I can't say what it refuses to remove or how it identifies its own files."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 17.4,
+          "answers": [
+            "Based on the 2026-04-20 memory summary (the `feat/uninstaller` work), the uninstaller \u2014 `uninstall.sh` at the repo root, which execs `scripts/shared-repo-memory/uninstall.py` \u2014 is deliberately fail-closed. Here's what it refuses to touch and how it recognizes its own artifacts.\n\n## What it refuses to remove\n\n- **User-added hook entries for other tooling.** Each adapter's `unwire_hooks` reverses *only its own* `wire_hooks`. Hook entries in Claude/Codex/Gemini settings that weren't put there by the installer survive.\n- **Committed memory under `.agents/memory`.** This is never deleted by default in either global or `--repo` scope. The only way it gets touched is `--purge-memory`, and even then the uninstaller doesn't delete \u2014 it *stages `git rm -r`* so an operator can review the change before committing.\n- **`.githooks` when its content has diverged.** In `--repo` scope it removes `.githooks` only when the content still matches what the installer wrote.\n- **`core.hooksPath` unless it's safe.** It unsets `core.hooksPath` only when the value is still equal to `.githooks` *and* no other hooks remain in that directory.\n- **Codex `config.toml` content that isn't the installer's.** It strips only the installer's keys, its canonical comments, and the per-repo trust block it appended.\n- **The `.gitignore` outside the installer's marker block.** It strips only the marker-delimited block it added.\n\n## How it decides what is \"its own\"\n\nTwo ownership signals are used to identify installer-owned hook entries:\n\n1. **Installer-owned hook names** \u2014 entries whose name is one the installer assigned.\n2. **Commands pointing at `ctx.install_root`** \u2014 entries whose command path resolves into the shared install location (`~/.agent/shared-repo-memory`).\n\nAnything not matching one of those is treated as foreign and left alone. For file-level artifacts (`.githooks`, `.gitignore` block, Codex `config.toml` sections), ownership is established by content/marker matching rather than by path alone \u2014 hence the \"only if content still matches\" and \"marker block\" rules above.\n\n## Scope summary\n\n- **Global (default):** removes `~/.agent/shared-repo-memory` scripts, per-agent skill symlinks, canonical skill copies, and `shared_asset_refresh_state.json`; unwires hooks per adapter (Claude, Codex, Gemini; `UnknownAdapter.unwire_hooks` is a no-op).\n- **`--repo`:** conditional `.githooks` removal, conditional `core.hooksPath` unset, drops `.codex/memory`, strips the `.gitignore` marker block.\n- **`--purge-memory`:** the only path that touches `.agents/memory`, via staged `git rm -r`.\n- **`--dry-run`:** reports without changing anything.\n\nOne caveat: the memory notes list \"validate on a freshly installed host \u2026 confirm no user-added hooks are lost and that `core.hooksPath` is only unset when safe\" as a *next step*, so this behavior was designed and tested in-repo but hadn't yet been verified end-to-end on a clean host as of 2026-04-20."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 8.6,
+          "answers": [
+            "The prompt only gives one line on this topic, from the older decision notes (2026-04-20): \"Uninstall is symmetric with install and removes only entries it can prove are its own.\" So:\n\n- **What it refuses to remove:** anything it cannot prove it installed \u2014 it removes only entries that are demonstrably its own.\n- **How it decides:** by being symmetric with install (`install.sh` \u2192 `scripts/shared-repo-memory/install.py`, per ADR-0002), i.e., it reverses the same set of things install created: the canonical copy under `~/.agent/shared-repo-memory/`, the symlinks into agent-specific paths (e.g. `~/.claude/skills/`, `~/.codex/skills/<skill>`) that point at that copy, and the hook entries it wired into `~/.claude/settings.json` (`SessionStart`, `PostCompact`).\n\nThe prompt does not spell out the exact proof mechanism (e.g. symlink-target checks or hook-command matching); for that detail you'd need to ask the `memory` skill (`memory-query.py`) for the full 2026-04-20 note."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-quality-gate",
+      "question": "What enforces formatting and tests on commits in this repo?",
+      "results": {
+        "none": {
+          "score": 0.667,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "black"
+          ],
+          "seconds": 5.9,
+          "answers": [
+            "The prompt contains no information about this repository's commit hooks, formatters, or test enforcement \u2014 I have no repo contents, config files (e.g. `.pre-commit-config.yaml`, `.husky/`, `lefthook.yml`, CI workflows), or documentation to answer from."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 9.5,
+          "answers": [
+            "The prompt gives no information on formatting or test enforcement for commits in this repo. The only commit-related mechanisms described are unrelated to that:\n\n- **Git hooks mentioned** (ADR-0018): `post-checkout`, `post-merge`, and `post-rewrite` hooks are used to rebuild local catch-up memory after git operations \u2014 these are not pre-commit checks and don't run formatters or tests.\n- **`.githooks` / `core.hooksPath`** (2026-04-20 memory): the installer/uninstaller manages a `.githooks` directory and sets/unsets `core.hooksPath`, but only for the shared-memory hooks above.\n- **ADR-0004** requires explicit commit and push for memory to become collaborative, but that's a workflow policy, not an enforcement mechanism.\n\nNothing in the ADR index or memory summaries references a pre-commit hook, linter, formatter (e.g. black/ruff), test runner, or CI config (e.g. GitHub Actions) that gates commits. The closest hint is a \"Next likely steps\" item suggesting a *possible* companion CI check to keep `AgentAdapter` wire/unwire paths in lockstep, but that's a proposal, not something in place."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 14.5,
+          "answers": [
+            "Based on what's in the prompt, the enforcement points are:\n\n**Formatting**\n- **ADR-0023 \"Black is pinned to an exact version\"** (accepted, 2026-09-05) \u2014 the repo standardizes on Black at a pinned version. The ADR body isn't included in the context, so I can't say exactly which version or where the pin lives (e.g. `pyproject.toml` / a requirements file), only that the pin is a recorded decision.\n\n**Pre-commit gate (structural memory check)**\n- A **generated `pre-commit` hook** written by `scripts/shared-repo-memory/bootstrap-repo.py` calls **`scripts/shared-repo-memory/check-memory.py`**. Per the 2026-09-05 decision note, `check-memory.py` was moved from an evals-only file to an installed script beside `common.py`, so the installed pre-commit hook runs it in every repo where `.agents/memory/config.json` exists (the opt-in marker from ADR-0020).\n- Hooks are wired via `git config core.hooksPath .githooks`, set by `bootstrap-repo.py` (ADR-0018). The same `.githooks/` directory holds `post-checkout`, `post-merge`, `post-rewrite` (catch-up rebuild) and the `post-commit` hook running `commit-capture.py` (ADR-0019), which captures decision candidates rather than enforcing anything.\n\n**Tests**\n- The prompt does not describe any hook or CI that runs the test suite on commit. The only test-adjacent material is the `evals/` directory (hold-out questions scored by a judge), which is an evaluation harness for memory quality, not a commit gate.\n\nSo: Black (pinned per ADR-0023) governs formatting, the `bootstrap-repo.py`-generated pre-commit hook enforces the `check-memory.py` structural check, and there's nothing in the provided context showing tests being enforced at commit time."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-hook-json",
+      "question": "How do the SessionStart and PostCompact hooks hand context back to Claude Code?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "additionalContext | hookSpecificOutput | JSON"
+          ],
+          "seconds": 8.0,
+          "answers": [
+            "The prompt doesn't include any repository contents (no source, hook scripts, or config for SessionStart/PostCompact), so I have nothing to base an answer on for how those hooks return context to Claude Code."
+          ]
+        },
+        "legacy": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 20.4,
+          "answers": [
+            "Based only on what's in the repository memory provided, here's what can be said:\n\n**SessionStart**\n- The hook script is `scripts/shared-repo-memory/session-start.py` (referred to as `session-start.py`). It now parses the hook payload from stdin *before* runtime detection, so the payload feeds `detect_adapter()` (resolution order: payload \u2192 process-tree ppid walk \u2192 env vars \u2192 `UnknownAdapter`).\n- Per ADR-0008, the context hand-back at session start is done by **spawning an isolated subagent to bootstrap shared memory**, rather than reading memory inline in the main session \u2014 the stated rationale is avoiding in-session context contamination.\n- Per ADR-0017, what gets handed back is a **bounded, prioritized read set** that acts as the canonical agent context budget at session start (i.e., the hook does not dump all of `.agents/memory`; it selects a bounded slice \u2014 the ADR index, recent daily summaries, etc.).\n- Fail-closed path: if detection resolves to `UnknownAdapter`, `session-start.py` short-circuits the subagent bootstrap spawn entirely and writes a diagnostic line to `.agents/memory/logs/bootstrap.log` instead of guessing a runtime.\n\n**PostCompact**\n- Per ADR-0012, after Claude Code compacts the conversation, the hook **re-injects bounded memory context** so the \"session always has memory context\" invariant survives compaction. The same bounded read-set budget from ADR-0017 is the intended payload.\n- `PostCompact` is listed as one of the Claude-unique hook events (alongside `Stop`, `SubagentStop`, `UserPromptSubmit`) that `ClaudeAdapter.matches_payload()` keys on, so the payload itself identifies the runtime as Claude Code before context is rebuilt.\n\n**Related plumbing**\n- ADR-0018 uses git `post-checkout`, `post-merge`, and `post-rewrite` hooks (installed under `.githooks` with `core.hooksPath`) to rebuild the local catch-up material that these session hooks read from.\n- Hook wiring/unwiring is owned by the per-runtime `AgentAdapter` (`wire_hooks` / `unwire_hooks`), installed via `install.sh` / removed via `uninstall.sh`.\n\n**What the prompt does *not* say:** the exact output channel used to return text to Claude Code (e.g., stdout text vs. a JSON `additionalContext` field, exit codes), the precise file list in the bounded read set, or the internals of the PostCompact script. Those details would need to be read from `session-start.py`, the PostCompact hook script, and ADR-0012/0017 themselves."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 13.3,
+          "answers": [
+            "Both hooks return the same thing through the same path, so the mechanics are shared:\n\n**What is handed back**\n\nBoth `session-start.py` and `post-compact.py` call `build_memory_context()` in `scripts/shared-repo-memory/common.py`, which is the single source for agent context (ADR-0022). It assembles one budgeted block in a fixed order:\n\n1. ADR `INDEX.md`\n2. The Decision section of every ADR with `must_read: true`, newest first\n3. Decision notes from the last `notes_window_days`\n4. `local/catchup.md` (the local catch-up rebuilt by `build-catchup.py` from the git post-checkout/post-merge/post-rewrite hooks, ADR-0018)\n\nBlocks are dropped once `context_budget_words` (default 2,500, settable in `.agents/memory/config.json`) is reached, and a trailing line names what was omitted. Omitted material stays reachable through the `memory` skill (`memory-query.py`).\n\n**How each hook is wired**\n\n- `SessionStart` \u2192 `session-start.py`, registered in `~/.claude/settings.json` (ADR-0021).\n- `PostCompact` \u2192 `post-compact.py`, also registered in `~/.claude/settings.json` (ADR-0012). It re-injects the same bounded read set as SessionStart so the \"session has memory context\" invariant survives compaction. (ADR-0012's original wording described the read set as ADR index + three daily summaries; ADR-0019/0022 replaced that with the notes-based block above.)\n\nBoth scripts are gated on opt-in: if `.agents/memory/config.json` is absent, they exit silently (ADR-0020). The scripts themselves live in the central install at `~/.agent/shared-repo-memory/`, with Claude-specific paths symlinked to that copy (ADR-0002).\n\n**What the prompt does not say**\n\nThe prompt doesn't describe the wire-level transport, i.e., whether the scripts print the block to stdout for Claude Code to inject as hook output or return a JSON payload with a context field. Only the content assembly and wiring are documented here."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-codex-symlink",
+      "question": "Does the repo still create a .codex/memory symlink? Why or why not?",
+      "results": {
+        "none": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "no | removed | no longer"
+          ],
+          "seconds": 5.6,
+          "answers": [
+            "[claude exited 1: ]"
+          ]
+        },
+        "legacy": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [
+            "Claude | ADR-0021 | only runtime"
+          ],
+          "seconds": 15.7,
+          "answers": [
+            "Based on the repository memory in the prompt, the answer is only partial: the memory doesn't describe the *creation* side of `.codex/memory`, but it does confirm the symlink still exists as an installer-owned artifact as of the 2026-04-20 uninstaller work.\n\n**What the memory says**\n\n- The 2026-04-20 summary describes the new `uninstall.sh` \u2192 `scripts/shared-repo-memory/uninstall.py` entry point. In per-repo scope (`--repo`), it explicitly \"drops `.codex/memory`,\" alongside removing `.githooks` (only when content still matches), unsetting `core.hooksPath` (only when still equal to `.githooks` and no other hooks remain), and stripping the installer's `.gitignore` marker block.\n- The same summary lists \"`.codex/memory` symlinks\" among the things operators previously had to hand-remove because the installer was one-way.\n- Since the uninstaller is designed to reverse only what `install.sh` set up (per-adapter `unwire_hooks`, \"entries identified by installer-owned hook names or by commands that point at `ctx.install_root`\"), the fact that it removes `.codex/memory` implies `install.sh` in `--repo` scope still creates it.\n\n**Why it still exists (inferred from the memory)**\n\n- ADR-0001 makes `.agents/memory` the canonical, agent-neutral shared memory location, and ADR-0002 says shared agent assets use \"one install, many symlinks.\" The `.codex/memory` symlink is the Codex-facing pointer into that canonical location.\n- ADR-0006 deprioritizes Codex (weak hook support) but does not drop it as a supported runtime \u2014 the 2026-04-20 work still implements `CodexAdapter.matches_environment()` (detecting `CODEX_THREAD_ID`, `CODEX_SHELL`, `CODEX_CI`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, and the `com.openai.codex` bundle id), `CodexAdapter.unwire_hooks`, and Codex `config.toml` trust-block handling. So the Codex integration, including its symlink, remains wired.\n\n**What the memory does not say**\n\nThe prompt contains no explicit record of the `install.sh` / `install.py` code path that creates `.codex/memory`, nor any decision to remove it. The strongest available evidence is indirect: the uninstaller was written to delete it, and Codex remains a supported (if deprioritized) adapter. If you need a definitive answer, the file to check is `scripts/shared-repo-memory/install.py` (and the Codex adapter's `wire_hooks`), which the memory doesn't quote."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": null,
+          "runs": 1,
+          "missed": [],
+          "seconds": 14.1,
+          "answers": [
+            "Based on the decision memory, the answer is partly explicit and partly inferred.\n\n**What ADR-0001 says (still `accepted`):** `<repo>/.agents/memory/` is the canonical agent-neutral storage location, and agent-facing paths such as `<repo>/.codex/memory` are symlinks to `../.agents/memory` that exist \"only as access paths\" \u2014 never written to directly. So the symlink model itself has not been retracted; ADR-0001 is still marked \"Must read: yes.\"\n\n**Why the `.codex/memory` symlink is almost certainly no longer created:** ADR-0021 (accepted 2026-09-05) states that **Claude Code is the only supported runtime in v0.5** \u2014 only `SessionStart`/`PostCompact` in `~/.claude/settings.json` are wired, and skills are symlinked into `~/.claude/skills/`. Codex was already deprioritized in ADR-0006 and that ADR is now superseded by ADR-0021. With no Codex runtime wired, there is no consumer for a `.codex/memory` access path, so `bootstrap-repo.py` has no reason to create it. ADR-0020 also describes what a repo gets on opt-in: `bootstrap-repo.py --init` writes `.agents/memory/config.json`, and ADR-0018 shows it setting `core.hooksPath .githooks` \u2014 neither mentions creating a `.codex/memory` symlink.\n\n**One caveat / leftover:** ADR-0018 (still accepted) says `build-catchup.py` writes to `.codex/local/catchup.md` and `.codex/local/sync_state.json`, whereas the newer ADR-0022 refers to `local/catchup.md` (i.e., `.agents/memory/local/catchup.md`). That suggests the `.codex/` directory is a vestigial path being phased out, and ADR-0018's wording is stale rather than evidence that `.codex/` is actively maintained.\n\n**Bottom line:** No \u2014 under v0.5 the repo should not be creating a `.codex/memory` symlink. The canonical store is `.agents/memory/` (ADR-0001), and the only runtime that gets wired is Claude Code (ADR-0021). The prompt does not include `bootstrap-repo.py` itself, so I can't confirm the exact code path that used to create the symlink was removed; the conclusion rests on ADR-0021 removing the only consumer of it."
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -93,6 +93,17 @@ If the repo has history but no ADRs, `/memory-bootstrap` mines the design docs a
 | `memory-bootstrap` | Seed ADRs from existing docs and commits |
 | `news` | What changed in memory recently |
 
+### For humans
+
+The scripts work without an agent. A git alias makes a note one command:
+
+```bash
+git config --global alias.note '!python3 "$HOME/.agent/shared-repo-memory/memory-note.py" --decision'
+git note "Use a queue for retries" --why "cron cannot hold retry state"
+```
+
+`memory-query.py <topic>` and `memory-news.py` answer the same questions the skills do.
+
 ## Scripts
 
 All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/`:
@@ -110,7 +121,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `memory-note.py` | Append a note. |
 | `commit-capture.py` | Git hook. Candidate note from a decision-bearing commit. |
 | `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--supersedes`, `--reindex`. |
-| `memory-query.py` | Search ADRs, notes, docs, path history. |
+| `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--json`. |
 | `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repo scope. |
 
 Together they are about 2,100 lines of Python with no dependencies beyond the standard library.
