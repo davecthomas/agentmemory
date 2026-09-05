@@ -7,6 +7,11 @@ disabled, so the answer can come only from the prompt, in two conditions:
 * ``none``: the bare question
 * ``memory``: the question preceded by the session-start context block from
   ``session-start.py --print-context``
+A question with ``"input": "news"`` is given the ``memory-news.py --all``
+digest in the memory condition instead of the session block, so the
+narrative path is measured too; legacy keeps its v0.4 block, since the
+daily summaries were its news.
+
 * ``legacy``: the question preceded by what v0.4 injected, the ADR index
   plus the three newest daily summaries, read from ``--legacy-ref``
   (default ``29a591a``, the last v0.4 commit on main) so the rebuild is
@@ -109,6 +114,32 @@ def memory_block(root: Path) -> str:
         check=True,
     )
     return result.stdout.strip()
+
+
+def news_block(root: Path) -> str:
+    """Return the news digest for the whole recent window, without marking it read.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        str: Digest Markdown, or ``""`` when the script is unavailable.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "memory-news.py"),
+            "--all",
+            "--no-mark",
+            "--days",
+            "14",
+            "--repo-root",
+            str(root),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def legacy_block(root: Path, ref: str) -> str:
@@ -317,6 +348,9 @@ def main() -> int:
             "run_eval: repo has no memory context; nothing to measure", file=sys.stderr
         )
         return 1
+    digest: str = (
+        news_block(root) if any(q.get("input") == "news" for q in questions) else ""
+    )
     legacy: str = legacy_block(root, args.legacy_ref) if "legacy" in conditions else ""
     if "legacy" in conditions and not legacy:
         print(
@@ -331,7 +365,9 @@ def main() -> int:
         row: dict[str, Any] = {"id": q["id"], "question": q["question"], "results": {}}
         for cond in conditions:
             prompt: str = q["question"]
-            if cond == "memory":
+            if cond == "memory" and q.get("input") == "news":
+                prompt = f"Repository news digest:\n\n{digest}\n\n---\n\nQuestion: {q['question']}"
+            elif cond == "memory":
                 prompt = f"Repository decision memory:\n\n{context}\n\n---\n\nQuestion: {q['question']}"
             elif cond == "legacy":
                 prompt = f"Repository decision memory:\n\n{legacy}\n\n---\n\nQuestion: {q['question']}"

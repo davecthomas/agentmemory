@@ -109,3 +109,31 @@ def test_eval_scorer_accepts_alternatives() -> None:
     assert value == round(2 / 3, 3) or abs(value - 2 / 3) < 1e-9
     assert missed == ["vector"]
     assert run_eval.score("anything", []) == (1.0, [])
+
+
+def test_eval_dry_run_builds_news_prompt() -> None:
+    import subprocess
+    import sys
+
+    repo_root = SCRIPTS.parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(EVALS / "run_eval.py"),
+            "--dry-run",
+            "--only",
+            "news-narrative",
+            "--conditions",
+            "none,memory",
+            "--repo-root",
+            str(repo_root),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    line = next(
+        ln for ln in result.stdout.splitlines() if ln.startswith("news-narrative")
+    )
+    words = int(line.split("memory:")[1].split()[0])
+    assert words > 200  # the digest, not just the question
