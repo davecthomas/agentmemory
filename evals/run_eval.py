@@ -210,6 +210,61 @@ def judge(
     return min(1.0, max(0.0, float(match.group(0)))) if match else None
 
 
+def write_latest(result: dict[str, Any], out_dir: Path) -> Path:
+    """Render a results JSON as ``latest.md`` so a reader never opens the JSON.
+
+    Args:
+        result: The parsed results document.
+        out_dir: ``evals/results``.
+
+    Returns:
+        Path: The Markdown file written.
+    """
+    conditions: list[str] = result["conditions"]
+    holdouts: set[str] = set(result.get("holdout_ids", []))
+    lines: list[str] = [
+        f"# Eval {result.get('stamp', '')}",
+        "",
+        f"Model: `{result.get('model') or 'default'}` · runs per call: {result.get('runs', 1)} · "
+        f"memory context {result.get('context_words', 0)} words (≈{int(result.get('context_words', 0) * TOKENS_PER_WORD)} tokens)"
+        + (
+            f" · legacy context {result['legacy_context_words']} words from `{result['legacy_ref']}`"
+            if result.get("legacy_ref")
+            else ""
+        ),
+        "",
+        "| Question | " + " | ".join(conditions) + " |",
+        "|---|" + "---:|" * len(conditions),
+    ]
+    for row in result["rows"]:
+        label = f"{row['id']} (hold-out)" if row["id"] in holdouts else row["id"]
+        lines.append(
+            f"| {label} | "
+            + " | ".join(f"{row['results'][c]['score']:.2f}" for c in conditions)
+            + " |"
+        )
+    lines.append(
+        "| **mean (keyword)** | "
+        + " | ".join(f"**{result['means'][c]:.2f}**" for c in conditions)
+        + " |"
+    )
+    judge = result.get("judge_means") or {}
+    if any(v is not None for v in judge.values()):
+        lines.append(
+            "| mean (judge) | "
+            + " | ".join(f"{(judge.get(c) or 0):.2f}" for c in conditions)
+            + " |"
+        )
+    lines += [
+        "",
+        "Keyword score is `must_mention` coverage; judge score is an isolated `claude -p` grading against each question's `expected` answer. Hold-out questions were written from git history and AGENTS.md rather than from the ADRs.",
+        "",
+    ]
+    out = out_dir / "latest.md"
+    out.write_text("\n".join(lines))
+    return out
+
+
 def spread(values: list[float]) -> float:
     return round((max(values) - min(values)) / 2, 3) if len(values) > 1 else 0.0
 
@@ -232,7 +287,16 @@ def main() -> int:
     )
     parser.add_argument("--judge-model", default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--render",
+        action="store_true",
+        help="rewrite results/latest.md from the newest results JSON and exit",
+    )
     args = parser.parse_args()
+    if args.render:
+        newest = sorted((HERE / "results").glob("*.json"))[-1]
+        print(write_latest(json.loads(newest.read_text()), HERE / "results"))
+        return 0
 
     root = common.repo_root(args.repo_root)
     if root is None:
@@ -381,10 +445,12 @@ def main() -> int:
             )
     out_dir: Path = HERE / "results"
     out_dir.mkdir(exist_ok=True)
-    out: Path = out_dir / f"{common.stamp().replace(':', '')}.json"
+    stamp: str = common.stamp().replace(":", "")
+    out: Path = out_dir / f"{stamp}.json"
     out.write_text(
         json.dumps(
             {
+                "stamp": stamp,
                 "model": args.model,
                 "conditions": conditions,
                 "means": means,
@@ -401,6 +467,7 @@ def main() -> int:
         + "\n"
     )
     print(f"wrote {out.relative_to(HERE.parent)}")
+    write_latest(json.loads(out.read_text()), out_dir)
     for baseline in ("none", "legacy"):
         if (
             "memory" in means
