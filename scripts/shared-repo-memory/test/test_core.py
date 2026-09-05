@@ -179,6 +179,21 @@ def test_capture_decision_line_off_surface(repo: Path) -> None:
     assert "**Scope:**" not in text
 
 
+def test_capture_reasoned_body_off_surface(repo: Path) -> None:
+    capture = load("commit-capture.py")
+    _commit(
+        repo,
+        "src/z.py",
+        "use a queue\n\nChosen instead of a cron job because retries need state.\n\n"
+        "ai-generated: true",
+    )
+    path = capture.capture(repo)
+    assert path is not None
+    text = path.read_text(encoding="utf-8")
+    assert "**Decision:** use a queue" in text
+    assert "**Why:** Chosen instead of a cron job because retries need state." in text
+
+
 def test_capture_ignores_memory_only_commits(repo: Path) -> None:
     capture = load("commit-capture.py")
     _commit(repo, f"{common.NOTES_DIR}/2026-01-01.md", "note only")
@@ -253,6 +268,50 @@ def test_promote_from_note_and_reindex(repo: Path) -> None:
     assert "ADR-0002" in second.stdout
     index = (repo / common.ADR_DIR / "INDEX.md").read_text(encoding="utf-8")
     assert index.count("| ADR-") == 2 and "| no |" in index
+
+
+def test_promote_supersedes_marks_old_adr(repo: Path) -> None:
+    from conftest import run_script
+
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Old",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        cwd=repo,
+    )
+    result = run_script(
+        "promote-adr.py",
+        "--title",
+        "New",
+        "--context",
+        "c",
+        "--decision",
+        "d2",
+        "--supersedes",
+        "ADR-0001",
+        cwd=repo,
+    )
+    assert result.returncode == 0, result.stderr
+    old_meta, _ = common.parse_frontmatter(
+        (repo / common.ADR_DIR / "ADR-0001-old.md").read_text(encoding="utf-8")
+    )
+    assert (
+        old_meta["status"] == "superseded" and old_meta["superseded_by"] == "ADR-0002"
+    )
+    assert old_meta["must_read"] is False
+    new_meta, _ = common.parse_frontmatter(
+        (repo / common.ADR_DIR / "ADR-0002-new.md").read_text(encoding="utf-8")
+    )
+    assert new_meta["supersedes"] == "ADR-0001"
+    index = (repo / common.ADR_DIR / "INDEX.md").read_text(encoding="utf-8")
+    assert "superseded (by ADR-0002)" in index
+    assert "d2" in common.build_memory_context(
+        repo
+    ) and "\n\nd\n" not in common.build_memory_context(repo)
 
 
 def test_promote_requires_fields(repo: Path) -> None:

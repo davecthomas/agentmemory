@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """post-commit hook: turn a decision-bearing commit into a candidate note.
 
-A commit qualifies when its message body has a ``Decision:`` line or when it
-touches a path matching ``decision_surfaces`` in ``.agents/memory/config.json``
-(default ``docs/**``). The commit body is copied verbatim as the *why*; no
-LLM is involved. Commits that only touch ``.agents/memory/`` are skipped so
+A commit qualifies when its message body has a ``Decision:`` line, explains a
+reason (``because``, ``so that``, ``instead of``, ``rather than``, trade-off),
+or touches a path matching ``decision_surfaces`` in
+``.agents/memory/config.json`` (default ``docs/**``). The commit body is
+copied verbatim as the *why*; no LLM is involved. Commits that only touch ``.agents/memory/`` are skipped so
 the hook never feeds itself.
 """
 
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from common import (
     MEMORY_DIR,
+    REASON_WORDS,
     author_slug,
     current_branch,
     git,
@@ -83,9 +85,10 @@ def capture(root: Path, sha: str = "HEAD") -> Path | None:
     surfaces: list[str] = list(load_config(root)["decision_surfaces"])
     hits: list[str] = [f for f in files if matches_surface(f, surfaces)]
     explicit: str = decision_line(body)
-    if not explicit and not hits:
-        return None
     why: str = strip_trailers(re.sub(r"^Decision:.*$", "", body, flags=re.M | re.I))
+    reasoned: bool = bool(REASON_WORDS.search(why))
+    if not explicit and not hits and not reasoned:
+        return None
     note = load_module(HERE / "memory-note.py")
     entry: str = note.render_entry(
         decision=explicit or subject,

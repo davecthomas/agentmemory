@@ -36,6 +36,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notes_window_days": 14,
 }
 
+# A commit body that contains one of these explains a why; the miner and the
+# post-commit capture both use it so "decision-bearing commit" means one thing.
+REASON_WORDS: re.Pattern[str] = re.compile(
+    r"\bbecause\b|\bso that\b|\binstead of\b|\brather than\b|\btrade-?off\b|"
+    r"^Decision:",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 ADR_SECTIONS: tuple[str, ...] = (
     "Context",
     "Decision",

@@ -1,5 +1,7 @@
 # agentmemory
 
+[![ci](https://github.com/davecthomas/agentmemory/actions/workflows/ci.yml/badge.svg)](https://github.com/davecthomas/agentmemory/actions/workflows/ci.yml)
+
 Decision memory for coding agents, kept as plain Markdown in the repository.
 
 A fresh Claude Code session in an opted-in repo starts with the repo's architecture decisions in context, records new decisions as it makes them, and can ask "what do we know about X?" without re-deriving intent from code. Teammates see the same decisions in the PR that introduced them.
@@ -16,7 +18,8 @@ Agent makes a          →  memory-note skill appends 3 lines to
 non-obvious choice        .agents/memory/notes/YYYY-MM-DD.md (staged, not committed)
 
 Developer commits      →  post-commit hook appends a candidate note when the commit
-                         touches docs/** or carries a "Decision:" line. The note is
+                         touches docs/**, carries a "Decision:" line, or its body
+                         explains a why (because / so that / instead of). The note is
                          staged and rides in the next commit (or `git commit --amend`).
 
 Note proves durable    →  adr-promoter skill writes ADR-NNNN-<slug>.md, rebuilds INDEX.md
@@ -106,7 +109,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |
 | `memory-note.py` | Append a note. |
 | `commit-capture.py` | Git hook. Candidate note from a decision-bearing commit. |
-| `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--reindex`. |
+| `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--supersedes`, `--reindex`. |
 | `memory-query.py` | Search ADRs, notes, docs, path history. |
 | `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repo scope. |
 

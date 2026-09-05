@@ -22,18 +22,22 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from common import MEMORY_DIR, git, is_opted_in, log, read_text, repo_root, safe_main
+from common import (
+    MEMORY_DIR,
+    REASON_WORDS,
+    git,
+    is_opted_in,
+    log,
+    read_text,
+    repo_root,
+    safe_main,
+)
 
 DOC_FILES: tuple[str, ...] = ("README.md", "AGENTS.md", "CLAUDE.md")
 HEADING_WORDS: re.Pattern[str] = re.compile(
     r"decision|principle|architecture|design|why|rationale|convention|policy|"
     r"trade-?off|constraint|invariant",
     re.IGNORECASE,
-)
-REASON_WORDS: re.Pattern[str] = re.compile(
-    r"\bbecause\b|\bso that\b|\binstead of\b|\brather than\b|\btrade-?off\b|"
-    r"^Decision:",
-    re.IGNORECASE | re.MULTILINE,
 )
 MAX_COMMITS: int = 300
 SNIPPET_WORDS: int = 45
