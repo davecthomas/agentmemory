@@ -63,7 +63,11 @@ def test_build_memory_context_orders_and_budgets(repo: Path) -> None:
     (notes / f"{common.today()}.md").write_text(
         "# notes\n\nrecent note\n", encoding="utf-8"
     )
-    (notes / "2000-01-01.md").write_text("# old\n\nancient note\n", encoding="utf-8")
+    (notes / "2000-01-01.md").write_text(
+        "# old\n\n## 2000-01-01T00:00Z · a · main\n\n**Decision:** ancient decision\n"
+        "**Why:** ancient note\n",
+        encoding="utf-8",
+    )
     (repo / common.LOCAL_DIR).mkdir(parents=True)
     (repo / common.LOCAL_DIR / "catchup.md").write_text(
         "catch me up\n", encoding="utf-8"
@@ -73,7 +77,9 @@ def test_build_memory_context_orders_and_budgets(repo: Path) -> None:
     assert context.index("### ADR index") < context.index("### ADR-0002: t2")
     assert "decision 2" in context and "decision 1" not in context  # only must_read
     assert "recent note" in context and "ancient note" not in context  # window
-    assert context.index("recent note") < context.index("catch me up")
+    assert "- 2000-01-01: ancient decision" in context  # one-line index survives
+    assert context.index("recent note") < context.index("ancient decision")
+    assert context.index("ancient decision") < context.index("catch me up")
 
     tight = common.build_memory_context(
         repo, {**common.DEFAULT_CONFIG, "context_budget_words": 8}
