@@ -103,6 +103,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |
 | `memory-status.py` | Backs `/agentmemory status`: wiring, counts, candidates, context size. |
 | `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits. |
+| `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |
 | `memory-note.py` | Append a note. |
 | `commit-capture.py` | Git hook. Candidate note from a decision-bearing commit. |
 | `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--reindex`. |
