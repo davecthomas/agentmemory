@@ -25,7 +25,7 @@ The `.agents/` namespace is intentionally agent-neutral. No single tool owns it.
 
 ## Alternatives
 
-None recorded.
+A per-agent directory such as `.claude/memory/` or `.codex/memory/` as the canonical store, with other agents reading from it: rejected because it makes one vendor's namespace the owner of repo-wide state. A directory outside the repo (`~/.agent/<repo>/`): rejected because memory would not travel with clones or pull requests.
 
 ## Consequences
 

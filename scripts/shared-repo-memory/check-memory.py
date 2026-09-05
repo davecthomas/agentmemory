@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Structural checks on a repo's decision memory. Exit 1 on any failure.
 
-Runs from ``project-pre-commit.sh`` so broken memory cannot be committed:
+Runs from the generated ``pre-commit`` hook in every opted-in repo, and from
+CI here, so broken memory cannot be committed:
 
 * every ``INDEX.md`` row names an existing ADR file, and every ADR file has
   a row
@@ -12,6 +13,8 @@ Runs from ``project-pre-commit.sh`` so broken memory cannot be committed:
   and Why lines
 * the session-start context fits ``context_budget_words`` without omitting
   a must-read ADR
+* no accepted ADR still carries the ``None recorded.`` placeholder in its
+  Alternatives section; a decision with no considered alternative is a wish
 """
 
 from __future__ import annotations
@@ -21,10 +24,11 @@ import re
 import sys
 from pathlib import Path
 
-SCRIPTS: Path = Path(__file__).resolve().parents[1] / "scripts" / "shared-repo-memory"
-sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import common  # noqa: E402
+
+PLACEHOLDER: str = "None recorded."
 
 REQUIRED_META: tuple[str, ...] = ("id", "title", "status", "date", "must_read")
 LINK: re.Pattern[str] = re.compile(r"\[[^\]]*\]\(([^)#\s]+\.md)(?:#[^)]*)?\)")
@@ -58,6 +62,11 @@ def check_adrs(root: Path) -> list[str]:
                 problems.append(f"{rel}: empty or missing '## {heading}'")
         if meta.get("must_read") is True and not common.section(body, "Decision"):
             problems.append(f"{rel}: must-read ADR has no Decision to inject")
+        if (
+            meta.get("status") == "accepted"
+            and common.section(body, "Alternatives").strip() == PLACEHOLDER
+        ):
+            problems.append(f"{rel}: accepted ADR has placeholder Alternatives")
     return problems
 
 

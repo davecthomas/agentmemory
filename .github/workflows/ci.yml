@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev tools
+        run: pip install "black==25.12.0" "ruff>=0.11,<0.12" "pytest>=9"
+      - name: black
+        run: black --check .
+      - name: ruff
+        run: ruff check scripts/ evals/
+      - name: pytest
+        run: pytest scripts/shared-repo-memory/test -q
+      - name: memory structure
+        run: python scripts/shared-repo-memory/check-memory.py
+      - name: eval prompts build
+        run: python evals/run_eval.py --dry-run --limit 1

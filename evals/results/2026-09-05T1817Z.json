@@ -1,0 +1,88 @@
+{
+  "model": null,
+  "conditions": [
+    "none",
+    "memory"
+  ],
+  "means": {
+    "none": 0.0,
+    "memory": 0.75
+  },
+  "judge_means": {
+    "none": 0.0,
+    "memory": 0.425
+  },
+  "runs": 1,
+  "holdout_ids": [
+    "holdout-black-pin"
+  ],
+  "context_words": 1402,
+  "legacy_context_words": 0,
+  "legacy_ref": null,
+  "rows": [
+    {
+      "id": "storage-location",
+      "question": "Where does this repository keep shared agent memory, and why that location rather than a per-agent directory?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": 0.0,
+          "runs": 1,
+          "missed": [
+            ".agents/memory",
+            "agent-neutral | neutral | not owned by | no single"
+          ],
+          "seconds": 199.8,
+          "answers": [
+            "The prompt gives me nothing about this repository's memory layout \u2014 no files, README, or configuration describing where shared agent memory lives or the rationale for its location \u2014 so I can't answer from the information provided."
+          ]
+        },
+        "memory": {
+          "score": 1.0,
+          "spread": 0.0,
+          "judge": 0.85,
+          "runs": 1,
+          "missed": [],
+          "seconds": 17.2,
+          "answers": [
+            "Shared agent memory lives at `<repo>/.agents/memory/` (ADR-0001, accepted, must-read). All memory writes target that path.\n\nWhy there rather than a per-agent directory:\n\n- **Agent-neutral namespace.** ADR-0001 states the `.agents/` namespace is intentionally agent-neutral \u2014 no single tool owns it. Agent-facing paths such as `<repo>/.codex/memory` are symlinks to `../.agents/memory` and exist only as access paths; they are never the canonical storage location and must never receive direct writes.\n- **Repo-owned, not user-owned.** ADR-0002 draws the line explicitly: shared *assets* (Python helper scripts like `session-start.py`, skills like `memory-writer`/`adr-promoter`) are installed once under `~/.agent/shared-repo-memory/` with per-agent symlinks (e.g. `~/.codex/skills/<skill>`), but that model \"does not apply to repo memory content, which lives in `<repo>/.agents/memory/` and is owned by the repo, not the user's home directory.\"\n- **Memory moves with code.** ADR-0004 requires memory to become collaborative only via explicit commit and push, on the same branch and in the same PR as the code it describes \u2014 which only works if the memory lives inside the repo tree rather than in a per-agent or home directory.\n- **Opt-in marker.** ADR-0020 makes `.agents/memory/config.json` both the opt-in flag and the settings file (`decision_surfaces`, `context_budget_words`, `notes_window_days`); `session-start.py` and `post-compact.py` exit silently and `bootstrap-repo.py` refuses to wire the repo without it.\n\nWhat sits under that directory per the ADRs: `adr/` (with `INDEX.md`), `notes/YYYY-MM-DD.md` (written by `memory-note.py` and the `post-commit` hook's `commit-capture.py`, ADR-0019), and `config.json`. The one exception is local-only continuity state \u2014 `.codex/local/catchup.md` and `sync_state.json` from `build-catchup.py` (ADR-0018) \u2014 which is explicitly never committed."
+          ]
+        }
+      }
+    },
+    {
+      "id": "holdout-black-pin",
+      "question": "Why is black pinned to an exact version in this repo rather than a caret range?",
+      "results": {
+        "none": {
+          "score": 0.0,
+          "spread": 0.0,
+          "judge": 0.0,
+          "runs": 1,
+          "missed": [
+            "exact | pinned",
+            "reformat | formatting diff | output changes | changes between releases"
+          ],
+          "seconds": 13.4,
+          "answers": [
+            "I have no information about this repository's black pin \u2014 the prompt contains no dependency files, lockfiles, commit history, or comments explaining that versioning choice."
+          ]
+        },
+        "memory": {
+          "score": 0.5,
+          "spread": 0.0,
+          "judge": 0.0,
+          "runs": 1,
+          "missed": [
+            "reformat | formatting diff | output changes | changes between releases"
+          ],
+          "seconds": 10.2,
+          "answers": [
+            "The prompt gives me nothing on this topic \u2014 none of the ADRs or decision notes mention black, a version pin, or dependency versioning policy, so I can't say why black is pinned to an exact version from the information provided."
+          ]
+        }
+      }
+    }
+  ]
+}

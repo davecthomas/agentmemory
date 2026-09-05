@@ -51,6 +51,7 @@ def test_gitignore_block_strip_restores_original(repo: Path) -> None:
 def test_generated_hooks_call_installed_scripts() -> None:
     bootstrap = load("bootstrap-repo.py")
     assert "project-pre-commit.sh" in bootstrap.hook_text("pre-commit")
+    assert "check-memory.py" in bootstrap.hook_text("pre-commit")
     assert "commit-capture.py" in bootstrap.hook_text("post-commit")
     assert "catchup.py" in bootstrap.hook_text("post-merge")
     assert "--trigger post-merge" in bootstrap.hook_text("post-merge")

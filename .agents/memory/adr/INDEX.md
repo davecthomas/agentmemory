@@ -6,7 +6,7 @@
 | ADR-0002 | [Shared agent assets use one install, many symlinks](ADR-0002-shared-agent-assets-use-one-install-many-symlinks.md) | accepted | 2026-04-02 | yes |
 | ADR-0003 | [Event shards are the canonical write unit; daily summaries are derived read models](ADR-0003-event-shards-are-the-canonical-write-unit-summaries-are-derived.md) | superseded (by ADR-0019) | 2026-04-02 | no |
 | ADR-0004 | [Shared memory requires explicit commit and push to become collaborative](ADR-0004-shared-memory-requires-explicit-commit-and-push-to-become-collaborative.md) | accepted | 2026-04-02 | yes |
-| ADR-0005 | [ADR promotion is always explicit and separate from post-turn capture](ADR-0005-adr-promotion-is-always-explicit-and-separate-from-post-turn-capture.md) | accepted | 2026-04-02 | no |
+| ADR-0005 | [ADR promotion is always explicit and separate from post-turn capture](ADR-0005-adr-promotion-is-always-explicit-and-separate-from-post-turn-capture.md) | accepted | 2026-04-02 | yes |
 | ADR-0006 | [Claude Code and Gemini CLI are the primary agent runtimes; Codex is deprioritized due to weak hook support](ADR-0006-claude-and-gemini-are-primary-runtimes-codex-deprioritized.md) | superseded (by ADR-0021) | 2026-04-02 | no |
 | ADR-0007 | [Separate raw turn captures from durable checkpoints using a two-phase publication pipeline](ADR-0007-separate-raw-turn-captures-from-durable-checkpoints-using-a-two-phase-publication-pipeline.md) | superseded (by ADR-0019) | 2026-04-13 | no |
 | ADR-0008 | [Bootstrap shared memory using an isolated subagent to avoid in-session context contamination](ADR-0008-bootstrap-shared-memory-using-an-isolated-subagent-to-avoid-in-session-context-contamination.md) | superseded (by ADR-0019) | 2026-04-13 | no |
@@ -19,4 +19,4 @@
 | ADR-0019 | [Capture decisions as notes and at commit time, never per turn](ADR-0019-capture-decisions-as-notes-and-at-commit-time-never-per-turn.md) | accepted | 2026-09-05 | yes |
 | ADR-0020 | [A repository opts in by committing .agents/memory/config.json](ADR-0020-a-repository-opts-in-by-committing-agents-memory-config-json.md) | accepted | 2026-09-05 | yes |
 | ADR-0021 | [Claude Code is the only supported runtime in v0.5](ADR-0021-claude-code-is-the-only-supported-runtime-in-v0-5.md) | accepted | 2026-09-05 | yes |
-| ADR-0022 | [Session context is one budgeted block: index, must-read decisions, recent notes, catch-up](ADR-0022-session-context-is-one-budgeted-block-index-must-read-decisions-recent-notes-cat.md) | accepted | 2026-09-05 | yes |
+| ADR-0022 | [Session context is one budgeted block: index, must-read decisions, recent notes, catch-up](ADR-0022-session-context-is-one-budgeted-block.md) | accepted | 2026-09-05 | yes |
