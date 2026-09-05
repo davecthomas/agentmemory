@@ -14,14 +14,17 @@ repo_root="$(git rev-parse --show-toplevel)"
 # black was documented but unchecked.
 if command -v poetry &>/dev/null; then
   poetry run black --check .
-  poetry run ruff check scripts/ skills/
+  poetry run ruff check scripts/ evals/
   poetry run pytest scripts/shared-repo-memory/test/ -q
+  poetry run python evals/check_memory.py
 elif [ -x "$repo_root/.venv/bin/ruff" ]; then
   "$repo_root/.venv/bin/black" --check .
-  "$repo_root/.venv/bin/ruff" check scripts/ skills/
+  "$repo_root/.venv/bin/ruff" check scripts/ evals/
   "$repo_root/.venv/bin/python" -m pytest scripts/shared-repo-memory/test/ -q
+  "$repo_root/.venv/bin/python" evals/check_memory.py
 else
   black --check .
-  ruff check scripts/ skills/
+  ruff check scripts/ evals/
   pytest scripts/shared-repo-memory/test/ -q
+  python3 evals/check_memory.py
 fi
