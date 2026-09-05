@@ -43,12 +43,10 @@ Do not commit. The developer commits `config.json` with their next change.
 ### `status`
 
 ```bash
-ls .agents/memory/config.json 2>/dev/null && echo "opted in" || echo "not opted in"
-python3 "$HOME/.agent/shared-repo-memory/bootstrap-repo.py" --dry-run
-python3 "$HOME/.agent/shared-repo-memory/session-start.py" --print-context | head -40
+python3 "$HOME/.agent/shared-repo-memory/memory-status.py"
 ```
 
-Report: opted in or not, whether the wiring is complete (the dry run prints nothing to write when it is), how many ADRs and note files exist, and the first lines of what a new session would be given.
+Relay its report as is: opted in or not, wiring gaps, ADR and note counts, must-read ADRs, unreviewed candidate notes, and what a new session is given in words and tokens. Add `--context` to see the injected block itself.
 
 ### `off`
 

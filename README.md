@@ -101,6 +101,8 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `bootstrap-repo.py` | `--init` opts a repo in; otherwise repairs wiring. |
 | `catchup.py` | Git hook. Writes `local/catchup.md` from memory changes since last seen. |
 | `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |
+| `memory-status.py` | Backs `/agentmemory status`: wiring, counts, candidates, context size. |
+| `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits. |
 | `memory-note.py` | Append a note. |
 | `commit-capture.py` | Git hook. Candidate note from a decision-bearing commit. |
 | `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--reindex`. |
