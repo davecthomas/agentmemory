@@ -359,3 +359,38 @@ def test_query_finds_adrs_notes_docs_and_history(repo: Path) -> None:
     assert "## Design docs" in out and "`docs/runtime.md`" in out
     assert "## Recent commits touching `docs/runtime.md`" in out
     assert "Nothing in ADRs" in query.query_memory(repo, ["zzzunmatched"])
+
+
+def test_query_ranks_title_hits_first_and_emits_json(repo: Path) -> None:
+    from conftest import run_script
+
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Cache policy",
+        "--context",
+        "c",
+        "--decision",
+        "cache for a day",
+        "--alternatives",
+        "a",
+        cwd=repo,
+    )
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Logging",
+        "--context",
+        "mentions cache once",
+        "--decision",
+        "d",
+        "--alternatives",
+        "a",
+        cwd=repo,
+    )
+    query = load("memory-query.py")
+    data = query.collect(repo, ["cache"])
+    assert [a["id"] for a in data["adrs"]] == ["ADR-0001", "ADR-0002"]
+    assert data["adrs"][0]["score"] > data["adrs"][1]["score"]
+    out = run_script("memory-query.py", "--json", "cache", cwd=repo)
+    assert out.returncode == 0 and '"adrs"' in out.stdout
