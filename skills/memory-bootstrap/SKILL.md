@@ -21,9 +21,13 @@ Run once per repo. Re-running is safe but should only add decisions that are mis
 
 ## Workflow
 
-1. Gather sources, bounded:
-   - `docs/**/*.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`: read headings and any section named Decision, Principles, Architecture, or Design
-   - `git log --format='%h %ad %s%n%b' --date=short -n 200`: keep commits whose body explains a *why* (contains "because", "so that", "instead of", "rather than", or a `Decision:` line)
+1. Run the miner and read its ranked list; it scans `docs/**/*.md`, `README.md`, `AGENTS.md`, `CLAUDE.md` for decision-bearing sections and the last 300 commits for bodies that explain a why:
+
+   ```bash
+   python3 "$HOME/.agent/shared-repo-memory/memory-bootstrap.py" [--limit 15]
+   ```
+
+   Open the source of any candidate you are unsure about before promoting it.
 2. Select three to seven decisions that still govern the code. A decision qualifies when reversing it would change how contributors work today. Skip anything superseded, cosmetic, or purely historical.
 3. For each, promote with explicit text so the ADR carries context and alternatives:
 
