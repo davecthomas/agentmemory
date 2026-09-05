@@ -10,6 +10,11 @@ Two input modes:
   text. ``--alternatives``, ``--consequences``, and repeatable ``--source``
   are optional.
 
+``--supersedes ADR-NNNN`` (repeatable) records the relationship both ways:
+the new ADR lists what it replaces, and each replaced ADR is marked
+``superseded`` with ``superseded_by`` set and ``must_read`` false, so it
+leaves the session context.
+
 ``--reindex`` only rebuilds ``INDEX.md`` from the ADR files on disk.
 """
 
@@ -25,6 +30,7 @@ from common import (
     NOTES_DIR,
     list_adrs,
     log,
+    parse_frontmatter,
     read_text,
     render_frontmatter,
     repo_root,
@@ -112,6 +118,31 @@ def render_adr(
     return render_frontmatter(meta) + "\n\n" + "\n".join(body) + "\n"
 
 
+def mark_superseded(root: Path, old_id: str, new_id: str) -> Path:
+    """Rewrite an ADR's frontmatter as superseded by ``new_id``.
+
+    Args:
+        root: Repository root.
+        old_id: Id of the ADR being replaced.
+        new_id: Id of the replacement.
+
+    Returns:
+        Path: The rewritten file.
+    """
+    matches = list((root / ADR_DIR).glob(f"{old_id}-*.md"))
+    if len(matches) != 1:
+        raise SystemExit(
+            f"--supersedes {old_id}: expected one file, found {len(matches)}"
+        )
+    path = matches[0]
+    meta, body = parse_frontmatter(read_text(path))
+    meta["status"] = "superseded"
+    meta["superseded_by"] = new_id
+    meta["must_read"] = False
+    write_text(path, render_frontmatter(meta) + "\n\n" + body)
+    return path
+
+
 def index_rows(root: Path) -> str:
     """Render ``INDEX.md`` from the ADR files on disk.
 
@@ -191,6 +222,7 @@ def main() -> int:
     parser.add_argument("--source", action="append", default=[])
     parser.add_argument("--tags", default="")
     parser.add_argument("--no-must-read", action="store_true")
+    parser.add_argument("--supersedes", action="append", default=[], metavar="ADR-NNNN")
     parser.add_argument("--no-stage", action="store_true")
     args = parser.parse_args()
     root = repo_root(args.repo_root)
@@ -242,11 +274,15 @@ def main() -> int:
             sources=sources,
             tags=args.tags,
             must_read=not args.no_must_read,
+            supersedes=", ".join(args.supersedes),
         ),
     )
+    retired: list[Path] = [
+        mark_superseded(root, old, adr_id) for old in args.supersedes
+    ]
     index: Path = refresh_index(root)
     if not args.no_stage:
-        stage(root, [path, index])
+        stage(root, [path, index, *retired])
     print(path.relative_to(root))
     return 0
 

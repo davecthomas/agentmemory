@@ -42,6 +42,7 @@ python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
 
 - Entries are numbered from 1 in file order. Read the note file first to pick the right one.
 - Write Consequences yourself when the note lacks them; an ADR without consequences is a wish.
+- When the decision replaces an earlier ADR, pass `--supersedes ADR-NNNN`; the old ADR is marked superseded, leaves the session context, and the index shows the link both ways.
 - `must_read` defaults to true, which injects the Decision section at every session start. Use `--no-must-read` for decisions that matter only when touching one area; the `memory` skill still finds them.
 - The script writes the ADR, rebuilds `INDEX.md`, and stages both. Do not commit.
 - To rebuild the index alone: `promote-adr.py --reindex`.
