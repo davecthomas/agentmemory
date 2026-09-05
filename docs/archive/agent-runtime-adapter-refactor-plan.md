@@ -1,3 +1,5 @@
+> Archived 2026-09-05: describes the v0.4 per-turn pipeline, replaced by [v0.5 decision memory](../v0.5-decision-memory-plan.md).
+
 # Agent Runtime Adapter Refactor Plan
 
 ## Why this exists

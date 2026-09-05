@@ -29,18 +29,6 @@ env/
 htmlcov/
 .tox/
 
-# agentmemory-managed local repo wiring and state
-# Added by the agentmemory SessionStart/bootstrap flow.
-# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.
-.githooks/
-.codex/local/
-.claude/local/
-.claude/settings.local.json
-.agents/memory/pending/
-.agents/memory/state/
-.agents/memory/logs/
-.agents/memory/.auto_bootstrap_running
-
 # Environment variables (may contain secrets)
 .env
 *.env
@@ -58,6 +46,7 @@ MANIFEST
 .pyright/
 pyrightconfig.json
 
-# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.
-
-# Added by the shared repo-memory SessionStart/bootstrap flow.
+# >>> agentmemory (managed block; do not edit) >>>
+.githooks/
+.agents/memory/local/
+# <<< agentmemory <<<

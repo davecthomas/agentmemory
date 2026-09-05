@@ -1,3 +1,0 @@
-# Repo-scoped shared repo memory POC wiring.
-features.codex_hooks = true
-notify = ["bash", "./scripts/shared-repo-memory/notify-wrapper.sh"]

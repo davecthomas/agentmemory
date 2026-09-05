@@ -1,391 +1,142 @@
-# Collaborative Shared Repo Memory
+# agentmemory
 
-A collaborative shared repo memory system for fast-moving software work. It helps people, agents, and teams stay up-to-date and aligned across a fast-paced change landscape by capturing why decisions were made, what changed, and what comes next.
+Decision memory for coding agents, kept as plain Markdown in the repository.
 
-Current version: `0.4.4`
+A fresh Claude Code session in an opted-in repo starts with the repo's architecture decisions in context, records new decisions as it makes them, and can ask "what do we know about X?" without re-deriving intent from code. Teammates see the same decisions in the PR that introduced them.
 
----
+Current version: `0.5.0`. The v0.5 rebuild and the audit behind it are in [docs/v0.5-decision-memory-plan.md](docs/v0.5-decision-memory-plan.md).
 
-## What It Does
-
-Coding agents are productive inside a single session and fragile across time. Teams are productive within one meeting or one PR and then lose context as the change landscape moves. This system gives people and agents durable shared repo context so each new session starts from prior decisions instead of rebuilding history from scratch.
-
-**Memory is plain Markdown committed to Git.** There is no external service, no vector database, and no embedding pipeline. The repo owns the memory, Git moves it, and people, agents, and teams can all stay aligned from the same source of truth.
-
-### Key concepts
-
-| Concept | What it is |
-| ------- | ---------- |
-| **Turn** | One prompt-response interaction or hook event. Turns remain provenance and traceability metadata; they are not the durable memory unit. |
-| **File-changing turn** | A turn that changed at least one repo file in the working tree, including newly created files. Only file-changing turns may produce pending captures; conversational turns with no repo changes are silently skipped. |
-| **Pending capture** | Local-only mechanical capture for one file-changing turn. Lives under `.agents/memory/pending/YYYY-MM-DD/`, contains no raw prompt or raw assistant text, and must never be committed. |
-| **Episode cluster** | A bounded, semantically related collection of pending captures derived by the local episode graph. It is the semantic unit evaluated for publication, not a durable artifact. |
-| **Checkpoint** | Durable published memory synthesized from an episode cluster plus repo-grounded context. Lives under `.agents/memory/daily/YYYY-MM-DD/events/`. |
-| **Daily summary** | Derived read model rebuilt deterministically from that day's published checkpoints. Never edited directly. |
-| **ADR** | Architecture Decision Record. Promoted explicitly from decision-candidate checkpoints. The only location for durable repo decisions. |
-| **Local catch-up** | Uncommitted digest rebuilt after `git pull`, checkout, or merge. Tells the current agent what changed since it last ran. |
-
-### Storage layout
+## How it works
 
 ```
-<repo>/
-├── .agents/memory/          # shared memory root (published + local-only staging)
-│   ├── adr/                 # architecture decision records
-│   │   └── INDEX.md
-│   ├── daily/
-│   │   └── YYYY-MM-DD/
-│   │       ├── events/      # immutable published checkpoints
-│   │       └── summary.md   # derived daily summary
-│   ├── pending/             # local-only pending captures (gitignored)
-│   ├── state/               # local-only derived episode-graph state (gitignored)
-│   │   ├── checkpoint-context/
-│   │   └── episode-graph/
-│   │       └── episodes/
-│   └── logs/                # local-only diagnostic logs (gitignored)
-├── .githooks/               # generated repo-local hooks (gitignored)
-│   └── pre-commit           # blocks pending/raw shards, then runs optional project checks
-└── .codex/
-    └── memory -> ../.agents/memory   # Codex access path (symlink)
+Session starts        →  SessionStart hook injects: ADR index, must-read ADR
+                         decisions, recent notes, catch-up. Bounded to a word budget.
 
-~/.agent/shared-repo-memory/   # installed helper scripts
-~/.agent/state/                # refresh state
+Agent makes a          →  memory-note skill appends 3 lines to
+non-obvious choice        .agents/memory/notes/YYYY-MM-DD.md (staged, not committed)
+
+Developer commits      →  post-commit hook appends a candidate note when the commit
+                         touches docs/** or carries a "Decision:" line
+
+Note proves durable    →  adr-promoter skill writes ADR-NNNN-<slug>.md, rebuilds INDEX.md
+
+Teammate pulls         →  post-merge hook writes local/catchup.md from git log
+
+Anyone asks "why?"     →  memory skill searches ADRs, notes, docs, git log -- <path>
 ```
 
----
+No hook spawns an LLM. Nothing is committed or pushed automatically. Everything under `.agents/memory/` except `local/` is meant to be committed with the code it describes.
 
-## How Memory Flows
+## Install
 
-```
-SessionStart hook
-    → validates installed assets
-    → bootstraps repo wiring if needed
-    → injects ADR index + recent summaries into agent context
-
-Agent turn completes
-    → Stop / AfterAgent hook fires post-turn-notify.py
-    → file-changing turn? → one privacy-safe pending capture written under .agents/memory/pending/
-    → bounded local episode cluster derived from pending captures
-    → local episode manifest written under .agents/memory/state/episode-graph/episodes/
-    → background memory-checkpointer subagent evaluates the episode cluster
-    → only if the candidate passes validation: published checkpoint written under daily/events/
-    → summary rebuilt from the published checkpoint set
-    → published checkpoint + summary auto-staged
-
-Developer commits + pushes (same PR as the code)
-    → shared memory becomes collaborative
-
-git pull / checkout / merge
-    → Git hooks rebuild local catch-up
-    → next session resumes from bounded local digest
-```
-
-Shared memory is not collaborative until explicitly committed and pushed. The system never auto-commits or auto-pushes.
-
----
-
-## Prerequisites
-
-- Python 3.13+
-- Git
-- One or more supported agents: **Claude Code** (primary), **Gemini CLI**, or Codex CLI
-
----
-
-## Installation
-
-Clone this repo, then run the installer from the repo root:
+Requires Python 3.13+, Git, and Claude Code.
 
 ```bash
-git clone <this-repo-url>
+git clone git@github.com:davecthomas/agentmemory.git
 cd agentmemory
-./install.sh
+./install.sh            # --dry-run to preview, --force to replace non-symlink skill dirs
 ```
 
-The installer:
+The installer copies the scripts to `~/.agent/shared-repo-memory/`, the skills to `~/.agent/skills/` with symlinks from `~/.claude/skills/`, and adds `SessionStart` and `PostCompact` hooks to `~/.claude/settings.json`. Restart open Claude Code sessions afterwards.
 
-1. Copies helper scripts to `~/.agent/shared-repo-memory/`
-2. Wires the supported hooks for each agent and reports the current support limits (see Agent Support below)
-3. Sets `shared_repo_memory_configured = true` in agent config files
-4. Initializes refresh state under `~/.agent/state/`
-5. Copies memory skills into `~/.agent/skills/` and symlinks each into `~/.claude/skills/`, `~/.codex/skills/`, and `~/.gemini/skills/`
+Installing turns nothing on. Every hook exits silently in a repo that has not opted in.
 
-### Options
+## Opt a repository in
 
-```bash
-./install.sh --dry-run    # preview every action without making changes
-./install.sh --force      # replace conflicting installed skill copies
+In a Claude Code session inside the repo:
+
+```
+/agentmemory init
 ```
 
-### After installation
+or say "turn on agentmemory for this repo". This runs `bootstrap-repo.py --init`, which writes `.agents/memory/config.json` (the opt-in marker), creates `adr/`, `notes/`, and `local/`, adds a managed block to `.gitignore`, generates the git hooks under `.githooks/`, and sets `core.hooksPath`. Commit `config.json` and the whole team is opted in; teammates without agentmemory installed see only Markdown.
 
-Restart any open agent sessions. `SessionStart` validates and bootstraps repo-local wiring on the next session open — it creates `.agents/memory/`, `.agents/memory/pending/`, `.codex/memory`, `.codex/local/`, and `.githooks/` if any are missing, repairs the agentmemory-managed `.gitignore` block when local-only paths change, and restores the generated repo-local hook files when hook wiring drifts. Generated hook files include a provenance header so developers can see that agentmemory created them, and the generated `pre-commit` hook delegates to `scripts/shared-repo-memory/project-pre-commit.sh` when a repo wants tracked project-specific checks such as formatting, linting, or tests.
+`/agentmemory status` reports wiring and counts. `/agentmemory off` reverses the repo wiring and leaves the memory files in place.
 
-### Uninstalling
+If the repo has history but no ADRs, `/memory-bootstrap` mines the design docs and commit messages for the three to seven decisions that still govern the code and promotes them.
 
-Two scopes, symmetric with install, run from the repo root. `./install.sh --uninstall` is an alias for `./uninstall.sh` that dispatches with the remaining flags forwarded verbatim, so `--dry-run`, `--repo`, and `--purge-memory` all behave identically under either entry point.
+## Layout
 
-```bash
-./uninstall.sh                          # global: remove ~/.agent/shared-repo-memory,
-                                        # skill symlinks, and agent hook wiring
-./uninstall.sh --repo                   # per-repo: remove .githooks/, unset
-                                        # core.hooksPath, drop .codex/memory symlink,
-                                        # strip the installer's .gitignore block
-./uninstall.sh --repo --purge-memory    # also stage git rm --cached .agents/memory
-                                        # (review and commit manually)
-./uninstall.sh --dry-run                # preview every action without making changes
-./install.sh --uninstall [flags]        # alias: dispatches to uninstall.py with flags
+```
+<repo>/.agents/memory/
+├── config.json          # opt-in marker + settings
+├── adr/
+│   ├── INDEX.md         # rebuilt by promote-adr.py
+│   └── ADR-NNNN-<slug>.md
+├── notes/
+│   └── YYYY-MM-DD.md    # append-only decision notes
+└── local/               # gitignored: catchup.md, state.json
 ```
 
-Uninstall is idempotent and conservative: it removes only entries it can identify as its own (commands pointing at `~/.agent/shared-repo-memory/`, hook names starting with `shared-repo-memory-`, canonical git hook content produced by `bootstrap-repo.py`, and the specific `.gitignore` marker block). Any user-added hook, edited git hook, or custom config value is preserved. Committed memory artifacts under `.agents/memory/` are never touched without explicit `--purge-memory`.
-
-After a global uninstall, restart any open agent sessions so the removed hook wiring takes effect.
-
----
-
-## Agent Support
-
-| Hook | Purpose | Claude Code | Gemini CLI | Codex |
-| ---- | ------- | ----------- | ---------- | ----- |
-| Session start | Validate wiring, inject memory context | `SessionStart` | `SessionStart` | `SessionStart` |
-| Post-turn capture | Write pending capture and spawn checkpoint flow | `Stop` | `AfterAgent` | Not provisioned |
-| Subagent capture | Write pending capture for Task agent turns | `SubagentStop` | — | — |
-| Pre-turn guard | Detect empty memory, offer bootstrap | `UserPromptSubmit` | `BeforeAgent` | `UserPromptSubmit` |
-| Post-compaction | Re-inject memory after context compaction | `PostCompact` | — | — |
-
-Codex support is intentionally explicit: today the supported surface is `SessionStart` plus the pre-turn bootstrap guard. The repo keeps `notify-wrapper.sh` as a manual smoke-test path for `post-turn-notify.py`, but the installer does not claim native Codex post-turn parity.
-
-All hook scripts (`session-start.py`, `prompt-guard.py`, `post-compact.py`) emit a unified JSON schema accepted by all agents. `post-turn-notify.py` detects the calling agent from `hookEventName` to set AI attribution fields when the runtime exposes a supported post-turn event.
-
----
-
-## What Happens at Session Start
-
-When you open Claude Code in a wired repo, the `SessionStart` hook fires automatically and:
-
-1. Validates that installed assets, refresh state, and repo wiring are all reachable
-2. Bootstraps any missing repo-local wiring
-3. Shows a notification in the UI: _"agentmemory loaded. Last refresh: …"_
-4. Injects the ADR index and recent daily summaries into the model's context
-5. If no event shards exist yet, spawns a current-runtime background bootstrap only when that runtime exposes a supported non-interactive bootstrap command; otherwise it leaves bootstrap manual via `/memory-bootstrap`
-
-You do not need to ask the agent to read memory — it arrives as session context.
-
----
-
-## Configuration
-
-The installer writes all config. These are the relevant keys per agent.
-
-**`~/.claude/settings.json`** — Claude Code:
+`config.json` defaults:
 
 ```json
 {
-  "shared_repo_memory_configured": true,
-  "shared_agent_assets_repo_path": "/path/to/this/repo",
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/session-start.py", "timeout": 30 }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "~/.agent/shared-repo-memory/post-turn-notify.py", "timeout": 60 }] }
-    ]
-  }
+  "decision_surfaces": ["docs/**"],
+  "context_budget_words": 2500,
+  "notes_window_days": 14
 }
 ```
-
-**`~/.codex/config.toml`** — Codex:
-
-```toml
-experimental_use_hooks = true
-hooks_config_path = "~/.codex/hooks.json"
-shared_repo_memory_configured = true
-shared_agent_assets_repo_path = "/path/to/this/repo"
-```
-
-Codex is wired for `SessionStart` and `UserPromptSubmit`. This repo does not currently provision a native Codex post-turn hook path.
-
-**`~/.gemini/settings.json`** — Gemini CLI:
-
-```json
-{
-  "shared_repo_memory_configured": true,
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "name": "shared-repo-memory-session-start",
-            "type": "command",
-            "command": "~/.agent/shared-repo-memory/session-start.py",
-            "timeout": 30000
-          }
-        ]
-      }
-    ],
-    "AfterAgent": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "name": "shared-repo-memory-post-turn",
-            "type": "command",
-            "command": "~/.agent/shared-repo-memory/post-turn-notify.py",
-            "timeout": 30000
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-To disable: set `shared_repo_memory_configured` to `false` or remove the hooks. `SessionStart` exits silently if the flag is absent or false.
-
----
 
 ## Skills
 
-Four skills ship with this system.
+| Skill | Use |
+|---|---|
+| `agentmemory` | `init`, `status`, `off` for the current repo |
+| `memory` | "What do we know about X?" |
+| `memory-note` | Record a decision at the moment it is made |
+| `adr-promoter` | Turn a note (or stated decision) into an ADR |
+| `memory-bootstrap` | Seed ADRs from existing docs and commits |
+| `news` | What changed in memory recently |
 
-### Why the symlink model exists
+## Scripts
 
-Each agent looks for skills in its own directory — Claude Code reads `~/.claude/skills/`, Codex reads `~/.codex/skills/`, Gemini reads `~/.gemini/skills/`. Without a shared layer, you'd have to maintain four separate copies and keep them in sync every time a skill changes.
+All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/`:
 
-The installer solves this with one canonical copy and per-agent symlinks:
+| Script | Role |
+|---|---|
+| `session-start.py` | Hook. Repairs wiring, injects context. `--print-context` prints the block. |
+| `post-compact.py` | Hook. Re-injects context after compaction. |
+| `bootstrap-repo.py` | `--init` opts a repo in; otherwise repairs wiring. |
+| `catchup.py` | Git hook. Writes `local/catchup.md` from memory changes since last seen. |
+| `memory-note.py` | Append a note. |
+| `commit-capture.py` | Git hook. Candidate note from a decision-bearing commit. |
+| `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--reindex`. |
+| `memory-query.py` | Search ADRs, notes, docs, path history. |
+| `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repo scope. |
 
-```
-~/.agent/skills/memory-writer/     ← one real copy, installed from this repo
-    ↑
-~/.claude/skills/memory-writer     symlink
-~/.codex/skills/memory-writer      symlink
-~/.gemini/skills/memory-writer     symlink
-```
+Together they are about 2,100 lines of Python with no dependencies beyond the standard library.
 
-The real copy lives under `~/.agent/skills/` — a neutral location not owned by any single agent. Each agent's skill directory holds only a symlink into that copy. When a skill is updated, only the copy in `~/.agent/skills/` changes; all agents pick up the update automatically through their symlinks without any per-agent reinstall.
+## Evals
 
-The skills are copied from this repo rather than symlinked directly to it. This keeps agents from crawling the entire repo as context when they load a skill.
+Memory has to earn its context budget.
 
-### Skills reference
-
-| Skill | Invoke when |
-| ----- | ----------- |
-| `memory-writer` | After a file-changing turn from a manual runtime path such as Codex notify-wrapper testing — delegates to `post-turn-notify.py` so the turn becomes a pending capture instead of a directly published shard |
-| `memory-checkpointer` | A background episode cluster should be evaluated for durable publication without blocking the user turn |
-| `memory-bootstrap` | First time in a repo with existing history — mines design docs and commits to seed initial decision candidates and promote foundational ADRs |
-| `adr-promoter` | A decision-candidate shard should become a permanent ADR |
-| `news` | "What's new?" / "Catch me up" — summarizes recent summaries and ADRs; invokes `memory-bootstrap` if the repo is wired but has no history yet |
-
----
-
-## Normal Workflow
-
-```
-1. Open agent session in repo
-   └── SessionStart injects ADR index + recent summaries into context
-
-2. Do work with the agent
-
-3. Agent turn ends
-   └── Stop/AfterAgent hook runs post-turn-notify.py
-   └── File-changing turn? → pending capture written
-   └── Background checkpoint evaluation runs from the active local episode cluster
-   └── Validation succeeds? → published checkpoint + day summary auto-staged
-
-4. Review staged memory files alongside code changes
-
-5. Commit and push (same PR as the code)
-   └── Memory becomes collaborative
-
-6. Teammates git pull
-   └── Post-merge/post-checkout hooks rebuild local catch-up
-   └── Next session picks up catch-up context automatically
-```
-
----
-
-## New Repo with Existing History
-
-```
-1. Run ./install.sh
-
-2. Restart agent session
-   └── SessionStart bootstraps repo wiring
-   └── No event shards found → bootstrap subagent spawned automatically in background
-   └── Shards appear in .agents/memory/daily/ within ~30 seconds
-
-3. Review and commit the bootstrapped memory
-```
-
-To trigger bootstrap manually (e.g. after deleting shards): `/memory-bootstrap`
-
----
-
-## ADR Promotion
-
-Decision-candidate event shards are published checkpoints. ADRs are curated, durable decisions. Promotion is always explicit — it never happens automatically as a post-turn side effect.
-
-To promote a candidate:
-
-```
-/adr-promoter
-```
-
-The skill reads decision-candidate shards, creates or updates the ADR file under `.agents/memory/adr/`, and rebuilds the ADR index. Commit the result alongside any related code.
-
----
-
-## Validating the Install
-
-### Check installed scripts and skills
+- `evals/check_memory.py` runs in the pre-commit hook and rejects a commit whose ADR index, links, frontmatter, note format, or budget is broken.
+- `evals/run_eval.py` asks `claude -p`, with tools disabled, the questions in `evals/questions.json` with and without the session-start context, scores `must_mention` coverage, writes `evals/results/<timestamp>.json`, and fails when memory does not beat the baseline.
 
 ```bash
-ls ~/.agent/shared-repo-memory/
-ls ~/.agent/skills/
-ls ~/.claude/skills/
+python3 evals/run_eval.py                 # all questions, both conditions
+python3 evals/run_eval.py --limit 3       # quick check
+python3 evals/run_eval.py --dry-run       # prompt sizes only
 ```
 
-### Check repo wiring
+## Uninstall
 
 ```bash
-ls -la .agents/memory/
-ls -la .agents/memory/pending/
-ls -la .codex/memory          # should be a symlink → ../.agents/memory
-ls -la .githooks/
-git config core.hooksPath     # should print .githooks
+./uninstall.sh                # machine: hooks, skills, scripts
+./uninstall.sh --repo         # this repo: hooks, hooksPath, .gitignore block, local/
+./uninstall.sh --repo --purge-memory   # also stage git rm --cached .agents/memory
+./uninstall.sh --dry-run
 ```
 
-### Validate the post-turn write path
+Uninstall removes only what it can identify as its own; edited hooks and user-added settings survive.
+
+## Development
 
 ```bash
-./scripts/shared-repo-memory/validate-notify.sh
+poetry install
+poetry run pytest scripts/shared-repo-memory/test -q
+poetry run black . && poetry run ruff check scripts/ evals/
 ```
 
-Writes one synthetic pending capture through the manual `notify-wrapper.sh` path. This confirms the wrapper and `post-turn-notify.py` work together when invoked directly; durable publication still requires checkpoint validation, and the check does not prove native Codex post-turn hook support.
-
-### Check the hook trace log
-
-```bash
-tail ~/.agent/state/shared-repo-memory-hook-trace.jsonl
-```
-
-Every hook invocation appends a JSONL entry. If `SessionStart` fired successfully you will see `"status": "success"` entries.
-
-Shared-memory stderr logs and helper-script logs now include product and runtime
-metadata in their prefix, for example `[agentmemory][version=0.4.4][runtime=codex][runtime-version=0.118.0]`.
-Non-agent helper flows use explicit runtime ids too, for example `runtime=git-hook`
-for post-checkout catch-up or `runtime=installer` during installation, rather
-than falling back to `unknown`.
-
----
-
-## Troubleshooting
-
-| Problem                                                       | Fix                                                                                                      |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Session starts but no memory context appears                  | Check the hook trace — if status is `success`, the hook ran. Restart the session.                        |
-| Hook trace shows `skipped` with `shared_repo_memory_disabled` | `shared_repo_memory_configured` is not `true`. Re-run `./install.sh`.                                    |
-| Hook trace shows `error` with `missing_required_paths`        | Re-run `./install.sh` to reinstall helper scripts and refresh state.                                     |
-| `.codex/memory` is a real directory, not a symlink            | Delete it and re-run `./install.sh`.                                                                     |
-| No pending capture written after a turn                       | The turn was not file-changing: no repo files changed in the working tree. Check `git status` — only turns that modify or create repo files produce pending captures. |
-| `Permission denied` on `install.sh`                           | `chmod +x install.sh && ./install.sh`                                                                    |
+`scripts/shared-repo-memory/project-pre-commit.sh` runs black, ruff, the tests, and `check_memory.py` on every commit through the generated pre-commit hook.

@@ -65,6 +65,9 @@ def render_adr(
     tags: str = "",
     must_read: bool = True,
     date: str | None = None,
+    status: str = "accepted",
+    supersedes: str = "",
+    superseded_by: str = "",
 ) -> str:
     """Render an ADR document in the v0.5 format.
 
@@ -79,6 +82,9 @@ def render_adr(
         tags: Comma-separated tags.
         must_read: Inject the Decision at session start when True.
         date: ISO date; today when omitted.
+        status: ``accepted`` or ``superseded``.
+        supersedes: Comma-separated ids this ADR replaces.
+        superseded_by: Id of the ADR that replaced this one.
 
     Returns:
         str: Full Markdown document.
@@ -86,12 +92,12 @@ def render_adr(
     meta: dict[str, Any] = {
         "id": adr_id,
         "title": title,
-        "status": "accepted",
+        "status": status,
         "date": date or today(),
         "tags": tags,
         "must_read": must_read,
-        "supersedes": "",
-        "superseded_by": "",
+        "supersedes": supersedes,
+        "superseded_by": superseded_by,
     }
     body: list[str] = [f"# {adr_id}: {title}", ""]
     for heading, text in (

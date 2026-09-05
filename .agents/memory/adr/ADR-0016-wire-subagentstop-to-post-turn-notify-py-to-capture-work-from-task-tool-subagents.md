@@ -1,19 +1,15 @@
-# ADR-0016 Wire SubagentStop to post-turn-notify.py to capture work from Task-tool subagents
+---
+id: "ADR-0016"
+title: "Wire SubagentStop to post-turn-notify.py to capture work from Task-tool subagents"
+status: "superseded"
+date: "2026-04-13"
+tags: "docs"
+must_read: false
+supersedes: ""
+superseded_by: "ADR-0019"
+---
 
-Status: accepted
-Date: 2026-04-13
-Owners: dave-thomas
-Must read: true
-Supersedes: 
-Superseded by: 
-ai-generated: True
-ai-model: claude-sonnet-4-6
-ai-tool: claude
-ai-surface: claude-code
-ai-executor: adr-inspector
-
-Purpose: Wire SubagentStop to post-turn-notify.py to capture work from Task-tool subagents
-Derived from: [2026-04-13T21-58-05Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-58-05Z--dave-thomas--adr-inspector.md)
+# ADR-0016: Wire SubagentStop to post-turn-notify.py to capture work from Task-tool subagents
 
 ## Context
 
@@ -25,15 +21,17 @@ When an agent spawns a child via the Task tool (Claude Code's Agent-tool mechani
 - `post-turn-notify.py` uses `hookEventName == "SubagentStop"` as one of the two signals that identify a Claude Code invocation (the other being `"Stop"`).
 - This wiring is Claude Code-specific: Gemini CLI's `AfterAgent` hook already fires at the agent level; Codex has no supported post-turn integration.
 
+## Alternatives
+
+None recorded.
+
 ## Consequences
 
 - Confirm that SubagentStop fires reliably for all Task-tool invocation patterns, including nested subagents.
 - Evaluate whether Gemini CLI's AfterAgent already covers the analogous case or if sub-agent gaps exist there too.
 
-## Source memory events
+## Sources
 
-- [2026-04-13T21-58-05Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-58-05Z--dave-thomas--adr-inspector.md)
-
-## Related code paths
-
-- docs/shared-repo-memory-system-design.md
+- Memory event 2026-04-13T21-58-05Z--dave-thomas--adr-inspector (v0.4 event shard; removed in v0.5)
+- Code path: docs/shared-repo-memory-system-design.md
+- Written by adr-inspector (claude-sonnet-4-6) on 2026-04-13
