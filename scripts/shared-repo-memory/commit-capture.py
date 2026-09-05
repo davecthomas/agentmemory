@@ -32,6 +32,7 @@ from common import (
 
 HERE: Path = Path(__file__).resolve().parent
 _TRAILER: re.Pattern[str] = re.compile(r"^[A-Za-z][A-Za-z-]*: \S")
+_SCAFFOLD: re.Pattern[str] = re.compile(r"^(?:=+|-+|Summary:|Actions:|Note: .*)\s*$")
 MAX_SCOPE: int = 10
 
 
@@ -44,12 +45,34 @@ def strip_trailers(body: str) -> str:
     Returns:
         str: Body with trailers removed and whitespace collapsed.
     """
-    paragraphs: list[str] = [p for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
+    cleaned: str = "\n".join(
+        line for line in body.splitlines() if not _SCAFFOLD.match(line.strip())
+    )
+    paragraphs: list[str] = [
+        p for p in re.split(r"\n\s*\n", cleaned.strip()) if p.strip()
+    ]
     while paragraphs and all(
         _TRAILER.match(line) for line in paragraphs[-1].splitlines()
     ):
         paragraphs.pop()
-    return " ".join(" ".join(p.split()) for p in paragraphs)
+    # A structured message (Summary paragraph, then Actions bullets) carries its
+    # why in the first prose paragraph; keep the bullets out of the note.
+    prose: list[str] = [p for p in paragraphs if not p.lstrip().startswith("- ")]
+    return " ".join(" ".join(p.split()) for p in (prose or paragraphs))
+
+
+def strip_branch_prefix(subject: str, branch: str) -> str:
+    """Drop a leading ``<branch>: `` from a commit subject.
+
+    Args:
+        subject: Commit subject line.
+        branch: Current branch name.
+
+    Returns:
+        str: Subject without the prefix the commit skill adds.
+    """
+    prefix: str = f"{branch}: "
+    return subject[len(prefix) :] if branch and subject.startswith(prefix) else subject
 
 
 def decision_line(body: str) -> str:
@@ -79,7 +102,10 @@ def capture(root: Path, sha: str = "HEAD") -> Path | None:
     files = [f for f in files if f]
     if not files or all(f.startswith(f"{MEMORY_DIR}/") for f in files):
         return None
-    subject: str = git(["log", "-1", "--format=%s", sha], root)
+    branch: str = current_branch(root)
+    subject: str = strip_branch_prefix(
+        git(["log", "-1", "--format=%s", sha], root), branch
+    )
     body: str = git(["log", "-1", "--format=%b", sha], root)
     short: str = git(["rev-parse", "--short", sha], root)
     surfaces: list[str] = list(load_config(root)["decision_surfaces"])
@@ -94,7 +120,7 @@ def capture(root: Path, sha: str = "HEAD") -> Path | None:
         decision=explicit or subject,
         why=why or subject,
         author=author_slug(root),
-        branch=current_branch(root),
+        branch=branch,
         scope=hits[:MAX_SCOPE],
         commit=short,
         candidate=True,

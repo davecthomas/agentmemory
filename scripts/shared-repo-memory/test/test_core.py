@@ -194,6 +194,22 @@ def test_capture_reasoned_body_off_surface(repo: Path) -> None:
     assert "**Why:** Chosen instead of a cron job because retries need state." in text
 
 
+def test_capture_strips_structured_message_scaffolding(repo: Path) -> None:
+    capture = load("commit-capture.py")
+    run_git(repo, "checkout", "-q", "-b", "feat/thing")
+    _commit(
+        repo,
+        "docs/thing.md",
+        "feat/thing: add the thing\n\nSummary:\n=======\nWe added it because the old "
+        "path was slow.\n\nActions:\n=======\n- touch docs\n- touch code\n\n"
+        "Note: This commit message was created by AI\nai-generated: true",
+    )
+    text = capture.capture(repo).read_text(encoding="utf-8")
+    assert "**Decision:** add the thing" in text
+    assert "**Why:** We added it because the old path was slow." in text
+    assert "=======" not in text and "Actions" not in text and "touch docs" not in text
+
+
 def test_capture_ignores_memory_only_commits(repo: Path) -> None:
     capture = load("commit-capture.py")
     _commit(repo, f"{common.NOTES_DIR}/2026-01-01.md", "note only")
