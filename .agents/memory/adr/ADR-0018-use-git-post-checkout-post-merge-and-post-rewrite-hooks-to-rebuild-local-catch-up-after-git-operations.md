@@ -1,19 +1,15 @@
-# ADR-0018 Use git post-checkout, post-merge, and post-rewrite hooks to rebuild local catch-up after git operations
+---
+id: "ADR-0018"
+title: "Use git post-checkout, post-merge, and post-rewrite hooks to rebuild local catch-up after git operations"
+status: "accepted"
+date: "2026-04-13"
+tags: "docs"
+must_read: true
+supersedes: ""
+superseded_by: ""
+---
 
-Status: accepted
-Date: 2026-04-13
-Owners: dave-thomas
-Must read: true
-Supersedes: 
-Superseded by: 
-ai-generated: True
-ai-model: claude-sonnet-4-6
-ai-tool: claude
-ai-surface: claude-code
-ai-executor: adr-inspector
-
-Purpose: Use git post-checkout, post-merge, and post-rewrite hooks to rebuild local catch-up after git operations
-Derived from: [2026-04-13T21-58-07Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-58-07Z--dave-thomas--adr-inspector.md)
+# ADR-0018: Use git post-checkout, post-merge, and post-rewrite hooks to rebuild local catch-up after git operations
 
 ## Context
 
@@ -26,15 +22,17 @@ Local catch-up (`catchup.md`) is an uncommitted digest that reflects what change
 - These files are explicitly never committed; `.codex/local/` is local continuity state only.
 - The `git config core.hooksPath .githooks` directive (set by `bootstrap-repo.py`) wires these hooks into every git operation in the repo.
 
+## Alternatives
+
+None recorded.
+
 ## Consequences
 
 - Verify that `post-rewrite` covers both `rebase` and `amend` correctly (git fires it for both).
 - Evaluate whether a `post-fetch` hook is needed for scenarios where the tree is not checked out but memory is fetched.
 
-## Source memory events
+## Sources
 
-- [2026-04-13T21-58-07Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-58-07Z--dave-thomas--adr-inspector.md)
-
-## Related code paths
-
-- docs/shared-repo-memory-system-design.md
+- Memory event 2026-04-13T21-58-07Z--dave-thomas--adr-inspector (v0.4 event shard; removed in v0.5)
+- Code path: docs/shared-repo-memory-system-design.md
+- Written by adr-inspector (claude-sonnet-4-6) on 2026-04-13

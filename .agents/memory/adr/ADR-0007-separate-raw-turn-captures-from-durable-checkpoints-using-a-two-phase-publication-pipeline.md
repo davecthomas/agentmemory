@@ -1,19 +1,15 @@
-# ADR-0007 Separate raw turn captures from durable checkpoints using a two-phase publication pipeline
+---
+id: "ADR-0007"
+title: "Separate raw turn captures from durable checkpoints using a two-phase publication pipeline"
+status: "superseded"
+date: "2026-04-13"
+tags: "docs"
+must_read: false
+supersedes: ""
+superseded_by: "ADR-0019"
+---
 
-Status: accepted
-Date: 2026-04-13
-Owners: dave-thomas
-Must read: true
-Supersedes: 
-Superseded by: 
-ai-generated: True
-ai-model: claude-sonnet-4-5
-ai-tool: claude
-ai-surface: claude-code
-ai-executor: adr-inspector
-
-Purpose: Separate raw turn captures from durable checkpoints using a two-phase publication pipeline
-Derived from: [2026-04-13T21-53-13Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-53-13Z--dave-thomas--adr-inspector.md)
+# ADR-0007: Separate raw turn captures from durable checkpoints using a two-phase publication pipeline
 
 ## Context
 
@@ -26,15 +22,17 @@ Established a two-phase capture/publication pipeline as a core architectural inv
 - Phase 2 — **Checkpoint publication**: a background `memory-checkpointer` subagent evaluates the active episode cluster (a bounded set of semantically related pending captures), applies trust and privacy validation, and calls `publish-checkpoint.py` only when the cluster passes. The published shard lands under `.agents/memory/daily/<date>/events/`.
 - The `.githooks/pre-commit` hook enforces the boundary by rejecting staged pending captures and any daily event shard marked `enriched: false`.
 
+## Alternatives
+
+None recorded.
+
 ## Consequences
 
 - Ensure pre-commit hook logic is tested against staging scenarios where pending shards accidentally land in the index.
 - Review whether the `enriched: false` guard is redundant with the pending-path guard, or whether both are load-bearing.
 
-## Source memory events
+## Sources
 
-- [2026-04-13T21-53-13Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-53-13Z--dave-thomas--adr-inspector.md)
-
-## Related code paths
-
-- docs/shared-repo-memory-system-design.md
+- Memory event 2026-04-13T21-53-13Z--dave-thomas--adr-inspector (v0.4 event shard; removed in v0.5)
+- Code path: docs/shared-repo-memory-system-design.md
+- Written by adr-inspector (claude-sonnet-4-5) on 2026-04-13

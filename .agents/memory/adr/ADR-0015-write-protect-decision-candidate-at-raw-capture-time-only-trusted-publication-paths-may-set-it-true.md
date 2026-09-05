@@ -1,19 +1,15 @@
-# ADR-0015 Write-protect decision_candidate at raw capture time; only trusted publication paths may set it true
+---
+id: "ADR-0015"
+title: "Write-protect decision_candidate at raw capture time; only trusted publication paths may set it true"
+status: "superseded"
+date: "2026-04-13"
+tags: "docs"
+must_read: false
+supersedes: ""
+superseded_by: "ADR-0019"
+---
 
-Status: accepted
-Date: 2026-04-13
-Owners: dave-thomas
-Must read: true
-Supersedes: 
-Superseded by: 
-ai-generated: True
-ai-model: claude-sonnet-4-6
-ai-tool: claude
-ai-surface: claude-code
-ai-executor: adr-inspector
-
-Purpose: Write-protect decision_candidate at raw capture time; only trusted publication paths may set it true
-Derived from: [2026-04-13T21-57-07Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-57-07Z--dave-thomas--adr-inspector.md)
+# ADR-0015: Write-protect decision_candidate at raw capture time; only trusted publication paths may set it true
 
 ## Context
 
@@ -27,16 +23,18 @@ The trust boundary is explicit: `decision_candidate` starts as `false` on every 
 - The `.githooks/pre-commit` hook enforces this boundary by rejecting any daily event shard still marked `enriched: false` (the enrichment step is part of the trusted publication path).
 - The design doc codifies this as an invariant: "may be flipped to true only during trusted checkpoint publication or explicit ADR inspection."
 
+## Alternatives
+
+None recorded.
+
 ## Consequences
 
 - Audit `post-turn-notify.py` to confirm `decision_candidate` is always hardcoded to `false` with no override path at capture time.
 - Confirm `publish-checkpoint.py` is the only non-skill path that may set `decision_candidate: true`.
 - Consider adding a pre-commit check that rejects daily event shards where `decision_candidate: true` lacks a corresponding source shard reference, to detect bypass attempts.
 
-## Source memory events
+## Sources
 
-- [2026-04-13T21-57-07Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-57-07Z--dave-thomas--adr-inspector.md)
-
-## Related code paths
-
-- docs/shared-repo-memory-system-design.md
+- Memory event 2026-04-13T21-57-07Z--dave-thomas--adr-inspector (v0.4 event shard; removed in v0.5)
+- Code path: docs/shared-repo-memory-system-design.md
+- Written by adr-inspector (claude-sonnet-4-6) on 2026-04-13

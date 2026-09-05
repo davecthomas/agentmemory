@@ -1,0 +1,65 @@
+{
+  "_comment": "Questions a fresh session should answer from this repo's decision memory. must_mention terms are matched case-insensitively; any one alternative inside a nested list counts.",
+  "questions": [
+    {
+      "id": "storage-location",
+      "question": "Where does this repository keep shared agent memory, and why that location rather than a per-agent directory?",
+      "must_mention": [".agents/memory", ["agent-neutral", "neutral", "not owned by", "no single"]]
+    },
+    {
+      "id": "no-service",
+      "question": "Does agentmemory use a database, vector store, or external service for memory? What does it use instead?",
+      "must_mention": [["markdown", "plain text"], "git", ["no service", "no external", "no database", "no vector"]]
+    },
+    {
+      "id": "opt-in",
+      "question": "If agentmemory is installed on my machine, is it active in every git repository I open? How does a repository opt in?",
+      "must_mention": ["config.json", ["init", "bootstrap-repo", "agentmemory skill", "/agentmemory"]]
+    },
+    {
+      "id": "capture-unit",
+      "question": "In v0.5, when is a decision captured into memory, and why was per-turn capture abandoned?",
+      "must_mention": [["note", "notes"], ["commit", "post-commit"], ["Decision:", "decision_surfaces", "docs/**"], ["claude -p", "subagent", "LLM", "background"]]
+    },
+    {
+      "id": "commit-capture-rule",
+      "question": "What makes a commit qualify for automatic decision capture?",
+      "must_mention": [["Decision:", "decision line"], ["decision_surfaces", "docs/**", "surface"]]
+    },
+    {
+      "id": "adr-only-durable",
+      "question": "Where do durable architectural decisions live, and can a hook promote one automatically?",
+      "must_mention": ["ADR", ["explicit", "never automatic", "not automatic", "manual"]]
+    },
+    {
+      "id": "session-context",
+      "question": "What does the SessionStart hook inject into the agent's context, in what order, and what bounds it?",
+      "must_mention": [["index", "INDEX"], "must", ["note", "notes"], ["budget", "words"]]
+    },
+    {
+      "id": "post-compact",
+      "question": "What happens to memory context after Claude Code compacts the conversation?",
+      "must_mention": [["re-inject", "reinject", "injected again", "re-injected"], "PostCompact"]
+    },
+    {
+      "id": "catchup",
+      "question": "How does a developer's session learn what changed in memory after a git pull?",
+      "must_mention": [["catch-up", "catchup"], ["post-merge", "post-checkout", "git hook"]]
+    },
+    {
+      "id": "runtime-support",
+      "question": "Which agent runtimes does agentmemory v0.5 support, and what happened to Gemini and Codex support?",
+      "must_mention": ["Claude Code", ["removed", "dropped", "only", "no longer"]]
+    },
+    {
+      "id": "no-auto-commit",
+      "question": "Does agentmemory ever commit or push memory files on its own?",
+      "must_mention": [["never", "does not", "no"], ["stage", "staged", "staging"]]
+    },
+    {
+      "id": "query-path",
+      "question": "How do I ask what has already been decided about a subsystem, and where does that search look?",
+      "must_mention": [["memory-query", "memory skill", "/memory"], "ADR", ["note", "notes"]]
+    }
+  ]
+}

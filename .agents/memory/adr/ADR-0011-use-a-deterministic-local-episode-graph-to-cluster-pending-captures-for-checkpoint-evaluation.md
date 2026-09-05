@@ -1,19 +1,15 @@
-# ADR-0011 Use a deterministic local episode graph to cluster pending captures for checkpoint evaluation
+---
+id: "ADR-0011"
+title: "Use a deterministic local episode graph to cluster pending captures for checkpoint evaluation"
+status: "superseded"
+date: "2026-04-13"
+tags: "docs"
+must_read: false
+supersedes: ""
+superseded_by: "ADR-0019"
+---
 
-Status: accepted
-Date: 2026-04-13
-Owners: dave-thomas
-Must read: true
-Supersedes: 
-Superseded by: 
-ai-generated: True
-ai-model: claude-sonnet-4-6
-ai-tool: claude
-ai-surface: claude-code
-ai-executor: adr-inspector
-
-Purpose: Use a deterministic local episode graph to cluster pending captures for checkpoint evaluation
-Derived from: [2026-04-13T21-55-27Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-55-27Z--dave-thomas--adr-inspector.md)
+# ADR-0011: Use a deterministic local episode graph to cluster pending captures for checkpoint evaluation
 
 ## Context
 
@@ -26,15 +22,17 @@ The old checkpoint clustering mechanism grouped pending captures by thread ID or
 - Checkpoint context manifests were moved from `.agents/memory/logs/checkpoint-context/` to `.agents/memory/state/checkpoint-context/`.
 - The state subtrees are treated as local-only: added to `.gitignore` and ignored by the `pre-commit` guard.
 
+## Alternatives
+
+None recorded.
+
 ## Consequences
 
 - Validate that episode graph edge-building produces stable cluster boundaries across multi-threaded parallel agent sessions.
 - Review whether the episode manifest format should be versioned to allow safe schema evolution.
 
-## Source memory events
+## Sources
 
-- [2026-04-13T21-55-27Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-55-27Z--dave-thomas--adr-inspector.md)
-
-## Related code paths
-
-- docs/shared-repo-memory-system-design.md
+- Memory event 2026-04-13T21-55-27Z--dave-thomas--adr-inspector (v0.4 event shard; removed in v0.5)
+- Code path: docs/shared-repo-memory-system-design.md
+- Written by adr-inspector (claude-sonnet-4-6) on 2026-04-13

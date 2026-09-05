@@ -1,19 +1,15 @@
-# ADR-0008 Bootstrap shared memory using an isolated subagent to avoid in-session context contamination
+---
+id: "ADR-0008"
+title: "Bootstrap shared memory using an isolated subagent to avoid in-session context contamination"
+status: "superseded"
+date: "2026-04-13"
+tags: "docs"
+must_read: false
+supersedes: ""
+superseded_by: "ADR-0019"
+---
 
-Status: accepted
-Date: 2026-04-13
-Owners: dave-thomas
-Must read: true
-Supersedes: 
-Superseded by: 
-ai-generated: True
-ai-model: claude-sonnet-4-5
-ai-tool: claude
-ai-surface: claude-code
-ai-executor: adr-inspector
-
-Purpose: Bootstrap shared memory using an isolated subagent to avoid in-session context contamination
-Derived from: [2026-04-13T21-53-14Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-53-14Z--dave-thomas--adr-inspector.md)
+# ADR-0008: Bootstrap shared memory using an isolated subagent to avoid in-session context contamination
 
 ## Context
 
@@ -29,15 +25,17 @@ Established that memory bootstrap must always run as a detached isolated subagen
 - The `memory-bootstrap` SKILL.md includes a CLI / Non-Interactive Mode section that instructs the subagent to skip user-facing commentary and exit cleanly.
 - Fallback: when the agent CLI binary is not on PATH, `auto-bootstrap.py` is invoked (requires `ANTHROPIC_API_KEY`).
 
+## Alternatives
+
+None recorded.
+
 ## Consequences
 
 - Validate that `claude -p` auth inheritance is reliable across all workstation configurations (keychain vs. env-var auth).
 - Consider whether the 300-second lock-stale threshold is appropriate for slow bootstrap runs on large repos.
 
-## Source memory events
+## Sources
 
-- [2026-04-13T21-53-14Z--dave-thomas--adr-inspector](../daily/2026-04-13/events/2026-04-13T21-53-14Z--dave-thomas--adr-inspector.md)
-
-## Related code paths
-
-- docs/shared-repo-memory-system-design.md
+- Memory event 2026-04-13T21-53-14Z--dave-thomas--adr-inspector (v0.4 event shard; removed in v0.5)
+- Code path: docs/shared-repo-memory-system-design.md
+- Written by adr-inspector (claude-sonnet-4-5) on 2026-04-13
