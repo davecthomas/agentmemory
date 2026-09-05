@@ -74,6 +74,24 @@ def test_news_groups_by_branch_and_cleans_names(repo: Path) -> None:
     assert "4 commits, 1 decision note" in out  # fixture initial commit + 3
 
 
+def test_news_watermark_reports_nothing_new_then_new(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    first = run_script("memory-news.py", cwd=repo).stdout
+    assert "initial" in first and "Nothing new" not in first
+    second = run_script("memory-news.py", cwd=repo).stdout
+    assert "Nothing new since you last read news" in second
+    assert "initial" in run_script("memory-news.py", "--all", cwd=repo).stdout
+    (repo / "later.py").write_text("x\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "later change")
+    third = run_script("memory-news.py", "--no-mark", cwd=repo).stdout
+    assert "later change" in third and "initial" not in third
+    assert "New since you last read news" in third
+    assert (
+        "later change" in run_script("memory-news.py", cwd=repo).stdout
+    )  # --no-mark kept it
+
+
 def test_news_flags_candidates(repo: Path) -> None:
     assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
     note = common.load_module(Path(__file__).resolve().parents[1] / "memory-note.py")
