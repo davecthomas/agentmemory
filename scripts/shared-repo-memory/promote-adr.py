@@ -1,287 +1,249 @@
 #!/usr/bin/env python3
-"""promote-adr.py -- Promote a decision-candidate event shard into a permanent ADR.
+"""Create an ADR and rebuild the index.
 
-An Architecture Decision Record (ADR) is the durable form of a design decision.
-Decision-candidate shards are raw captures; ADRs are curated, indexed, and
-committed alongside the code they govern.
+Two input modes:
 
-Promotion is always explicit -- it never happens automatically as a post-turn
-side effect.  Only shards with decision_candidate: true in their frontmatter
-are accepted.
+* ``--from-note NOTES_FILE --entry N`` promotes the N-th entry (1-based) of a
+  decision-note file. Its Decision, Why, Alternatives, and Scope lines seed
+  the ADR sections and the entry is cited under Sources.
+* ``--title ... --context ... --decision ...`` writes the ADR from explicit
+  text. ``--alternatives``, ``--consequences``, and repeatable ``--source``
+  are optional.
 
-What this script does:
-  1. Loads the source shard and verifies decision_candidate is true.
-  2. Assigns the next sequential ADR number (ADR-0001, ADR-0002, ...).
-  3. Derives a title from the shard content or the --title argument.
-  4. Writes the new ADR file under .agents/memory/adr/.
-  5. Rebuilds INDEX.md from all ADR files in that directory.
-
-ADR filename format:
-  ADR-NNNN-<slug>.md
-
-Usage:
-  promote-adr.py <shard-path> --repo-root <path> [--title <title>]
-  promote-adr.sh <shard-path>   (thin wrapper, resolves repo-root automatically)
-
-Install location after `./install.sh`:
-  ~/.agent/shared-repo-memory/promote-adr.py
+``--reindex`` only rebuilds ``INDEX.md`` from the ADR files on disk.
 """
+
 from __future__ import annotations
 
 import argparse
 import re
 from pathlib import Path
+from typing import Any
 
 from common import (
-    ensure_dir,
-    info,
-    iso_date,
-    load_event,
-    relative_link,
+    ADR_DIR,
+    NOTES_DIR,
+    list_adrs,
+    log,
+    read_text,
+    render_frontmatter,
+    repo_root,
     safe_main,
     slugify,
-    utc_now,
-    warn,
+    stage,
+    today,
     write_text,
 )
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments.
-
-    Returns:
-        argparse.Namespace: Parsed arguments with shard (positional), repo_root
-            (required), and optional title override.
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("shard")
-    parser.add_argument("--repo-root", required=True)
-    parser.add_argument("--title")
-    return parser.parse_args()
-
-
-def next_adr_id(adr_root: Path) -> str:
-    """Return the next available ADR identifier by scanning existing ADR files.
-
-    Scans for filenames matching ADR-NNNN-*.md, finds the highest NNNN, and
-    returns a zero-padded four-digit identifier one above it.
+def next_id(root: Path) -> str:
+    """Return the next unused ADR identifier.
 
     Args:
-        adr_root: Path to the .agents/memory/adr/ directory.
+        root: Repository root.
 
     Returns:
-        str: Next ADR identifier, e.g. "ADR-0003".
+        str: ``ADR-NNNN``.
     """
-    highest = 0
-    for path in adr_root.glob("ADR-*.md"):
-        match = re.match(r"ADR-(\d{4})", path.stem)
+    highest: int = 0
+    for path in (root / ADR_DIR).glob("ADR-*.md"):
+        match = re.match(r"ADR-(\d+)", path.name)
         if match:
             highest = max(highest, int(match.group(1)))
     return f"ADR-{highest + 1:04d}"
 
 
-def adr_title(event: dict[str, object], override: str | None) -> str:
-    """Derive the ADR title from the source shard or an explicit override.
-
-    Resolution order:
-      1. The --title argument (if provided).
-      2. First non-empty line from the shard's Why section.
-      3. First non-empty line from the shard's What changed section.
-      4. A generic fallback: "shared repo memory decision".
-
-    Args:
-        event: Loaded event shard dict (from load_event()).
-        override: Explicit title string from the --title CLI argument, or None.
-
-    Returns:
-        str: Title string for the new ADR.
-    """
-    if override:
-        return override
-    why_lines = event["__sections"]["Why"]
-    what_lines = event["__sections"]["What changed"]
-    candidate = ""
-    for line in why_lines + what_lines:
-        candidate = line.lstrip("- ").strip()
-        if candidate:
-            break
-    return candidate or "shared repo memory decision"
-
-
-def parse_adr(path: Path) -> dict[str, str]:
-    """Parse an existing ADR file into a flat dict of header fields.
-
-    Reads:
-      - Title from the H1 heading (first line).
-      - Key: value pairs from the first 8 lines after the title.
-      - Tags derived from the top-level directory names of "Related code paths"
-        entries (e.g., "scripts" from "scripts/foo.py").
-
-    This is a lightweight parser used only for INDEX.md generation; it does not
-    need to handle the full ADR schema.
+def render_adr(
+    *,
+    adr_id: str,
+    title: str,
+    context: str,
+    decision: str,
+    alternatives: str = "",
+    consequences: str = "",
+    sources: list[str] | None = None,
+    tags: str = "",
+    must_read: bool = True,
+    date: str | None = None,
+) -> str:
+    """Render an ADR document in the v0.5 format.
 
     Args:
-        path: Path to an ADR-NNNN-*.md file.
+        adr_id: ``ADR-NNNN``.
+        title: One-line title.
+        context: Context section text.
+        decision: Decision section text.
+        alternatives: Alternatives section text.
+        consequences: Consequences section text.
+        sources: Lines for the Sources section.
+        tags: Comma-separated tags.
+        must_read: Inject the Decision at session start when True.
+        date: ISO date; today when omitted.
 
     Returns:
-        dict[str, str]: Flat mapping of field names to string values, always
-            including "adr" (e.g., "ADR-0001"), "title", and "tags".
+        str: Full Markdown document.
     """
-    data = {
-        "adr": path.stem.split("-", 2)[0] + "-" + path.stem.split("-", 2)[1],
-        "title": path.stem,
+    meta: dict[str, Any] = {
+        "id": adr_id,
+        "title": title,
+        "status": "accepted",
+        "date": date or today(),
+        "tags": tags,
+        "must_read": must_read,
+        "supersedes": "",
+        "superseded_by": "",
     }
-    if not path.exists():
-        return data
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if lines:
-        data["title"] = lines[0].removeprefix("# ").strip()
-    # Parse key: value header fields from lines 2-8.
-    for line in lines[1:8]:
-        if ":" in line:
-            key, value = line.split(":", 1)
-            data[key.strip().lower()] = value.strip()
-    # Build tags from top-level directory names of related code paths.
-    related_code_paths: list[str] = []
-    capture = False
-    for line in lines:
-        if line == "## Related code paths":
-            capture = True
-            continue
-        if capture and line.startswith("## "):
-            break
-        if capture and line.startswith("- "):
-            related_code_paths.append(line.removeprefix("- ").strip())
-    data["tags"] = (
-        ",".join(sorted({path.split("/", 1)[0] for path in related_code_paths if path}))
-        or "poc"
-    )
-    return data
+    body: list[str] = [f"# {adr_id}: {title}", ""]
+    for heading, text in (
+        ("Context", context),
+        ("Decision", decision),
+        ("Alternatives", alternatives or "None recorded."),
+        ("Consequences", consequences or "None recorded."),
+    ):
+        body += [f"## {heading}", "", text.strip(), ""]
+    body += ["## Sources", ""]
+    body += [f"- {s}" for s in (sources or [])] or ["- None recorded."]
+    return render_frontmatter(meta) + "\n\n" + "\n".join(body) + "\n"
 
 
-def refresh_index(repo_root: Path) -> None:
-    """Rebuild .agents/memory/adr/INDEX.md from all ADR-*.md files.
-
-    Always rebuilds from scratch so the index stays consistent with the current
-    set of ADR files.  Called automatically after every ADR promotion.
+def index_rows(root: Path) -> str:
+    """Render ``INDEX.md`` from the ADR files on disk.
 
     Args:
-        repo_root: Absolute path to the repository root.
+        root: Repository root.
+
+    Returns:
+        str: Full index Markdown.
     """
-    adr_root = repo_root / ".agents/memory" / "adr"
-    index_path = adr_root / "INDEX.md"
-    rows = []
-    for path in sorted(adr_root.glob("ADR-*.md")):
-        data = parse_adr(path)
-        # Strip the "ADR-NNNN " prefix from the title for the table cell -- the
-        # ADR column already carries the identifier.
-        title = (
-            data["title"].split(" ", 1)[1] if " " in data["title"] else data["title"]
-        )
-        link_target = path.name
-        adr_value = data.get(
-            "adr", path.stem.split("-", 2)[0] + "-" + path.stem.split("-", 2)[1]
-        )
-        title_link = f"[{title}]({link_target})"
+    rows: list[str] = []
+    for adr in list_adrs(root):
+        meta = adr["meta"]
+        must: str = "yes" if meta.get("must_read") is True else "no"
+        status: str = str(meta.get("status", "accepted"))
+        if meta.get("superseded_by"):
+            status += f" (by {meta['superseded_by']})"
         rows.append(
-            "| {adr} | {title} | {status} | {date} | {tags} | {must_read} | {supersedes} | {superseded_by} |".format(
-                adr=adr_value,
-                title=title_link,
-                status=data.get("status", "accepted"),
-                date=data.get("date", ""),
-                tags=data.get("tags", "poc"),
-                must_read=data.get("must read", "true"),
-                supersedes=data.get("supersedes", ""),
-                superseded_by=data.get("superseded by", ""),
-            )
+            f"| {meta['id']} | [{meta['title']}]({adr['path'].name}) | {status} "
+            f"| {meta.get('date', '')} | {must} |"
         )
-    lines = [
-        "# ADR index",
-        "",
-        "| ADR | Title | Status | Date | Tags | Must Read | Supersedes | Superseded By |",
-        "|---|---|---|---|---|---|---|---|",
-        *(rows or ["| - | None | - | - | - | - | - | - |"]),
-        "",
-    ]
-    write_text(index_path, "\n".join(lines))
+    return (
+        "# ADR index\n\n| ADR | Title | Status | Date | Must read |\n"
+        "|---|---|---|---|---|\n" + "\n".join(rows) + ("\n" if rows else "")
+    )
+
+
+def refresh_index(root: Path) -> Path:
+    """Rewrite ``INDEX.md``.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        Path: The index file.
+    """
+    path: Path = root / ADR_DIR / "INDEX.md"
+    write_text(path, index_rows(root))
+    return path
+
+
+def note_entry(root: Path, notes_file: Path, entry: int) -> dict[str, str]:
+    """Extract one entry from a decision-note file.
+
+    Args:
+        root: Repository root, for the source citation.
+        notes_file: The ``notes/YYYY-MM-DD.md`` file.
+        entry: 1-based entry number.
+
+    Returns:
+        dict[str, str]: Field name to text, plus ``source``.
+    """
+    text: str = read_text(notes_file)
+    blocks: list[str] = re.split(r"(?m)^## ", text)[1:]
+    if not 1 <= entry <= len(blocks):
+        raise SystemExit(f"{notes_file} has {len(blocks)} entries; asked for {entry}")
+    block: str = blocks[entry - 1]
+    fields: dict[str, str] = {"header": block.splitlines()[0].strip()}
+    for key in ("Decision", "Why", "Alternatives", "Scope", "Commit"):
+        match = re.search(rf"^\*\*{key}:\*\*\s*(.+)$", block, re.MULTILINE)
+        fields[key.lower()] = match.group(1).strip() if match else ""
+    rel: str = notes_file.relative_to(root).as_posix()
+    fields["source"] = f"[{rel} entry {entry}](../../../{rel}): {fields['header']}"
+    return fields
 
 
 def main() -> int:
-    """Entry point: promote a decision-candidate shard into a permanent ADR.
-
-    Returns:
-        int: 0 on success; 1 if the shard is not a decision candidate.
-    """
-    args = parse_args()
-    repo_root = Path(args.repo_root).resolve()
-    event = load_event(Path(args.shard).resolve())
-
-    # Guard: only decision-candidate shards may be promoted.
-    if not event["decision_candidate"]:
-        warn("shard is not marked as a decision candidate")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", default=None)
+    parser.add_argument("--reindex", action="store_true")
+    parser.add_argument("--from-note", default=None, help="notes file path")
+    parser.add_argument("--entry", type=int, default=1)
+    parser.add_argument("--title", default="")
+    parser.add_argument("--context", default="")
+    parser.add_argument("--decision", default="")
+    parser.add_argument("--alternatives", default="")
+    parser.add_argument("--consequences", default="")
+    parser.add_argument("--source", action="append", default=[])
+    parser.add_argument("--tags", default="")
+    parser.add_argument("--no-must-read", action="store_true")
+    parser.add_argument("--no-stage", action="store_true")
+    args = parser.parse_args()
+    root = repo_root(args.repo_root)
+    if root is None:
+        log("promote-adr: not inside a git repository")
         return 1
+    if args.reindex:
+        print(refresh_index(root).relative_to(root))
+        return 0
 
-    adr_root = ensure_dir(repo_root / ".agents/memory" / "adr")
-    adr_id = next_adr_id(adr_root)
-    title = adr_title(event, args.title)
-    slug = slugify(title)
-    adr_path = adr_root / f"{adr_id}-{slug}.md"
+    sources: list[str] = list(args.source)
+    if args.from_note:
+        notes_file = Path(args.from_note)
+        if not notes_file.is_absolute():
+            notes_file = root / notes_file
+        if not notes_file.is_file() and (root / NOTES_DIR / notes_file.name).is_file():
+            notes_file = root / NOTES_DIR / notes_file.name
+        fields = note_entry(root, notes_file, args.entry)
+        title = args.title or fields["decision"]
+        context = args.context or fields["why"]
+        decision = args.decision or fields["decision"]
+        alternatives = args.alternatives or fields["alternatives"]
+        if fields["scope"]:
+            sources.append(f"Scope: {fields['scope']}")
+        if fields["commit"]:
+            sources.append(f"Commit {fields['commit']}")
+        sources.append(fields["source"])
+    else:
+        title, context, decision, alternatives = (
+            args.title,
+            args.context,
+            args.decision,
+            args.alternatives,
+        )
+    if not (title and context and decision):
+        parser.error("--title, --context and --decision are required (or --from-note)")
 
-    timestamp_date = str(event["timestamp"])[:10] or iso_date(utc_now())
-    related_event_name = event["__basename"]
-    related_event_link = relative_link(adr_path, event["__path"], related_event_name)
-    related_code_paths = [f"- {path}" for path in event.get("files_touched", [])]
-
-    # Carry forward AI attribution from the source shard when present.
-    ai_lines: list[str] = []
-    for field in ("ai_generated", "ai_model", "ai_tool", "ai_surface", "ai_executor"):
-        value = event.get(field)
-        if value is not None:
-            ai_lines.append(f"{field.replace('_', '-')}: {value}")
-
-    # Write the ADR file using the canonical structure defined in the design doc.
-    lines = [
-        f"# {adr_id} {title}",
-        "",
-        "Status: accepted",
-        f"Date: {timestamp_date}",
-        f"Owners: {event['author']}",
-        "Must read: true",
-        "Supersedes: ",
-        "Superseded by: ",
-        *([line for line in ai_lines] if ai_lines else []),
-        "",
-        f"Purpose: {title}",
-        f"Derived from: {related_event_link}",
-        "",
-        "## Context",
-        "",
-        *(event["__sections"]["Why"] or ["- None"]),
-        "",
-        "## Decision",
-        "",
-        *(event["__sections"]["What changed"] or ["- None"]),
-        "",
-        "## Consequences",
-        "",
-        *(event["__sections"]["Next"] or ["- None"]),
-        "",
-        "## Source memory events",
-        "",
-        f"- {related_event_link}",
-        "",
-        "## Related code paths",
-        "",
-        *(related_code_paths or ["- None"]),
-        "",
-    ]
-    write_text(adr_path, "\n".join(lines))
-
-    # Always rebuild the index after writing a new ADR so it stays consistent.
-    refresh_index(repo_root)
-    info(f"promoted {related_event_name} to {adr_path.relative_to(repo_root)}")
+    adr_id: str = next_id(root)
+    path: Path = root / ADR_DIR / f"{adr_id}-{slugify(title)}.md"
+    write_text(
+        path,
+        render_adr(
+            adr_id=adr_id,
+            title=title,
+            context=context,
+            decision=decision,
+            alternatives=alternatives,
+            consequences=args.consequences,
+            sources=sources,
+            tags=args.tags,
+            must_read=not args.no_must_read,
+        ),
+    )
+    index: Path = refresh_index(root)
+    if not args.no_stage:
+        stage(root, [path, index])
+    print(path.relative_to(root))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(safe_main(main, "PromoteADR"))
+    raise SystemExit(safe_main(main, "promote-adr"))

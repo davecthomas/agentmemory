@@ -1,1257 +1,588 @@
-#!/usr/bin/env python3
-"""common.py -- Shared utilities for all agentmemory helper scripts.
+"""Shared helpers for the agentmemory scripts.
 
-This module is imported by every other helper script in this package.
-It covers six areas:
-
-  1. Timestamps -- UTC datetime helpers used to name shards and tag metadata.
-  2. Git operations -- thin wrappers around git subprocess calls.
-  3. File I/O -- safe directory creation, text read/write, and JSON helpers.
-  4. Shard serialisation -- frontmatter rendering and parsing for event shards.
-  5. Payload extraction -- flatten and search the arbitrary JSON that agent
-     hook payloads deliver, regardless of field naming conventions.
-  6. Hook infrastructure -- append_hook_trace, warn/info.
-
-All public symbols are re-exported; callers should import from common directly.
+Every script in this directory imports from here. This module has no side
+effects at import time so hook entry points stay fast.
 """
+
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
-from collections import OrderedDict
-from collections.abc import Sequence
-from datetime import UTC, datetime
-from functools import cache
+import traceback
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+VERSION: str = "0.5.0"
+
+MEMORY_DIR: str = ".agents/memory"
+ADR_DIR: str = f"{MEMORY_DIR}/adr"
+NOTES_DIR: str = f"{MEMORY_DIR}/notes"
+LOCAL_DIR: str = f"{MEMORY_DIR}/local"
+CONFIG_FILE: str = f"{MEMORY_DIR}/config.json"
+GITHOOKS_DIR: str = ".githooks"
+CONFIGURED_FLAG: str = "shared_repo_memory_configured"
+ASSETS_REPO_KEY: str = "shared_agent_assets_repo_path"
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "decision_surfaces": ["docs/**"],
+    "context_budget_words": 2500,
+    "notes_window_days": 14,
+}
+
+ADR_SECTIONS: tuple[str, ...] = (
+    "Context",
+    "Decision",
+    "Alternatives",
+    "Consequences",
+    "Sources",
+)
+
+
 # ---------------------------------------------------------------------------
-# Canonical section headings used inside event shard bodies.
-# Rebuilders (rebuild-summary.py, build-catchup.py) key on these exact strings
-# when parsing shard content, so they must stay in sync with the shard template.
+# Logging and process helpers
 # ---------------------------------------------------------------------------
-SECTION_HEADINGS = [
-    "Why",
-    "What changed",
-    "Evidence",
-    "Next",
-]
-
-# Older shards wrote "Repo changes" instead of "What changed".
-# This alias maps the old heading to the canonical one during parsing so that
-# both summary rebuilds and catch-up digests treat them identically.
-SECTION_ALIASES = {
-    "Repo changes": "What changed",
-}
-
-# Shared repo-memory system version embedded into generated repo-local artifacts.
-SHARED_REPO_MEMORY_SYSTEM_VERSION: str = "0.4.4"
-
-# Repo-local state that must be ignored because it is derived or workstation-only.
-# bootstrap-repo.py appends these to each wired repository's .gitignore, and
-# session-start.py validates them so newly installed ignore rules are repaired.
-GITHOOKS_RELATIVE_DIR: str = ".githooks"
-PENDING_SHARDS_RELATIVE_DIR: str = ".agents/memory/pending"
-MEMORY_STATE_RELATIVE_DIR: str = ".agents/memory/state"
-CHECKPOINT_CONTEXT_RELATIVE_DIR: str = ".agents/memory/state/checkpoint-context"
-EPISODE_GRAPH_RELATIVE_DIR: str = ".agents/memory/state/episode-graph"
-EPISODE_MANIFESTS_RELATIVE_DIR: str = ".agents/memory/state/episode-graph/episodes"
-MEMORY_LOGS_RELATIVE_DIR: str = ".agents/memory/logs"
-PROJECT_PRE_COMMIT_RELATIVE_PATH: str = (
-    "scripts/shared-repo-memory/project-pre-commit.sh"
-)
-
-REQUIRED_GITIGNORE_ENTRIES: tuple[str, ...] = (
-    "# agentmemory-managed local repo wiring and state",
-    "# Added by the agentmemory SessionStart/bootstrap flow.",
-    "# Do not edit this block manually; rerun the installer from your agentmemory checkout and reopen an agent session if needed.",
-    f"{GITHOOKS_RELATIVE_DIR}/",
-    ".codex/local/",
-    ".claude/local/",
-    ".claude/settings.local.json",
-    f"{PENDING_SHARDS_RELATIVE_DIR}/",
-    f"{MEMORY_STATE_RELATIVE_DIR}/",
-    f"{MEMORY_LOGS_RELATIVE_DIR}/",
-    ".agents/memory/.auto_bootstrap_running",
-)
-
-_LOCAL_STATE_PREFIXES: tuple[str, ...] = (
-    ".agents/memory/",
-    ".codex/local/",
-    ".claude/local/",
-)
-_LOCAL_STATE_FILES: tuple[str, ...] = (".claude/settings.local.json",)
-
-_RUNTIME_VERSION_COMMANDS: dict[str, list[str]] = {
-    "claude": ["claude", "--version"],
-    "gemini": ["gemini", "--version"],
-    "codex": ["codex", "--version"],
-}
-_SCRIPT_RUNTIME_DEFAULTS: dict[str, str] = {
-    "bootstrap-repo.py": "bootstrap",
-    "build-catchup.py": "catchup-cli",
-    "install.py": "installer",
-    "pre-commit-memory-guard.py": "pre-commit",
-    "rebuild-summary.py": "summary-rebuild",
-}
-_LOG_CONTEXT_RUNTIME_ID: str | None = None
-_LOG_CONTEXT_RUNTIME_VERSION: str | None = None
-_NON_AGENT_RUNTIME_VERSION: str = "n/a"
-_RUNTIME_ID_ENV_KEYS: tuple[str, ...] = (
-    "AGENTMEMORY_RUNTIME_ID",
-    "SHARED_REPO_MEMORY_AGENT_ID",
-)
-_RUNTIME_VERSION_ENV_KEYS: tuple[str, ...] = (
-    "AGENTMEMORY_RUNTIME_VERSION",
-    "SHARED_REPO_MEMORY_PROVIDER_VERSION",
-)
 
 
-def set_runtime_log_context(
-    str_runtime_id: str, str_runtime_version: str | None = None
-) -> None:
-    """Pin runtime metadata for future log lines emitted by this process.
+def log(message: str) -> None:
+    """Write one line to stderr with the agentmemory prefix.
 
-    Hook entrypoints call this after they determine the active runtime so later
-    warn()/info() messages and hook-trace records use the exact launcher runtime
-    rather than relying on environment heuristics alone.
+    Hook stdout is reserved for the JSON response the agent reads, so every
+    human-facing message goes to stderr.
 
     Args:
-        str_runtime_id: Short runtime identifier such as "claude", "gemini",
-            "codex", "git-hook", or "installer".
-        str_runtime_version: Optional explicit version string for the active
-            runtime. When omitted, later log calls probe it lazily.
-
-    Returns:
-        None: The module-level logging context is updated in place.
+        message: Text to print.
     """
-    global _LOG_CONTEXT_RUNTIME_ID, _LOG_CONTEXT_RUNTIME_VERSION
-
-    str_clean_runtime_id: str = str_runtime_id.strip() or "system"
-    str_clean_runtime_version: str | None = None
-    if str_runtime_version:
-        str_clean_runtime_version = str_runtime_version.strip() or None
-
-    _LOG_CONTEXT_RUNTIME_ID = str_clean_runtime_id
-    _LOG_CONTEXT_RUNTIME_VERSION = str_clean_runtime_version
+    print(f"[agentmemory v{VERSION}] {message}", file=sys.stderr)
 
 
-def clear_runtime_log_context() -> None:
-    """Clear any explicit runtime metadata override used by log helpers.
-
-    This is primarily useful in tests that need deterministic log-prefix
-    assertions without leaking state across cases.
-
-    Returns:
-        None: The module-level logging override state is reset.
-    """
-    global _LOG_CONTEXT_RUNTIME_ID, _LOG_CONTEXT_RUNTIME_VERSION
-
-    _LOG_CONTEXT_RUNTIME_ID = None
-    _LOG_CONTEXT_RUNTIME_VERSION = None
-
-
-def _env_override(names: Sequence[str]) -> str | None:
-    """Return the first non-empty environment override from the given keys.
+def safe_main(main_fn: Callable[[], int], name: str) -> int:
+    """Run a script's main() and turn any exception into a logged exit code 1.
 
     Args:
-        names: Environment variable names to inspect in priority order.
+        main_fn: The script's main function.
+        name: Script name used in the crash message.
 
     Returns:
-        str | None: First non-empty stripped value, or None when none are set.
+        int: main_fn's return value, or 1 when it raised.
     """
-    str_env_name: str
-    for str_env_name in names:
-        str_value: str = os.environ.get(str_env_name, "").strip()
-        if str_value:
-            return str_value
-    return None
-
-
-def detect_runtime_id() -> str:
-    """Return the best-known runtime identifier for the current process.
-
-    Resolution order is:
-      1. Explicit override set by set_runtime_log_context().
-      2. Explicit runtime env override passed through by this system.
-      3. Native runtime env vars or Codex desktop heuristics.
-      4. Script-specific defaults for non-agent helpers.
-      5. "system" when no more specific signal exists.
-
-    Returns:
-        str: Runtime identifier such as "claude", "gemini", "codex",
-            "git-hook", "installer", or "system".
-    """
-    str_bundle_id: str = os.environ.get("__CFBundleIdentifier", "")
-    if _LOG_CONTEXT_RUNTIME_ID:
-        return _LOG_CONTEXT_RUNTIME_ID
-    str_runtime_override: str | None = _env_override(_RUNTIME_ID_ENV_KEYS)
-    if str_runtime_override is not None:
-        return str_runtime_override
-    if os.environ.get("CLAUDECODE"):
-        return "claude"
-    if os.environ.get("GEMINI_CLI"):
-        return "gemini"
-    if (
-        os.environ.get("CODEX_THREAD_ID")
-        or os.environ.get("CODEX_SHELL")
-        or os.environ.get("CODEX_CI")
-        or os.environ.get("CODEX_INTERNAL_ORIGINATOR_OVERRIDE")
-        or str_bundle_id == "com.openai.codex"
-    ):
-        return "codex"
-    str_script_name: str = Path(sys.argv[0]).name
-    if str_script_name in _SCRIPT_RUNTIME_DEFAULTS:
-        return _SCRIPT_RUNTIME_DEFAULTS[str_script_name]
-    return "system"
-
-
-def detect_runtime_agent_id() -> str:
-    """Backward-compatible alias for detect_runtime_id().
-
-    Returns:
-        str: Runtime identifier for the current process.
-    """
-    str_runtime_id: str = detect_runtime_id()
-    return str_runtime_id
-
-
-@cache
-def _probe_runtime_version(str_runtime_id: str) -> str:
-    """Probe the locally installed CLI version for one supported runtime.
-
-    The probe runs at most once per runtime id per process thanks to the cache.
-    Version strings are extracted from stdout/stderr using a permissive semantic
-    version regex because each CLI formats `--version` output differently.
-
-    Args:
-        str_runtime_id: Runtime identifier to probe, such as "claude" or
-            "codex".
-
-    Returns:
-        str: Parsed version string like "0.118.0", or "n/a" for non-agent
-            runtimes, or "unavailable" when a supported CLI cannot be probed.
-    """
-    list_str_command: list[str] | None = _RUNTIME_VERSION_COMMANDS.get(str_runtime_id)
-    if list_str_command is None:
-        return _NON_AGENT_RUNTIME_VERSION
     try:
-        completed_process: subprocess.CompletedProcess[str] = run(
-            list_str_command, check=False
-        )
-    except OSError:
-        return "unavailable"
-
-    list_str_output_parts: list[str] = [
-        str_part
-        for str_part in (
-            completed_process.stdout.strip(),
-            completed_process.stderr.strip(),
-        )
-        if str_part
-    ]
-    str_output: str = "\n".join(list_str_output_parts)
-    match_version: re.Match[str] | None = re.search(
-        r"(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", str_output
-    )
-    if match_version is None:
-        match_version = re.search(r"(\d+\.\d+)", str_output)
-    if match_version is None:
-        return "unavailable"
-    return match_version.group(1)
+        return main_fn()
+    except Exception:  # noqa: BLE001 - hooks must never crash the agent
+        log(f"{name} crashed:\n{traceback.format_exc()}")
+        return 1
 
 
-def runtime_version(str_runtime_id: str | None = None) -> str:
-    """Return the runtime version string that should appear in log metadata.
-
-    Args:
-        str_runtime_id: Optional explicit runtime identifier. When omitted, the
-            current runtime is detected from the process context.
+def install_root() -> Path:
+    """Return the directory the installer copies scripts into.
 
     Returns:
-        str: Runtime version string for the resolved runtime, or "n/a" /
-            "unavailable" when a CLI version does not apply or cannot be probed.
+        Path: ``~/.agent/shared-repo-memory``.
     """
-    str_resolved_runtime_id: str = str_runtime_id or detect_runtime_id()
-    if (
-        _LOG_CONTEXT_RUNTIME_VERSION
-        and _LOG_CONTEXT_RUNTIME_ID == str_resolved_runtime_id
-    ):
-        return _LOG_CONTEXT_RUNTIME_VERSION
-    str_runtime_version_override: str | None = _env_override(_RUNTIME_VERSION_ENV_KEYS)
-    if str_runtime_version_override is not None:
-        return str_runtime_version_override
-    return _probe_runtime_version(str_resolved_runtime_id)
+    return Path.home() / ".agent" / "shared-repo-memory"
 
 
-def runtime_provider_version(str_agent_id: str | None = None) -> str:
-    """Backward-compatible alias for runtime_version().
+def load_module(path: Path) -> ModuleType:
+    """Import a sibling script by path so hyphenated filenames stay importable.
 
     Args:
-        str_agent_id: Optional explicit runtime identifier.
+        path: Absolute path to a ``.py`` file.
 
     Returns:
-        str: Runtime version string for the resolved runtime.
+        ModuleType: The loaded module.
     """
-    str_runtime_version: str = runtime_version(str_agent_id)
-    return str_runtime_version
+    name: str = path.stem.replace("-", "_")
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def format_log_prefix(
-    str_runtime_id: str | None = None, str_runtime_version: str | None = None
-) -> str:
-    """Render the canonical agentmemory log prefix with runtime metadata.
-
-    Args:
-        str_runtime_id: Optional explicit runtime identifier. When omitted, the
-            current runtime is detected automatically.
-        str_runtime_version: Optional explicit version string. When omitted,
-            the version is resolved from overrides, env vars, or CLI probing.
+def read_stdin_json() -> dict[str, Any]:
+    """Parse the hook payload from stdin, tolerating empty or invalid input.
 
     Returns:
-        str: Prefix in the form
-            "[agentmemory][version=<agentmemory-version>][runtime=<id>][runtime-version=<version>]".
+        dict[str, Any]: The parsed object, or an empty dict.
     """
-    str_resolved_runtime_id: str = str_runtime_id or detect_runtime_id()
-    str_resolved_runtime_version: str = str_runtime_version or runtime_version(
-        str_resolved_runtime_id
-    )
-    return (
-        "[agentmemory]"
-        f"[version={SHARED_REPO_MEMORY_SYSTEM_VERSION}]"
-        f"[runtime={str_resolved_runtime_id}]"
-        f"[runtime-version={str_resolved_runtime_version}]"
-    )
+    if sys.stdin.isatty():
+        return {}
+    text: str = sys.stdin.read().strip()
+    if not text:
+        return {}
+    try:
+        parsed: Any = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 # ---------------------------------------------------------------------------
-# Timestamps
+# Git
+# ---------------------------------------------------------------------------
+
+
+def git(args: list[str], cwd: Path, *, check: bool = False) -> str:
+    """Run a git command and return its stripped stdout.
+
+    Args:
+        args: Arguments after ``git``.
+        cwd: Directory to run in.
+        check: Raise ``CalledProcessError`` on a non-zero exit when True.
+
+    Returns:
+        str: Stripped stdout; empty string on failure when ``check`` is False.
+    """
+    result = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=check
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def repo_root(explicit: str | Path | None = None) -> Path | None:
+    """Resolve the git repository root for a directory.
+
+    Args:
+        explicit: Directory to start from; the process cwd when omitted.
+
+    Returns:
+        Path | None: The resolved root, or None outside a git repository.
+    """
+    start = Path(explicit) if explicit else Path.cwd()
+    if not start.is_dir():
+        return None
+    top: str = git(["rev-parse", "--show-toplevel"], start)
+    return Path(top).resolve() if top else None
+
+
+def current_branch(root: Path) -> str:
+    """Return the current branch name, or ``HEAD`` when detached.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        str: Branch name.
+    """
+    return git(["rev-parse", "--abbrev-ref", "HEAD"], root) or "HEAD"
+
+
+def author_slug(root: Path) -> str:
+    """Return a short author identifier from git config or the environment.
+
+    Args:
+        root: Repository root used for the git config lookup.
+
+    Returns:
+        str: Slug such as ``davidthomas``.
+    """
+    email: str = git(["config", "--get", "user.email"], root)
+    if email:
+        return slugify(email.split("@", 1)[0])
+    name: str = git(["config", "--get", "user.name"], root)
+    if name:
+        return slugify(name)
+    return slugify(os.environ.get("USER") or "unknown")
+
+
+def stage(root: Path, paths: list[Path]) -> None:
+    """``git add`` the given paths, ignoring failures.
+
+    Args:
+        root: Repository root.
+        paths: Files to stage.
+    """
+    if paths:
+        git(["add", "--", *[str(p) for p in paths]], root)
+
+
+# ---------------------------------------------------------------------------
+# Time and text
 # ---------------------------------------------------------------------------
 
 
 def utc_now() -> datetime:
-    """Return the current moment as a timezone-aware UTC datetime.
+    """Return the current UTC time.
 
     Returns:
-        datetime: Current UTC time with timezone.utc attached.
+        datetime: Timezone-aware now.
     """
     return datetime.now(UTC)
 
 
-def utc_timestamp(value: datetime | None = None) -> str:
-    """Format a datetime as an ISO-8601 UTC string suitable for shard filenames and metadata.
+def stamp(value: datetime | None = None) -> str:
+    """Format a datetime as ``YYYY-MM-DDTHH:MMZ``.
 
     Args:
-        value: Datetime to format.  Uses utc_now() when None.
+        value: Time to format; now when omitted.
 
     Returns:
-        str: Timestamp in the form "YYYY-MM-DDTHH:MM:SSZ".
+        str: Minute-precision UTC stamp.
     """
-    current = value or utc_now()
-    return current.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (value or utc_now()).strftime("%Y-%m-%dT%H:%MZ")
 
 
-def iso_date(value: datetime | None = None) -> str:
-    """Format a datetime as a plain ISO date string, used for daily directory names.
+def today(value: datetime | None = None) -> str:
+    """Format a datetime as ``YYYY-MM-DD``.
 
     Args:
-        value: Datetime to format.  Uses utc_now() when None.
+        value: Time to format; now when omitted.
 
     Returns:
-        str: Date in the form "YYYY-MM-DD".
+        str: ISO date.
     """
-    current = value or utc_now()
-    return current.astimezone(UTC).strftime("%Y-%m-%d")
+    return (value or utc_now()).strftime("%Y-%m-%d")
+
+
+def slugify(value: str, *, limit: int = 80) -> str:
+    """Lowercase a string and replace runs of non-alphanumerics with hyphens.
+
+    Args:
+        value: Text to slugify.
+        limit: Maximum length of the result.
+
+    Returns:
+        str: Hyphenated slug.
+    """
+    slug: str = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug[:limit].rstrip("-") or "untitled"
+
+
+def word_count(text: str) -> int:
+    """Count whitespace-separated words.
+
+    Args:
+        text: Text to count.
+
+    Returns:
+        int: Word count.
+    """
+    return len(text.split())
 
 
 # ---------------------------------------------------------------------------
-# Subprocess / git helpers
+# Files
 # ---------------------------------------------------------------------------
 
 
-def run(
-    args: list[str],
-    *,
-    cwd: str | Path | None = None,
-    check: bool = True,
-    capture_output: bool = True,
-) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess and return its CompletedProcess result.
-
-    Args:
-        args: Command and arguments to execute.
-        cwd: Working directory for the subprocess.  None inherits the caller's cwd.
-        check: When True, raise CalledProcessError on non-zero exit.
-        capture_output: When True, capture stdout and stderr instead of forwarding
-            them to the terminal.
-
-    Returns:
-        subprocess.CompletedProcess[str]: Result with decoded stdout/stderr strings.
-    """
-    return subprocess.run(
-        args,
-        cwd=str(cwd) if cwd else None,
-        check=check,
-        capture_output=capture_output,
-        text=True,
-    )
-
-
-def git(args: list[str], repo_root: str | Path, check: bool = True) -> str:
-    """Run a git command inside repo_root and return stripped stdout.
-
-    Args:
-        args: git sub-command and flags, e.g. ["rev-parse", "--abbrev-ref", "HEAD"].
-        repo_root: Absolute path to the repository root used as the working directory.
-        check: When True, raise CalledProcessError on non-zero exit.
-
-    Returns:
-        str: Stripped stdout from the git command; empty string if nothing was printed.
-    """
-    result = run(["git", *args], cwd=repo_root, check=check)
-    return result.stdout.strip()
-
-
-def try_repo_root(explicit: str | None = None) -> Path | None:
-    """Walk up from explicit (or cwd) to find the nearest git repository root.
-
-    Uses `git rev-parse --show-toplevel` rather than searching for .git manually,
-    so it correctly handles worktrees and nested repos.
-
-    Args:
-        explicit: Path to start from.  Falls back to os.getcwd() when None.
-            If the path points to a file its parent directory is used.
-
-    Returns:
-        Path | None: Absolute path to the repo root, or None if not inside a repo.
-    """
-    candidate = Path(explicit).resolve() if explicit else Path.cwd().resolve()
-    cwd = candidate if candidate.is_dir() else candidate.parent
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=str(cwd),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    return Path(result.stdout.strip()).resolve()
-
-
-def repo_root(explicit: str | None = None) -> Path:
-    """Return the git repository root, raising if not inside a repo.
-
-    Prefer try_repo_root() when a graceful noop is acceptable.  This function
-    is for callers that must abort when no repo is found.
-
-    Args:
-        explicit: Optional path hint passed through to try_repo_root().
-
-    Returns:
-        Path: Absolute path to the repository root.
-
-    Raises:
-        ValueError: If the path is not inside a git repository.
-    """
-    resolved = try_repo_root(explicit)
-    if resolved is None:
-        raise ValueError("current working directory is not inside a Git repository")
-    return resolved
-
-
-def head_sha(repo_root_path: str | Path) -> str:
-    """Return the short HEAD commit SHA, used as a watermark in sync_state.json.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-
-    Returns:
-        str: Full SHA of HEAD, or empty string on failure.
-    """
-    return git(["rev-parse", "HEAD"], repo_root_path, check=False)
-
-
-def has_merge_conflicts(repo_root_path: str | Path) -> bool:
-    """Return True if the working tree has unresolved merge conflicts.
-
-    Staging memory files during a conflicted merge would corrupt the index,
-    so stage_paths() uses this as a safety gate before calling git add.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-
-    Returns:
-        bool: True if any unmerged (both-modified) paths exist.
-    """
-    output = git(
-        ["diff", "--name-only", "--diff-filter=U"], repo_root_path, check=False
-    )
-    return bool(output.strip())
-
-
-def current_branch(repo_root_path: str | Path) -> str:
-    """Return the name of the currently checked-out branch.
-
-    Falls back to "HEAD" when in detached-HEAD state (e.g., during a rebase or
-    when checking out a tag), so shard metadata always has a valid branch field.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-
-    Returns:
-        str: Branch name, or "HEAD" in detached-HEAD state.
-    """
-    branch = git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root_path, check=False)
-    return branch or "HEAD"
-
-
-def missing_gitignore_entries(
-    repo_root_path: str | Path,
-    required_entries: Sequence[str] | None = None,
-) -> list[str]:
-    """Return required shared-memory .gitignore entries that are absent in a repo.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-        required_entries: Optional override list of required .gitignore entries.
-            When omitted, uses REQUIRED_GITIGNORE_ENTRIES.
-
-    Returns:
-        list[str]: Missing .gitignore lines in canonical order. The list is empty
-            when the repository already contains every required entry.
-    """
-    path_gitignore: Path = Path(repo_root_path) / ".gitignore"
-    tuple_required_entries: Sequence[str] = (
-        required_entries if required_entries is not None else REQUIRED_GITIGNORE_ENTRIES
-    )
-    str_existing_text: str = ""
-    if path_gitignore.exists():
-        str_existing_text = path_gitignore.read_text(encoding="utf-8")
-    set_existing_lines: set[str] = set(str_existing_text.splitlines())
-    list_str_missing_entries: list[str] = [
-        str_entry
-        for str_entry in tuple_required_entries
-        if str_entry not in set_existing_lines
-    ]
-    return list_str_missing_entries
-
-
-def changed_repo_files(repo_root_path: str | Path) -> list[str]:
-    """Return a deduplicated, sorted list of changed repo files, including new files.
-
-    Excludes:
-      - Anything under .agents/memory/ (to avoid circular shard references).
-      - Anything under .codex/local/ (ephemeral local state, never committed).
-      - Anything under .claude/local/ or .claude/settings.local.json (local-only).
-
-    Rename entries ("old -> new") are normalised to the destination path only.
-    The null-delimiter format (-z) avoids problems with spaces or newlines in paths.
-    Untracked files are intentionally included because new repo files are a
-    meaningful outcome of an agent turn and design doc creation must reach the
-    ADR inspection trigger.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-
-    Returns:
-        list[str]: Sorted, deduplicated POSIX paths relative to the repo root.
-    """
-    result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        cwd=str(repo_root_path),
-        check=True,
-        capture_output=True,
-    )
-    changed: list[str] = []
-    for raw in result.stdout.decode("utf-8", errors="replace").split("\0"):
-        if not raw:
-            continue
-        # Porcelain v1 format: XY path or XY original -> path (for renames).
-        path_text = raw[3:]
-        if " -> " in path_text:
-            path_text = path_text.split(" -> ", 1)[1]
-        normalized = path_text.strip()
-        if not normalized:
-            continue
-        # Skip memory and local state paths -- they are managed by this system
-        # and should not appear as "code changes" in shard metadata.
-        if (
-            normalized.startswith(_LOCAL_STATE_PREFIXES)
-            or normalized in _LOCAL_STATE_FILES
-        ):
-            continue
-        changed.append(normalized)
-    return sorted(dict.fromkeys(changed))
-
-
-def tracked_changed_files(repo_root_path: str | Path) -> list[str]:
-    """Return changed repo files for compatibility with older callers.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-
-    Returns:
-        list[str]: Same value returned by changed_repo_files(), which now
-            includes new untracked repo files in addition to tracked edits.
-    """
-    list_str_changed_files: list[str] = changed_repo_files(repo_root_path)
-    return list_str_changed_files
-
-
-def stage_paths(repo_root_path: str | Path, paths: list[str | Path]) -> None:
-    """Stage the given paths via git add, skipping when merge conflicts are present.
-
-    Called by post-turn-notify.py after writing a shard and rebuilding the daily
-    summary.  The agent still needs to commit explicitly -- this system never
-    auto-commits.
-
-    Args:
-        repo_root_path: Absolute path to the repository root.
-        paths: Relative paths (from repo root) to stage.  Accepts str or Path.
-    """
-    # Staging during a conflict would corrupt the index, so bail early.
-    if not paths or has_merge_conflicts(repo_root_path):
-        return
-    normalized = [str(Path(path).as_posix()) for path in paths]
-    run(["git", "add", "--", *normalized], cwd=repo_root_path, check=True)
-
-
-# ---------------------------------------------------------------------------
-# File I/O
-# ---------------------------------------------------------------------------
-
-
-def ensure_dir(path: str | Path) -> Path:
-    """Create path and any missing parents, then return the Path object.
-
-    Idempotent -- silently succeeds if the directory already exists.
+def ensure_dir(path: Path) -> Path:
+    """Create a directory and its parents.
 
     Args:
         path: Directory to create.
 
     Returns:
-        Path: The resolved Path object for the created or existing directory.
+        Path: The same path.
     """
-    target = Path(path)
-    target.mkdir(parents=True, exist_ok=True)
-    return target
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
-def write_text(path: str | Path, text: str) -> None:
-    """Write text to a file, creating parent directories as needed.
+def write_text(path: Path, text: str) -> None:
+    """Write text to a file, creating parent directories.
 
     Args:
-        path: Destination file path.
-        text: UTF-8 content to write.  Overwrites any existing file.
+        path: Destination.
+        text: Content.
     """
-    target = Path(path)
-    ensure_dir(target.parent)
-    target.write_text(text, encoding="utf-8")
+    ensure_dir(path.parent)
+    path.write_text(text, encoding="utf-8")
 
 
-def append_jsonl(path: str | Path, payload: dict[str, Any]) -> None:
-    """Append a single JSON object as a newline-delimited record to a JSONL file.
-
-    Used to append entries to the hook trace log at
-    ~/.agent/state/shared-repo-memory-hook-trace.jsonl.
-
-    Args:
-        path: Target JSONL file path.  Parent directories are created if missing.
-        payload: Mapping to serialize as a single JSON line.  Keys are sorted for
-            stable output so the file is diff-friendly.
-    """
-    target = Path(path)
-    ensure_dir(target.parent)
-    with target.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True) + "\n")
-
-
-def read_text(path: str | Path) -> str:
-    """Read and return the full UTF-8 contents of a file.
+def read_text(path: Path) -> str:
+    """Read a file as UTF-8, returning an empty string when it is missing.
 
     Args:
         path: File to read.
 
     Returns:
-        str: Full file contents as a Unicode string.
+        str: File content or ``""``.
     """
-    return Path(path).read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
-def dump_json(path: str | Path, payload: Any) -> None:
-    """Write a Python object as pretty-printed JSON (2-space indent, sorted keys).
-
-    Used for sync_state.json and similar structured state files.
+def load_json(path: Path, default: Any) -> Any:
+    """Parse a JSON file, returning ``default`` when missing or invalid.
 
     Args:
-        path: Destination file path.
-        payload: JSON-serialisable object to write.
+        path: File to read.
+        default: Value to return on failure.
+
+    Returns:
+        Any: Parsed JSON or ``default``.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def dump_json(path: Path, payload: Any) -> None:
+    """Write pretty-printed JSON with a trailing newline.
+
+    Args:
+        path: Destination.
+        payload: JSON-serialisable value.
     """
     write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def load_json(path: str | Path, default: Any) -> Any:
-    """Load a JSON file, returning default when the file does not exist.
+def is_opted_in(root: Path) -> bool:
+    """Return True when the repo has opted in to agentmemory.
+
+    The opt-in marker is a committed ``.agents/memory/config.json``. Without
+    it every hook exits silently, so installing agentmemory on a machine never
+    turns it on for a repository that did not ask for it.
 
     Args:
-        path: JSON file to read.
-        default: Value to return when path does not exist.
+        root: Repository root.
 
     Returns:
-        Any: Parsed JSON value, or default if the file is absent.
+        bool: True when the config file exists.
     """
-    target = Path(path)
-    if not target.exists():
-        return default
-    return json.loads(target.read_text(encoding="utf-8"))
+    return (root / CONFIG_FILE).is_file()
+
+
+def load_config(root: Path) -> dict[str, Any]:
+    """Return the repo's memory config merged over ``DEFAULT_CONFIG``.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        dict[str, Any]: Effective configuration.
+    """
+    config: dict[str, Any] = dict(DEFAULT_CONFIG)
+    loaded: Any = load_json(root / CONFIG_FILE, {})
+    if isinstance(loaded, dict):
+        config.update(loaded)
+    return config
+
+
+def matches_surface(path: str, patterns: list[str]) -> bool:
+    """Return True when a repo-relative path matches any glob pattern.
+
+    ``**`` matches any number of directories, ``*`` matches within one
+    segment, so ``docs/**`` matches ``docs/a/b.md`` and ``src/*.py`` does
+    not match ``src/pkg/mod.py``.
+
+    Args:
+        path: Repo-relative POSIX path.
+        patterns: Glob patterns.
+
+    Returns:
+        bool: True on the first match.
+    """
+    for pattern in patterns:
+        regex: str = (
+            re.escape(pattern)
+            .replace(r"\*\*/", "(?:.*/)?")
+            .replace(r"\*\*", ".*")
+            .replace(r"\*", "[^/]*")
+        )
+        if re.fullmatch(regex, path):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
-# String utilities
+# Markdown: frontmatter and sections
 # ---------------------------------------------------------------------------
 
 
-def slugify(value: str) -> str:
-    """Convert a string into a lowercase, hyphen-separated slug for use in filenames.
-
-    Non-alphanumeric characters are collapsed into single hyphens.  Leading and
-    trailing hyphens are stripped.  Returns "untitled" for empty or all-special input.
+def render_frontmatter(meta: dict[str, Any]) -> str:
+    """Render a dict as a YAML frontmatter block with JSON-quoted scalars.
 
     Args:
-        value: Arbitrary string to convert.
+        meta: Ordered field mapping. Values may be bool, list[str], or str.
 
     Returns:
-        str: Lowercase slug, e.g. "My Feature!" -> "my-feature".
+        str: Block including both ``---`` delimiters.
     """
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "untitled"
-
-
-def author_slug(repo_root_path: str | Path) -> str:
-    """Derive a short, filesystem-safe author identifier from git config or the environment.
-
-    Used to populate the "author" field in event shard filenames and frontmatter.
-
-    Resolution order:
-      1. git config user.email -- local part before "@" is slugified.
-      2. git config user.name  -- full name is slugified.
-      3. USER / USERNAME env var.
-      4. Fallback: "unknown-author".
-
-    Args:
-        repo_root_path: Absolute path to the repository root used for git config lookup.
-
-    Returns:
-        str: Lowercase hyphen-slug identifying the author, e.g. "alice-smith".
-    """
-    email = git(["config", "--get", "user.email"], repo_root_path, check=False)
-    if email:
-        return slugify(email.split("@", 1)[0])
-    name = git(["config", "--get", "user.name"], repo_root_path, check=False)
-    if name:
-        return slugify(name)
-    user = os.environ.get("USER") or os.environ.get("USERNAME")
-    if user:
-        return slugify(user)
-    return "unknown-author"
-
-
-def excerpt(lines: list[str], default: str) -> str:
-    """Return the first non-empty, non-placeholder line from a section's bullet list.
-
-    Used to extract a short human-readable summary from Why or What changed sections
-    when building snapshot tables and ADR bodies.
-
-    Args:
-        lines: Bullet lines from a parsed shard section, e.g. ["- Updated foo.py"].
-        default: Fallback string when lines is empty or every entry is "- None".
-
-    Returns:
-        str: First meaningful line with leading "- " stripped, or default.
-    """
-    for line in lines:
-        text = line.strip()
-        if text and text != "- None":
-            return re.sub(r"^- ", "", text)
-    return default
-
-
-def relative_link(from_path: str | Path, to_path: str | Path, label: str) -> str:
-    """Build a relative Markdown link from one file to another.
-
-    Paths are resolved relative to their respective parent directories so the
-    link works correctly when either file is opened in a Markdown viewer.
-
-    Args:
-        from_path: File that will contain the link (the link source).
-        to_path: File the link should point at (the link target).
-        label: Display text for the Markdown link.
-
-    Returns:
-        str: Markdown link, e.g. "[label](../events/shard.md)".
-    """
-    rel = os.path.relpath(str(to_path), start=str(Path(from_path).parent))
-    return f"[{label}]({Path(rel).as_posix()})"
-
-
-# ---------------------------------------------------------------------------
-# Shard frontmatter serialisation
-# ---------------------------------------------------------------------------
-
-
-def scalar_yaml(value: str) -> str:
-    """Serialize a scalar string as a JSON-quoted string for YAML frontmatter.
-
-    We use JSON quoting (double-quoted, with escape sequences) rather than
-    bare YAML scalars to avoid ambiguity with colons, boolean keywords, etc.
-
-    Args:
-        value: String to quote.
-
-    Returns:
-        str: JSON-encoded string, e.g. 'some value' -> '"some value"'.
-    """
-    return json.dumps(value)
-
-
-def bool_yaml(value: bool) -> str:
-    """Return the lowercase YAML boolean literal for a Python bool.
-
-    Args:
-        value: Python boolean.
-
-    Returns:
-        str: "true" or "false".
-    """
-    return "true" if value else "false"
-
-
-def render_frontmatter(metadata: OrderedDict[str, Any]) -> str:
-    """Render an OrderedDict of shard metadata as a YAML frontmatter block.
-
-    Preserves key order from the input dict.  Uses JSON-quoted strings for
-    scalar values to avoid YAML parsing ambiguity.  Lists are rendered as YAML
-    sequences.  Booleans use lowercase YAML literals.
-
-    Args:
-        metadata: Ordered mapping of field name to value.  Supported value types:
-            bool, list[str], and str (including numeric strings cast from other types).
-
-    Returns:
-        str: Complete frontmatter block enclosed in "---" delimiters, ready to
-            prepend to a Markdown shard body.
-    """
-    lines = ["---"]
-    for key, value in metadata.items():
+    lines: list[str] = ["---"]
+    for key, value in meta.items():
         if isinstance(value, bool):
-            lines.append(f"{key}: {bool_yaml(value)}")
+            lines.append(f"{key}: {'true' if value else 'false'}")
         elif isinstance(value, list):
             lines.append(f"{key}:")
-            for item in value:
-                lines.append(f"  - {scalar_yaml(str(item))}")
+            lines.extend(f"  - {json.dumps(str(item))}" for item in value)
         else:
-            lines.append(f"{key}: {scalar_yaml(str(value))}")
+            lines.append(f"{key}: {json.dumps(str(value))}")
     lines.append("---")
     return "\n".join(lines)
 
 
-def parse_frontmatter(markdown: str) -> tuple[dict[str, Any], str]:
-    """Parse YAML frontmatter from a Markdown string.
-
-    Splits on the opening and closing "---" delimiters, then processes each
-    key-value pair.  List items (lines beginning with two-space indent "  - ")
-    are collected under the preceding key.
-
-    Args:
-        markdown: Full Markdown file contents beginning with "---\\n".
-
-    Returns:
-        tuple[dict[str, Any], str]: A (metadata, body) pair where metadata maps
-            field names to parsed Python values and body is the Markdown text
-            after the closing "---".
-
-    Raises:
-        ValueError: If markdown does not begin with the "---\\n" frontmatter opener.
-    """
-    if not markdown.startswith("---\n"):
-        raise ValueError("missing frontmatter")
-    _, rest = markdown.split("---\n", 1)
-    frontmatter_text, body = rest.split("\n---\n", 1)
-    metadata: dict[str, Any] = {}
-    current_key: str | None = None
-    for line in frontmatter_text.splitlines():
-        if not line.strip():
-            continue
-        # Continuation list item: appended to the list started by the last key.
-        if line.startswith("  - ") and current_key:
-            metadata.setdefault(current_key, []).append(_parse_scalar(line[4:].strip()))
-            continue
-        key, value = line.split(":", 1)
-        current_key = key.strip()
-        stripped = value.strip()
-        if stripped:
-            metadata[current_key] = _parse_scalar(stripped)
-        else:
-            # Empty value means this key is the start of a list block.
-            metadata[current_key] = []
-    return metadata, body.lstrip("\n")
-
-
-def _parse_scalar(value: str) -> Any:
-    """Convert a raw YAML scalar string to its Python equivalent.
-
-    Handles:
-      - Lowercase YAML booleans ("true" / "false").
-      - JSON-quoted strings (starting and ending with double-quote).
-      - Bare strings (returned unchanged).
-
-    Args:
-        value: Single scalar token from frontmatter parsing.
-
-    Returns:
-        Any: bool, str, or whatever json.loads produces for quoted strings.
-    """
+def _scalar(value: str) -> Any:
     if value in {"true", "false"}:
         return value == "true"
-    if value.startswith('"') and value.endswith('"'):
-        return json.loads(value)
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value.strip('"')
     return value
 
 
-# ---------------------------------------------------------------------------
-# Shard section parsing
-# ---------------------------------------------------------------------------
-
-
-def parse_sections(markdown_body: str) -> dict[str, list[str]]:
-    """Parse the body of a shard Markdown file into its named sections.
-
-    Recognizes H2 headings ("## Title") and collects subsequent non-heading lines
-    under the corresponding section key.  Section names listed in SECTION_ALIASES
-    are normalized to the canonical heading before storage.
-
-    Only sections whose keys appear in SECTION_HEADINGS are collected; unrecognized
-    headings are ignored.
+def parse_frontmatter(markdown: str) -> tuple[dict[str, Any], str]:
+    """Split a Markdown document into its frontmatter dict and body.
 
     Args:
-        markdown_body: Markdown text after the frontmatter closing delimiter.
+        markdown: Full file text.
 
     Returns:
-        dict[str, list[str]]: Mapping from canonical heading name to the list of
-            non-empty lines under that heading.  All keys from SECTION_HEADINGS
-            are always present, even if the section was absent (empty list).
+        tuple[dict[str, Any], str]: Parsed fields (empty when there is no
+            frontmatter) and the body after the closing delimiter.
     """
-    current: str | None = None
-    sections = {heading: [] for heading in SECTION_HEADINGS}
-    for raw_line in markdown_body.splitlines():
-        line = raw_line.rstrip()
-        if line.startswith("## "):
-            # Resolve aliases so "Repo changes" and "What changed" are treated the same.
-            current = SECTION_ALIASES.get(line[3:].strip(), line[3:].strip())
+    if not markdown.startswith("---\n"):
+        return {}, markdown
+    head, sep, body = markdown[4:].partition("\n---\n")
+    if not sep:
+        return {}, markdown
+    meta: dict[str, Any] = {}
+    key: str | None = None
+    for line in head.splitlines():
+        if line.startswith("  - ") and key:
+            meta.setdefault(key, []).append(_scalar(line[4:].strip()))
             continue
-        if current in sections and line:
-            sections[current].append(line)
-    return sections
+        if ":" not in line:
+            continue
+        key, _, raw = line.partition(":")
+        key = key.strip()
+        raw = raw.strip()
+        meta[key] = _scalar(raw) if raw else []
+    return meta, body.lstrip("\n")
 
 
-def render_sections(sections: OrderedDict[str, list[str]]) -> str:
-    """Render an ordered section mapping back to Markdown body text.
-
-    Each section is written as an H2 heading followed by its bullet lines, or a
-    "- None" placeholder when the list is empty.
+def section(body: str, heading: str) -> str:
+    """Return the text under a ``## heading`` up to the next ``## ``.
 
     Args:
-        sections: Ordered mapping from section heading to bullet lines.
+        body: Markdown body.
+        heading: Heading text without the ``## `` prefix.
 
     Returns:
-        str: Markdown body text ending with a single trailing newline.
+        str: Stripped section text, or ``""`` when absent.
     """
-    lines: list[str] = []
-    for title, entries in sections.items():
-        lines.append(f"## {title}")
-        lines.append("")
-        if entries:
-            lines.extend(entries)
-        else:
-            lines.append("- None")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-# ---------------------------------------------------------------------------
-# Event file helpers
-# ---------------------------------------------------------------------------
-
-
-def load_event(path: str | Path) -> dict[str, Any]:
-    """Load a single event shard file and return its metadata enriched with section data.
-
-    Parses frontmatter into a flat metadata dict, then parses the body into sections.
-    Adds three private keys prefixed with "__" so callers can access the path and
-    pre-parsed sections without a second read:
-
-      __path     -- absolute path string
-      __basename -- filename stem (used as a short label in summary links)
-      __sections -- dict from parse_sections()
-
-    Args:
-        path: Path to the .md shard file.
-
-    Returns:
-        dict[str, Any]: Merged metadata plus __path, __basename, and __sections.
-    """
-    markdown = read_text(path)
-    metadata, body = parse_frontmatter(markdown)
-    sections = parse_sections(body)
-    metadata["__path"] = str(Path(path))
-    metadata["__basename"] = Path(path).stem
-    metadata["__sections"] = sections
-    return metadata
-
-
-def list_event_files(day_dir: str | Path) -> list[Path]:
-    """Return a sorted list of all event shard .md files for a given day.
-
-    Looks in <day_dir>/events/*.md.  Returns an empty list when the events
-    directory does not exist (e.g., for a day with no captured shards).
-
-    Args:
-        day_dir: Path to a single-day directory under .agents/memory/daily/.
-
-    Returns:
-        list[Path]: Sorted paths to shard files; empty list when none exist.
-    """
-    events_dir = Path(day_dir) / "events"
-    if not events_dir.exists():
-        return []
-    return sorted(events_dir.glob("*.md"))
-
-
-# ---------------------------------------------------------------------------
-# Payload extraction helpers
-# ---------------------------------------------------------------------------
-
-
-def flatten_strings(payload: Any, *, limit: int = 100) -> list[str]:
-    """Recursively collect all non-empty string values from an arbitrary JSON payload.
-
-    Walks dicts (values only), lists, and nested combinations.  Stops once
-    `limit` unique strings have been accumulated to prevent large payloads from
-    dominating downstream regex searches.  Duplicate strings are deduplicated
-    while preserving first-seen order.
-
-    Args:
-        payload: Arbitrary JSON-compatible value (dict, list, str, or other).
-        limit: Maximum number of unique strings to return.
-
-    Returns:
-        list[str]: Up to `limit` unique non-empty strings found in the payload.
-    """
-    values: list[str] = []
-
-    def walk(node: Any) -> None:
-        if len(values) >= limit:
-            return
-        if isinstance(node, str):
-            stripped = node.strip()
-            if stripped:
-                values.append(stripped)
-            return
-        if isinstance(node, list):
-            for item in node:
-                walk(item)
-            return
-        if isinstance(node, dict):
-            for item in node.values():
-                walk(item)
-
-    walk(payload)
-    # Deduplicate while preserving order -- seen set provides O(1) membership test.
-    unique: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            unique.append(value)
-    return unique
-
-
-def find_first(payload: Any, keys: set[str]) -> str | None:
-    """Recursively search a JSON payload for the first non-empty string value at any of the given keys.
-
-    Agents and platforms use different field names for the same concepts (e.g.,
-    "thread_id" vs "threadId" vs "conversation_id").  This function lets callers
-    specify all known aliases and get back the first match regardless of nesting
-    depth.
-
-    Args:
-        payload: Arbitrary JSON-compatible value to search.
-        keys: Set of key names to match at the top level of any dict encountered.
-
-    Returns:
-        str | None: First non-empty string value found at any matching key, or None.
-    """
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if key in keys and isinstance(value, str) and value.strip():
-                return value.strip()
-            found = find_first(value, keys)
-            if found:
-                return found
-    elif isinstance(payload, list):
-        for item in payload:
-            found = find_first(item, keys)
-            if found:
-                return found
-    return None
-
-
-def collect_matches(strings: list[str], pattern: str) -> list[str]:
-    """Return deduplicated bullet lines from strings that match a regex pattern.
-
-    Splits each string on newlines before testing, so multi-line payload fields
-    yield per-line matches rather than entire blob matches.  Leading bullet
-    markers ("- ") and whitespace are stripped before deduplication, then
-    re-prefixed with "- " on output.
-
-    Args:
-        strings: Pre-flattened string values from a hook payload.
-        pattern: Regular expression pattern (case-insensitive) to test against
-            each candidate line.
-
-    Returns:
-        list[str]: Deduplicated bullet lines matching the pattern, each prefixed "- ".
-    """
-    regex = re.compile(pattern, re.IGNORECASE)
-    matches: list[str] = []
-    seen: set[str] = set()
-    for string in strings:
-        for piece in re.split(r"[\n\r]+", string):
-            candidate = piece.strip(" -")
-            if not candidate:
-                continue
-            if regex.search(candidate) and candidate not in seen:
-                seen.add(candidate)
-                matches.append(f"- {candidate}")
-    return matches
-
-
-# ---------------------------------------------------------------------------
-# Hook output and tracing
-# ---------------------------------------------------------------------------
-
-
-def safe_main(main_fn: Any, hook_name: str) -> int:
-    """Run a hook's main() inside a top-level exception handler.
-
-    Every hook script should call this instead of ``raise SystemExit(main())``.
-    If main_fn raises any exception, safe_main:
-
-      1. Logs the full traceback to stderr (visible in agent hook output).
-      2. Appends a structured error record to the hook trace log.
-      3. Returns exit code 1 so the hook signals failure without a raw traceback
-         crashing through the agent UI.
-
-    Args:
-        main_fn: The hook's main() callable (no arguments).
-        hook_name: Human-readable hook name for trace records, e.g. "Notify".
-
-    Returns:
-        int: Whatever main_fn returns on success, or 1 on unhandled exception.
-    """
-    import traceback
-
-    try:
-        return main_fn()
-    except Exception:
-        tb = traceback.format_exc()
-        warn(f"{hook_name} crashed:\n{tb}")
-        append_hook_trace(
-            hook_name,
-            "crash",
-            details={"error": tb.splitlines()[-1], "traceback": tb[:2000]},
-        )
-        return 1
-
-
-def warn(message: str) -> None:
-    """Write a warning message to stderr with agentmemory runtime metadata.
-
-    Messages written here appear in the agent's hook output stream but do not
-    affect the hook response payload read by the agent.
-
-    Args:
-        message: Human-readable warning text (no trailing newline needed).
-    """
-    print(f"{format_log_prefix()} {message}", file=sys.stderr)
-
-
-def info(message: str) -> None:
-    """Write an info message to stderr with agentmemory runtime metadata.
-
-    Args:
-        message: Human-readable info text (no trailing newline needed).
-    """
-    print(f"{format_log_prefix()} {message}", file=sys.stderr)
-
-
-def append_hook_trace(
-    hook: str,
-    status: str,
-    *,
-    repo_root: str | Path | None = None,
-    details: dict[str, Any] | None = None,
-) -> None:
-    """Append a structured trace record to the hook debug log.
-
-    The trace log at ~/.agent/state/shared-repo-memory-hook-trace.jsonl is the
-    primary diagnostic tool when hooks run but produce unexpected behavior.
-    Each invocation of SessionStart and post-turn-notify.py appends one or more
-    records covering start, success, error, noop, and bootstrapping phases.
-    Every record also includes the resolved runtime id and runtime version so
-    mixed-runtime debugging is possible from a single trace file.
-
-    Write failures are silently ignored so a missing state directory never causes
-    a hook to abort.
-
-    Args:
-        hook: Name of the hook, e.g. "SessionStart" or "Notify".
-        status: Phase label, e.g. "started", "success", "error", "noop".
-        repo_root: Repository root path included for context; omitted when None.
-        details: Additional key-value pairs to merge into the trace record.
-            Path values are coerced to str; list values have their items coerced
-            to str; None values are omitted.
-    """
-    str_runtime_id: str = detect_runtime_id()
-    str_runtime_version: str = runtime_version(str_runtime_id)
-    payload: dict[str, Any] = {
-        "timestamp": utc_timestamp(),
-        "hook": hook,
-        "status": status,
-        "runtime": str_runtime_id,
-        "runtime_version": str_runtime_version,
-    }
-    if repo_root is not None:
-        payload["repo_root"] = str(Path(repo_root).resolve())
-    if details:
-        for key, value in details.items():
-            if value is None:
-                continue
-            if isinstance(value, Path):
-                payload[key] = str(value)
-            elif isinstance(value, list):
-                payload[key] = [str(item) for item in value]
-            else:
-                payload[key] = value
-
-    trace_path = (
-        Path.home() / ".agent" / "state" / "shared-repo-memory-hook-trace.jsonl"
+    match = re.search(
+        rf"^## {re.escape(heading)}\s*$\n(.*?)(?=^## |\Z)",
+        body,
+        re.MULTILINE | re.DOTALL,
     )
-    try:
-        append_jsonl(trace_path, payload)
-    except OSError:
-        pass
+    return match.group(1).strip() if match else ""
+
+
+# ---------------------------------------------------------------------------
+# Memory inventory
+# ---------------------------------------------------------------------------
+
+
+def list_adrs(root: Path) -> list[dict[str, Any]]:
+    """Load every ADR file with its parsed frontmatter and body.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        list[dict[str, Any]]: ``{"path", "meta", "body"}`` sorted by filename,
+            which is id order. ``meta["id"]`` and ``meta["title"]`` are always
+            present, derived from the filename when the frontmatter lacks them.
+    """
+    adrs: list[dict[str, Any]] = []
+    for path in sorted((root / ADR_DIR).glob("ADR-*.md")):
+        meta, body = parse_frontmatter(read_text(path))
+        parts: list[str] = path.stem.split("-", 2)
+        meta.setdefault("id", f"{parts[0]}-{parts[1]}")
+        if "title" not in meta:
+            h1 = re.search(r"^# (?:ADR-\d+:?\s*)?(.+)$", body, re.MULTILINE)
+            meta["title"] = h1.group(1).strip() if h1 else path.stem
+        adrs.append({"path": path, "meta": meta, "body": body})
+    return adrs
+
+
+def list_notes(root: Path, window_days: int | None = None) -> list[Path]:
+    """Return decision-note files, newest first, optionally within a window.
+
+    Args:
+        root: Repository root.
+        window_days: Keep only files dated within this many days of today.
+
+    Returns:
+        list[Path]: Note files sorted newest first.
+    """
+    notes: list[Path] = sorted((root / NOTES_DIR).glob("????-??-??.md"), reverse=True)
+    if window_days is None:
+        return notes
+    cutoff: str = today(utc_now() - timedelta(days=window_days))
+    return [note for note in notes if note.stem >= cutoff]
+
+
+def memory_counts(root: Path) -> tuple[int, int]:
+    """Count ADRs and note files.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        tuple[int, int]: ``(adr_count, note_file_count)``.
+    """
+    return len(list((root / ADR_DIR).glob("ADR-*.md"))), len(list_notes(root))
+
+
+def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> str:
+    """Build the bounded Markdown block injected at session start.
+
+    Order: ADR index, the Decision section of each must-read ADR (newest
+    first), recent decision notes (newest first), then the local catch-up.
+    Later blocks are dropped once ``context_budget_words`` is reached and a
+    trailing line names what was omitted.
+
+    Args:
+        root: Repository root.
+        config: Effective config; loaded from the repo when omitted.
+
+    Returns:
+        str: Markdown, or ``""`` when the repo has no memory.
+    """
+    cfg: dict[str, Any] = config or load_config(root)
+    budget: int = int(cfg["context_budget_words"])
+    blocks: list[tuple[str, str]] = []
+
+    index_text: str = read_text(root / ADR_DIR / "INDEX.md").strip()
+    if index_text:
+        blocks.append(("ADR index", index_text))
+    for adr in reversed(list_adrs(root)):
+        meta = adr["meta"]
+        if meta.get("must_read") is True and meta.get("status") != "superseded":
+            decision: str = section(adr["body"], "Decision")
+            if decision:
+                blocks.append((f"{meta['id']}: {meta['title']}", decision))
+    for note in list_notes(root, int(cfg["notes_window_days"])):
+        blocks.append((f"Decision notes {note.stem}", read_text(note).strip()))
+    catchup: str = read_text(root / LOCAL_DIR / "catchup.md").strip()
+    if catchup:
+        blocks.append(("Catch-up since last session", catchup))
+
+    out: list[str] = []
+    used: int = 0
+    omitted: list[str] = []
+    for title, text in blocks:
+        words: int = word_count(text)
+        if out and used + words > budget:
+            omitted.append(title)
+            continue
+        out.append(f"### {title}\n\n{text}")
+        used += words
+    if omitted:
+        out.append(
+            f"_Omitted to stay under {budget} words: {', '.join(omitted)}. "
+            "Use the `memory` skill to query them._"
+        )
+    return "\n\n".join(out)
