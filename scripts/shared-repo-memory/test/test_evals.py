@@ -137,3 +137,11 @@ def test_eval_dry_run_builds_news_prompt() -> None:
     )
     words = int(line.split("memory:")[1].split()[0])
     assert words > 200  # the digest, not just the question
+
+
+def test_judge_never_grades_error_answers() -> None:
+    run_eval = common.load_module(EVALS / "run_eval.py")
+    graded = run_eval.judge(
+        "q", "ref", "[claude exited 1: ]", model=None, cwd=Path("/tmp"), timeout=1
+    )
+    assert graded is None

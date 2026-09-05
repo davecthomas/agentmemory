@@ -73,6 +73,8 @@ JUDGE_PROMPT: str = (
     "detail; penalise invented mechanisms."
 )
 TOKENS_PER_WORD: float = 1.3
+ERROR_PREFIX: str = "[claude exited"
+MAX_FAILURE_RATE: float = 0.2
 SYSTEM_PROMPT: str = (
     "You are answering questions about a software repository. Answer only "
     "from the information in the prompt. Be concrete and name files, flags, "
@@ -203,7 +205,7 @@ def ask(
         env={**os.environ, "AGENTMEMORY_DISABLED": "1"},
     )
     if result.returncode != 0:
-        return f"[claude exited {result.returncode}: {result.stderr.strip()[:300]}]"
+        return f"{ERROR_PREFIX} {result.returncode}: {result.stderr.strip()[:300]}]"
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -233,6 +235,8 @@ def judge(
     Returns:
         float | None: Score in [0, 1], or None when the judge did not return a number.
     """
+    if answer.startswith(ERROR_PREFIX):
+        return None
     prompt = (
         f"Question: {question}\n\nReference: {expected}\n\nAnswer: {answer}\n\nScore:"
     )
@@ -360,6 +364,8 @@ def main() -> int:
         conditions = [c for c in conditions if c != "legacy"]
 
     rows: list[dict[str, Any]] = []
+    calls: int = 0
+    failures: int = 0
     neutral = Path(tempfile.mkdtemp(prefix="agentmemory-eval-"))
     for q in questions:
         row: dict[str, Any] = {"id": q["id"], "question": q["question"], "results": {}}
@@ -386,6 +392,14 @@ def main() -> int:
                 answer: str = ask(
                     prompt, model=args.model, cwd=neutral, timeout=args.timeout
                 )
+                calls += 1
+                if answer.startswith(ERROR_PREFIX):
+                    failures += 1
+                    print(f"{q['id']:<28} {cond:<7} FAILED {answer[:80]}", flush=True)
+                    scores.append(0.0)
+                    answers.append(answer)
+                    missed = [str(m) for m in q["must_mention"]]
+                    continue
                 value, missed = score(answer, q["must_mention"])
                 scores.append(value)
                 answers.append(answer)
@@ -420,6 +434,14 @@ def main() -> int:
                 flush=True,
             )
         rows.append(row)
+
+    if calls and failures / calls > MAX_FAILURE_RATE:
+        print(
+            f"ABORT: {failures} of {calls} model calls failed; not writing results. "
+            "Check `claude -p` works (auth, usage limit) and rerun.",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.dry_run:
         for row in rows:
@@ -493,6 +515,8 @@ def main() -> int:
                 "judge_means": judge_means,
                 "runs": args.runs,
                 "holdout_ids": [r["id"] for r in holdouts],
+                "calls": calls,
+                "failures": failures,
                 "context_words": common.word_count(context),
                 "legacy_context_words": common.word_count(legacy),
                 "legacy_ref": args.legacy_ref if legacy else None,
