@@ -42,6 +42,14 @@ HOOK_NAMES: tuple[str, ...] = (
     "post-rewrite",
 )
 
+GITATTRIBUTES_BEGIN: str = "# >>> agentmemory (managed block; do not edit) >>>"
+GITATTRIBUTES_END: str = "# <<< agentmemory <<<"
+# Note files are append-only, so two branches adding entries to the same day
+# produce a conflict git can resolve on its own. `merge=union` is built into
+# git; it needs no driver installed, so it works for a teammate who has never
+# run install.sh. ADRs are whole files and never want a union merge.
+GITATTRIBUTES_ENTRIES: tuple[str, ...] = (f"{NOTES_DIR}/*.md merge=union",)
+
 GITIGNORE_BEGIN: str = "# >>> agentmemory (managed block; do not edit) >>>"
 GITIGNORE_END: str = "# <<< agentmemory <<<"
 GITIGNORE_ENTRIES: tuple[str, ...] = (f"{GITHOOKS_DIR}/", f"{LOCAL_DIR}/")
@@ -107,6 +115,40 @@ def hook_text(name: str) -> str:
     )
 
 
+def ensure_managed_block(
+    path: Path, begin: str, end: str, entries: tuple[str, ...], *, dry_run: bool
+) -> bool:
+    """Add or refresh a marked block of lines in a config file.
+
+    Args:
+        path: File to edit; created when absent.
+        begin: Opening marker.
+        end: Closing marker.
+        entries: Lines the block holds.
+        dry_run: Log instead of writing.
+
+    Returns:
+        bool: True when the file changed (or would change).
+    """
+    text: str = read_text(path)
+    block: str = "\n".join([begin, *entries, end])
+    if block in text:
+        return False
+    if begin in text and end in text:
+        updated = text[: text.index(begin)] + block + text[text.index(end) + len(end) :]
+    else:
+        sep = (
+            ""
+            if not text or text.endswith("\n\n")
+            else ("\n" if text.endswith("\n") else "\n\n")
+        )
+        updated = text + sep + block + "\n"
+    log(f"{'would update' if dry_run else 'updating'} {path.name} managed block")
+    if not dry_run:
+        write_text(path, updated)
+    return True
+
+
 def ensure_gitignore(root: Path, *, dry_run: bool) -> bool:
     """Add or refresh the managed ``.gitignore`` block.
 
@@ -136,6 +178,32 @@ def ensure_gitignore(root: Path, *, dry_run: bool) -> bool:
     log(f"{'would update' if dry_run else 'updating'} .gitignore managed block")
     if not dry_run:
         write_text(path, updated)
+    return True
+
+
+def strip_managed_block(path: Path, begin: str, end: str, *, dry_run: bool) -> bool:
+    """Remove a marked block from a config file.
+
+    Args:
+        path: File to edit.
+        begin: Opening marker.
+        end: Closing marker.
+        dry_run: Log instead of writing.
+
+    Returns:
+        bool: True when a block was found.
+    """
+    text: str = read_text(path)
+    if begin not in text or end not in text:
+        return False
+    updated = (
+        text[: text.index(begin)].rstrip("\n")
+        + "\n"
+        + text[text.index(end) + len(end) :].lstrip("\n")
+    ).lstrip("\n")
+    log(f"{'would strip' if dry_run else 'stripping'} {path.name} managed block")
+    if not dry_run:
+        write_text(path, updated if updated.strip() else "")
     return True
 
 
@@ -295,6 +363,13 @@ def main() -> int:
         if not dry:
             write_text(index, INDEX_INITIAL)
     ensure_gitignore(root, dry_run=dry)
+    ensure_managed_block(
+        root / ".gitattributes",
+        GITATTRIBUTES_BEGIN,
+        GITATTRIBUTES_END,
+        GITATTRIBUTES_ENTRIES,
+        dry_run=dry,
+    )
     ensure_agents_block(root, dry_run=dry)
     ensure_hooks(root, dry_run=dry)
     if git(["config", "--get", "core.hooksPath"], root) != GITHOOKS_DIR:

@@ -28,6 +28,7 @@ import argparse
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from common import (
@@ -110,7 +111,12 @@ def opt_in_paths(root: Path) -> tuple[list[str], list[str]]:
     """
     bootstrap = load_module(HERE / "bootstrap-repo.py")
     candidates: list[tuple[str, str, str]] = [
-        (".gitignore", bootstrap.GITIGNORE_BEGIN, bootstrap.GITIGNORE_END)
+        (".gitignore", bootstrap.GITIGNORE_BEGIN, bootstrap.GITIGNORE_END),
+        (
+            ".gitattributes",
+            bootstrap.GITATTRIBUTES_BEGIN,
+            bootstrap.GITATTRIBUTES_END,
+        ),
     ]
     agents = bootstrap.agents_file(root)
     if agents is not None:
@@ -315,15 +321,28 @@ def main() -> int:
     if not args.no_stage:
         git(["add", "--", *paths], root)
     if args.commit:
-        result = subprocess.run(
-            ["git", "commit", "-F", "-", "--", *paths],
-            cwd=str(root),
-            input=message,
-            capture_output=True,
-            text=True,
-        )
+        # The message goes through a file, not stdin: a pre-commit hook inherits
+        # this process's stdin, and one that reads it (pytest, for instance) gets
+        # the commit message instead of a terminal and fails at startup.
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(message)
+            message_path = handle.name
+        try:
+            result = subprocess.run(
+                ["git", "commit", "-F", message_path, "--", *paths],
+                cwd=str(root),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            Path(message_path).unlink(missing_ok=True)
         if result.returncode != 0:
-            log(f"memory-commit: commit failed: {result.stderr.strip()[:300]}")
+            log(
+                f"memory-commit: commit failed\n{result.stdout.strip()}\n{result.stderr.strip()}"
+            )
             return 1
         log(f"memory-commit: committed {len(paths)} memory files", wrote=True)
         return 0

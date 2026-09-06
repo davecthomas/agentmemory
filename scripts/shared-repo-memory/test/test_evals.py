@@ -145,3 +145,59 @@ def test_judge_never_grades_error_answers() -> None:
         "q", "ref", "[claude exited 1: ]", model=None, cwd=Path("/tmp"), timeout=1
     )
     assert graded is None
+
+
+def test_check_memory_detects_duplicate_ids_and_dangling_supersedes(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "First",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        "--alternatives",
+        "a",
+        cwd=repo,
+    )
+    # What a merge of two concurrent branches leaves behind: a second file
+    # claiming the same id, listed under that id in the index.
+    adr_dir = repo / common.ADR_DIR
+    clash = adr_dir / "ADR-0001-second.md"
+    clash.write_text(
+        (adr_dir / "ADR-0001-first.md")
+        .read_text(encoding="utf-8")
+        .replace("First", "Second"),
+        encoding="utf-8",
+    )
+    index = adr_dir / "INDEX.md"
+    index.write_text(
+        index.read_text(encoding="utf-8")
+        + "| ADR-0001 | [Second](ADR-0001-second.md) | accepted | 2026-01-01 | yes |\n",
+        encoding="utf-8",
+    )
+    problems = "\n".join(_check(repo))
+    assert "ADR-0001 is claimed by 2 files" in problems
+    assert "INDEX.md: ADR-0001 appears in 2 rows" in problems
+
+
+def test_check_memory_flags_supersedes_that_names_no_adr(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Only",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        "--alternatives",
+        "a",
+        "--supersedes",
+        "ADR-0009",
+        cwd=repo,
+    )
+    assert any(
+        "supersedes names ADR-0009, which matches 0 ADRs" in p for p in _check(repo)
+    )

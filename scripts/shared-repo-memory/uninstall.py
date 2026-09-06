@@ -158,6 +158,12 @@ def uninstall_repo(root: Path, *, dry_run: bool, purge: bool) -> None:
         if not dry_run:
             hooks_dir.rmdir()
     bootstrap.strip_gitignore(root, dry_run=dry_run)
+    bootstrap.strip_managed_block(
+        root / ".gitattributes",
+        bootstrap.GITATTRIBUTES_BEGIN,
+        bootstrap.GITATTRIBUTES_END,
+        dry_run=dry_run,
+    )
     bootstrap.strip_agents_block(root, dry_run=dry_run)
     local: Path = root / LOCAL_DIR
     if local.is_dir():
