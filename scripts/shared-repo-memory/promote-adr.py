@@ -44,32 +44,50 @@ from common import (
 )
 
 
-def next_id(root: Path, *, seed: str, date: str | None = None) -> str:
+def next_id(
+    root: Path, *, seed: str, title: str, date: str | None = None, force: bool = False
+) -> str:
     """Return an ADR identifier that needs no coordination to allocate.
 
-    The id is the promotion date plus four hex characters derived from the
-    decision's own text: ``ADR-2026-09-06-a3f9``. A sequential number is
+    The id is the promotion date plus four hex characters of a SHA-256 over
+    the decision's own text: ``ADR-2026-09-06-a3f9``. A sequential number is
     allocated against one branch's view of ``adr/``, so two people promoting
-    in the same window both take it and merge into a repository where two
-    decisions claim one id. A date alone has the same problem whenever two
-    people promote on the same day, which is the ordinary case. Seeding the
-    suffix from the text means two different decisions differ wherever they
-    were written, and the same decision promoted twice is caught locally.
+    in the same window both take it. A date alone collides whenever two people
+    promote on the same day, which is the ordinary case. Seeding from the text
+    removes coordination entirely.
+
+    A seed that is already taken means this exact decision was promoted today,
+    so the collision is information rather than a problem: it is reported, and
+    the caller is pointed at the existing ADR. Only a genuine hash collision,
+    two different decisions landing on the same four characters, is salted past.
 
     Args:
         root: Repository root.
-        seed: Text the suffix is derived from, normally title plus decision.
+        seed: Text the suffix is derived from, title plus decision.
+        title: Title, used to tell a duplicate from a hash collision.
         date: ISO date to use; today when omitted.
+        force: Promote anyway when the same decision already exists today.
 
     Returns:
         str: ``ADR-2026-09-06-a3f9``.
     """
     day: str = date or today()
+    existing: dict[str, dict[str, Any]] = {
+        str(adr["meta"]["id"]): adr for adr in list_adrs(root)
+    }
     digest: str = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:4]
-    taken: set[str] = {str(adr["meta"]["id"]) for adr in list_adrs(root)}
     candidate: str = f"ADR-{day}-{digest}"
     salt: int = 0
-    while candidate in taken:
+    while candidate in existing:
+        clash = existing[candidate]
+        same_decision: bool = str(clash["meta"].get("title", "")) == title
+        if same_decision and not force:
+            raise SystemExit(
+                f"{clash['path'].name} already records this decision today. "
+                "Edit it, supersede it with a new decision, or pass --force to "
+                "promote a second copy."
+            )
+        # Different decision, same four characters: a real hash collision.
         salt += 1
         digest = hashlib.sha256(f"{seed}{salt}".encode()).hexdigest()[:4]
         candidate = f"ADR-{day}-{digest}"
@@ -221,6 +239,11 @@ def main() -> int:
     parser.add_argument("--tags", default="")
     parser.add_argument("--no-must-read", action="store_true")
     parser.add_argument("--supersedes", action="append", default=[], metavar="ADR-NNNN")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="promote even when this decision was already recorded today",
+    )
     parser.add_argument("--no-stage", action="store_true")
     args = parser.parse_args()
     root = repo_root(args.repo_root)
@@ -263,7 +286,9 @@ def main() -> int:
             "accepted ADR with placeholder Alternatives. Add them before committing."
         )
 
-    adr_id: str = next_id(root, seed=f"{title}\n{decision}")
+    adr_id: str = next_id(
+        root, seed=f"{title}\n{decision}", title=title, force=args.force
+    )
     path: Path = root / ADR_DIR / f"{adr_id}-{slugify(title)}.md"
     write_text(
         path,
