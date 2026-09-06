@@ -35,6 +35,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "context_budget_words": 2500,
     "notes_window_days": 14,
     "notes_full_days": 3,
+    # Tags naming decisions every session needs, whatever it is working on.
+    "foundational_tags": ["storage", "collaboration", "curation"],
 }
 
 # A commit body that contains one of these explains a why; the miner and the
@@ -682,6 +684,59 @@ def render_adr_index(root: Path) -> str:
     )
 
 
+def touched_areas(root: Path) -> set[str]:
+    """Top-level directories this branch has touched, for relevance ranking.
+
+    Session start runs before anything is edited, so the working tree says
+    nothing. What the branch has already changed relative to the default
+    branch does, and so does the directory the session opened in.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        set[str]: Top-level directory names, empty on a fresh branch.
+    """
+    areas: set[str] = set()
+    default: str = git(["rev-parse", "--abbrev-ref", "origin/HEAD"], root) or "main"
+    default = default.rsplit("/", 1)[-1]
+    changed: str = git(["diff", "--name-only", f"{default}...HEAD"], root)
+    if not changed:
+        changed = git(["diff", "--name-only", "HEAD"], root)
+    for path in changed.splitlines():
+        head = path.split("/", 1)[0]
+        if head and not head.startswith("."):
+            areas.add(head)
+    try:
+        rel = Path.cwd().resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        rel = ""
+    if rel and rel != ".":
+        areas.add(rel.split("/", 1)[0])
+    return areas
+
+
+def adr_relevance(adr: dict[str, Any], areas: set[str], foundational: set[str]) -> int:
+    """Rank an ADR for injection: 2 foundational, 1 relevant here, 0 otherwise.
+
+    Args:
+        adr: An entry from ``list_adrs``.
+        areas: Directories this branch has touched.
+        foundational: Tags marking decisions every session needs.
+
+    Returns:
+        int: Higher sorts earlier.
+    """
+    tags = {
+        tag.strip().lower()
+        for tag in str(adr["meta"].get("tags", "")).split(",")
+        if tag.strip()
+    }
+    if tags & foundational:
+        return 2
+    return 1 if tags & {a.lower() for a in areas} else 0
+
+
 def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> str:
     """Build the bounded Markdown block injected at session start.
 
@@ -707,12 +762,27 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
     index_text: str = render_adr_index(root).strip()
     if "| ADR-" in index_text:
         blocks.append(("ADR index", index_text))
-    for adr in reversed(list_adrs(root)):
+    # Must-read ADRs are ordered by relevance, not just recency, because the
+    # word budget truncates the tail: what falls off should be what this
+    # session is least likely to need, and the memory skill still finds it.
+    areas: set[str] = touched_areas(root)
+    foundational: set[str] = {t.lower() for t in cfg.get("foundational_tags", [])}
+    must_read = [
+        adr
+        for adr in list_adrs(root)
+        if adr["meta"].get("must_read") is True
+        and adr["meta"].get("status") != "superseded"
+        and section(adr["body"], "Decision")
+    ]
+    must_read.sort(
+        key=lambda a: (-adr_relevance(a, areas, foundational), str(a["meta"]["id"])),
+        reverse=False,
+    )
+    for adr in must_read:
         meta = adr["meta"]
-        if meta.get("must_read") is True and meta.get("status") != "superseded":
-            decision: str = section(adr["body"], "Decision")
-            if decision:
-                blocks.append((f"{meta['id']}: {meta['title']}", decision))
+        blocks.append(
+            (f"{meta['id']}: {meta['title']}", section(adr["body"], "Decision"))
+        )
     full: list[Path] = list_notes(root, int(cfg.get("notes_full_days", 3)))
     for note in full:
         blocks.append((f"Decision notes {note.stem}", read_text(note).strip()))
@@ -740,14 +810,19 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
         blocks.append(("Catch-up since last session", catchup))
 
     out: list[str] = []
-    used: int = 0
+    # The marker naming what was dropped is itself injected, so reserve for it
+    # rather than letting it push the block past the budget it announces.
+    used: int = 30
     omitted: list[str] = []
     for title, text in blocks:
-        words: int = word_count(text)
+        rendered: str = f"### {title}\n\n{text}"
+        # Count what is actually injected, headings included. Counting only the
+        # body let the block overrun the stated budget by the headings' worth.
+        words: int = word_count(rendered)
         if out and used + words > budget:
             omitted.append(title)
             continue
-        out.append(f"### {title}\n\n{text}")
+        out.append(rendered)
         used += words
     if omitted:
         out.append(

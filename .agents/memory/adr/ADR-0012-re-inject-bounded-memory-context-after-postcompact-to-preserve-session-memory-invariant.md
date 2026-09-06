@@ -4,7 +4,7 @@ title: "Re-inject bounded memory context after PostCompact to preserve session m
 status: "accepted"
 date: "2026-04-13"
 tags: "docs"
-must_read: true
+must_read: false
 supersedes: ""
 superseded_by: ""
 ---
