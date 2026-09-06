@@ -16,7 +16,7 @@ Session starts        →  SessionStart hook injects: ADR index, must-read ADR
                          lines for the rest, catch-up. Bounded to a word budget.
 
 Agent makes a          →  memory-note skill appends 3 lines to
-non-obvious choice        .agents/memory/notes/YYYY-MM-DD.md (staged, not committed)
+non-obvious choice        .agents/memory/notes/YYYY-MM-DD--<author>.md (staged, not committed)
 
 Turn ends with repo     →  Stop hook asks once per session: record a note with
 changes but no note       memory-note, or say no decision was made. No LLM spawn.
@@ -72,7 +72,7 @@ If the repo has history but no ADRs, `/memory-bootstrap` mines the design docs a
 │   ├── INDEX.md         # rebuilt by promote-adr.py
 │   └── ADR-NNNN-<slug>.md
 ├── notes/
-│   └── YYYY-MM-DD.md    # append-only decision notes
+│   └── YYYY-MM-DD--<author>.md   # append-only decision notes, one file per person per day
 └── local/               # gitignored: catchup.md, state.json
 ```
 

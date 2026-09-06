@@ -69,7 +69,7 @@ def hook_text(name: str) -> str:
     """
     head: str = f"#!/usr/bin/env bash\n{_PROVENANCE}set -euo pipefail\n"
     head += 'repo_root="$(git rev-parse --show-toplevel)"\n'
-    head += 'scripts="$HOME/.agent/shared-repo-memory"\n'
+    head += 'scripts="${AGENTMEMORY_SCRIPTS:-$HOME/.agent/shared-repo-memory}"\n'
     if name == "pre-commit":
         return (
             head + 'if [ -f "$scripts/check-memory.py" ]; then\n'

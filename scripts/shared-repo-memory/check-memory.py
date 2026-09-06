@@ -88,8 +88,10 @@ def check_notes(root: Path) -> list[str]:
     problems: list[str] = []
     for note in sorted((root / common.NOTES_DIR).glob("*.md")):
         rel: str = note.relative_to(root).as_posix()
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.md", note.name):
-            problems.append(f"{rel}: note files must be named YYYY-MM-DD.md")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(--[a-z0-9][a-z0-9-]*)?\.md", note.name):
+            problems.append(
+                f"{rel}: note files must be named YYYY-MM-DD.md or YYYY-MM-DD--author.md"
+            )
             continue
         blocks: list[str] = re.split(r"(?m)^## ", common.read_text(note))[1:]
         if not blocks:

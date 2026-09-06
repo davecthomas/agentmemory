@@ -22,6 +22,7 @@ from common import (
     list_adrs,
     list_notes,
     log,
+    note_date,
     read_text,
     repo_root,
     safe_main,
@@ -114,7 +115,7 @@ def collect(root: Path, query: list[str]) -> dict[str, Any]:
             if score:
                 result["notes"].append(
                     {
-                        "date": note.stem,
+                        "date": note_date(note),
                         "header": block.splitlines()[0].strip(),
                         "decision": decision.group(1).strip() if decision else "",
                         "why": _snippet(why.group(1)) if why else "",

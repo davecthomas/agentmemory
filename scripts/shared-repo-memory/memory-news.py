@@ -34,6 +34,7 @@ from common import (
     list_notes,
     load_json,
     log,
+    note_date,
     read_text,
     repo_root,
     safe_main,
@@ -131,8 +132,8 @@ def parse_notes(root: Path, days: int) -> list[Note]:
 
             notes.append(
                 Note(
-                    date=path.stem,
-                    when=parts[0] if parts else path.stem,
+                    date=note_date(path),
+                    when=parts[0] if parts else note_date(path),
                     author=author,
                     branch=branch,
                     decision=strip_prefix(grab("Decision"), branch),

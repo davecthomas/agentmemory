@@ -20,6 +20,7 @@ from common import (
     load_config,
     load_module,
     log,
+    note_date,
     read_text,
     repo_root,
     safe_main,
@@ -76,7 +77,7 @@ def status_report(root: Path, *, with_context: bool = False) -> str:
         f"- Wiring: {'complete' if not issues else 'incomplete: ' + ', '.join(issues) + ' (next session start repairs it)'}",
         f"- ADRs: {len(adrs)} ({len(must)} must-read, {superseded} superseded)",
         f"- Note files: {len(notes)}"
-        + (f", newest {notes[0].stem}" if notes else "")
+        + (f", newest {note_date(notes[0])}" if notes else "")
         + f"; unreviewed candidates: {candidate_count(root)}",
         f"- Session context: {words} words ≈ {int(words * TOKENS_PER_WORD)} tokens "
         f"of a {cfg['context_budget_words']}-word budget",

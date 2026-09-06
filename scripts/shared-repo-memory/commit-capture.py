@@ -120,16 +120,17 @@ def capture(root: Path, sha: str = "HEAD") -> Path | None:
     if not explicit and not hits and not reasoned:
         return None
     note = load_module(HERE / "memory-note.py")
+    author: str = author_slug(root)
     entry: str = note.render_entry(
         decision=explicit or subject,
         why=why or subject,
-        author=author_slug(root),
+        author=author,
         branch=branch,
         scope=hits[:MAX_SCOPE],
         commit=short,
         candidate=True,
     )
-    return note.append_note(root, entry)
+    return note.append_note(root, entry, author=author)
 
 
 def main() -> int:
