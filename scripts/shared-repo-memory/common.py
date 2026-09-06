@@ -652,6 +652,36 @@ def memory_counts(root: Path) -> tuple[int, int]:
     return len(list((root / ADR_DIR).glob("ADR-*.md"))), len(list_notes(root))
 
 
+def render_adr_index(root: Path) -> str:
+    """Render the ADR index from the ADR files on disk.
+
+    The index is derived, so it is generated on demand rather than committed:
+    a committed copy conflicts whenever two branches each promote an ADR, and
+    the conflict carries no information a rebuild cannot recover.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        str: The index table, header included.
+    """
+    rows: list[str] = []
+    for adr in list_adrs(root):
+        meta = adr["meta"]
+        must: str = "yes" if meta.get("must_read") is True else "no"
+        status: str = str(meta.get("status", "accepted"))
+        if meta.get("superseded_by"):
+            status += f" (by {meta['superseded_by']})"
+        rows.append(
+            f"| {meta['id']} | [{meta['title']}]({adr['path'].name}) | {status} "
+            f"| {meta.get('date', '')} | {must} |"
+        )
+    return (
+        "# ADR index\n\n| ADR | Title | Status | Date | Must read |\n"
+        "|---|---|---|---|---|\n" + "\n".join(rows) + ("\n" if rows else "")
+    )
+
+
 def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> str:
     """Build the bounded Markdown block injected at session start.
 
@@ -674,8 +704,8 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
     budget: int = int(cfg["context_budget_words"])
     blocks: list[tuple[str, str]] = []
 
-    index_text: str = read_text(root / ADR_DIR / "INDEX.md").strip()
-    if index_text and "| ADR-" in index_text:
+    index_text: str = render_adr_index(root).strip()
+    if "| ADR-" in index_text:
         blocks.append(("ADR index", index_text))
     for adr in reversed(list_adrs(root)):
         meta = adr["meta"]

@@ -23,7 +23,6 @@ def test_bootstrap_is_idempotent(repo: Path) -> None:
     assert common.load_json(repo / common.CONFIG_FILE, None) == common.DEFAULT_CONFIG
     for rel in (common.ADR_DIR, common.NOTES_DIR, common.LOCAL_DIR):
         assert (repo / rel).is_dir()
-    assert (repo / common.ADR_DIR / "INDEX.md").is_file()
     bootstrap = load("bootstrap-repo.py")
     for name in bootstrap.HOOK_NAMES:
         hook = repo / common.GITHOOKS_DIR / name
@@ -31,6 +30,7 @@ def test_bootstrap_is_idempotent(repo: Path) -> None:
         assert hook.stat().st_mode & 0o111
     assert run_git(repo, "config", "--get", "core.hooksPath") == common.GITHOOKS_DIR
     gitignore = (repo / ".gitignore").read_text(encoding="utf-8")
+    assert f"{common.ADR_DIR}/INDEX.md" in gitignore  # derived, never committed
     assert gitignore.count(bootstrap.GITIGNORE_BEGIN) == 1
     assert f"{common.LOCAL_DIR}/" in gitignore
 

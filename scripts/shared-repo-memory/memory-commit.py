@@ -207,10 +207,6 @@ def new_adrs(root: Path, paths: list[str]) -> list[tuple[str, str, str]]:
 def is_first_memory_commit(root: Path) -> bool:
     """True when no ADR or note has ever been committed in this repository.
 
-    The empty ``INDEX.md`` that ``bootstrap-repo.py --init`` creates does not
-    count: it is wiring, and treating it as memory would suppress the pointer
-    on the very commit that introduces the first real decision.
-
     Args:
         root: Repository root.
 

@@ -44,12 +44,12 @@ def test_check_memory_reports_each_problem(repo: Path) -> None:
     adr_dir = repo / common.ADR_DIR
     stray = adr_dir / "ADR-0002-stray.md"
     stray.write_text("# no frontmatter\n\nSee [gone](missing.md).\n", encoding="utf-8")
+    common.write_text(adr_dir / "INDEX.md", common.render_adr_index(repo))
     (repo / common.NOTES_DIR / "badname.md").write_text("## x\n", encoding="utf-8")
     (repo / common.NOTES_DIR / "2026-01-01.md").write_text(
         "# n\n\n## h\n\n**Why:** only\n", encoding="utf-8"
     )
     problems = "\n".join(_check(repo))
-    assert "ADR-0002-stray.md: missing from INDEX.md" in problems
     assert "frontmatter lacks id" in problems
     assert "link to missing missing.md" in problems
     assert "badname.md: note files must be named" in problems
@@ -172,15 +172,8 @@ def test_check_memory_detects_duplicate_ids_and_dangling_supersedes(repo: Path) 
         .replace("First", "Second"),
         encoding="utf-8",
     )
-    index = adr_dir / "INDEX.md"
-    index.write_text(
-        index.read_text(encoding="utf-8")
-        + f"| {first_id} | [Second]({first_id}-second.md) | accepted | 2026-01-01 | yes |\n",
-        encoding="utf-8",
-    )
     problems = "\n".join(_check(repo))
     assert f"{first_id} is claimed by 2 files" in problems
-    assert f"INDEX.md: {first_id} appears in 2 rows" in problems
 
 
 def test_check_memory_flags_supersedes_that_names_no_adr(repo: Path) -> None:

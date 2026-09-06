@@ -4,8 +4,8 @@
 Runs from the generated ``pre-commit`` hook in every opted-in repo, and from
 CI here, so broken memory cannot be committed:
 
-* every ``INDEX.md`` row names an existing ADR file, and every ADR file has
-  a row, and no id appears twice in either
+* no ADR id is claimed by more than one file (the index is derived, so a row
+  never disagrees with the files it is built from)
 * every ADR has frontmatter with ``id``, ``title``, ``status``, ``date``,
   ``must_read`` and the five required sections
 * every relative Markdown link under ``.agents/memory/`` resolves
@@ -39,7 +39,7 @@ def check_adrs(root: Path) -> list[str]:
     problems: list[str] = []
     adr_dir: Path = root / common.ADR_DIR
     files: set[str] = {p.name for p in adr_dir.glob("ADR-*.md")}
-    index_text: str = common.read_text(adr_dir / "INDEX.md")
+    index_text: str = common.render_adr_index(root)
     indexed: set[str] = set(re.findall(r"\]\((ADR-[^)]+\.md)\)", index_text))
     for name in sorted(files - indexed):
         problems.append(f"{common.ADR_DIR}/{name}: missing from INDEX.md")
