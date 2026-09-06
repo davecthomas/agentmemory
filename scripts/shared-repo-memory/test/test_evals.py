@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import common
-from conftest import SCRIPTS, adr_ids, run_script
+from conftest import SCRIPTS, adr_ids, run_git, run_script
 
 EVALS: Path = SCRIPTS.parents[1] / "evals"
 
@@ -195,3 +195,42 @@ def test_check_memory_flags_supersedes_that_names_no_adr(repo: Path) -> None:
     assert any(
         "supersedes names ADR-0009, which matches 0 ADRs" in p for p in _check(repo)
     )
+
+
+def test_memory_audit_reports_only_heavily_changed_scopes(repo: Path) -> None:
+    audit = common.load_module(SCRIPTS / "memory-audit.py")
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    (repo / "src").mkdir()
+    (repo / "src" / "busy.py").write_text("x\n", encoding="utf-8")
+    (repo / "src" / "calm.py").write_text("x\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "seed")
+
+    for title, scope in (("Busy rule", "src/busy.py"), ("Calm rule", "src/calm.py")):
+        run_script(
+            "promote-adr.py",
+            "--title",
+            title,
+            "--context",
+            "c",
+            "--decision",
+            "d",
+            "--alternatives",
+            "a",
+            "--scope",
+            scope,
+            cwd=repo,
+        )
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "adrs")
+
+    for i in range(6):
+        (repo / "src" / "busy.py").write_text(f"x{i}\n", encoding="utf-8")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-q", "-m", f"churn {i}")
+
+    found = audit.stale_adrs(repo)
+    titles = [f[2] for f in found]
+    assert "Busy rule" in titles and "Calm rule" not in titles
+    assert "worth re-reading" in audit.render(found, 5)
+    assert "No ADR's scope" in audit.render([], 5)

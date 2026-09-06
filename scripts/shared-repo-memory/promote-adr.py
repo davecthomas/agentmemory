@@ -104,6 +104,7 @@ def render_adr(
     consequences: str = "",
     sources: list[str] | None = None,
     tags: str = "",
+    scope: str = "",
     must_read: bool = True,
     date: str | None = None,
     status: str = "accepted",
@@ -121,6 +122,7 @@ def render_adr(
         consequences: Consequences section text.
         sources: Lines for the Sources section.
         tags: Comma-separated tags.
+        scope: Comma-separated paths the decision governs.
         must_read: Inject the Decision at session start when True.
         date: ISO date; today when omitted.
         status: ``accepted`` or ``superseded``.
@@ -136,6 +138,7 @@ def render_adr(
         "status": status,
         "date": date or today(),
         "tags": tags,
+        "scope": scope,
         "must_read": must_read,
         "supersedes": supersedes,
         "superseded_by": superseded_by,
@@ -237,6 +240,9 @@ def main() -> int:
     parser.add_argument("--consequences", default="")
     parser.add_argument("--source", action="append", default=[])
     parser.add_argument("--tags", default="")
+    parser.add_argument(
+        "--scope", default="", help="comma-separated paths this decision governs"
+    )
     parser.add_argument("--no-must-read", action="store_true")
     parser.add_argument("--supersedes", action="append", default=[], metavar="ADR-NNNN")
     parser.add_argument(
@@ -266,8 +272,7 @@ def main() -> int:
         context = args.context or fields["why"]
         decision = args.decision or fields["decision"]
         alternatives = args.alternatives or fields["alternatives"]
-        if fields["scope"]:
-            sources.append(f"Scope: {fields['scope']}")
+        scope = args.scope or fields["scope"]
         if fields["commit"]:
             sources.append(f"Commit {fields['commit']}")
         sources.append(fields["source"])
@@ -278,6 +283,7 @@ def main() -> int:
             args.decision,
             args.alternatives,
         )
+        scope = args.scope
     if not (title and context and decision):
         parser.error("--title, --context and --decision are required (or --from-note)")
     if not alternatives.strip():
@@ -301,6 +307,7 @@ def main() -> int:
             consequences=args.consequences,
             sources=sources,
             tags=args.tags,
+            scope=scope,
             must_read=not args.no_must_read,
             supersedes=", ".join(args.supersedes),
         ),
