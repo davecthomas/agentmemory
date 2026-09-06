@@ -271,7 +271,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repository scope. |
 | `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |
 | `memory-commit.py` | Stage uncommitted memory and draft its commit message. |
-| `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits. |
+| `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits, ADR-promotion suggestions. |
 | `memory-note.py` | Append a note. |
 | `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--json`. |
 | `memory-status.py` | Backs `/agentmemory status`: wiring, counts, context size. |

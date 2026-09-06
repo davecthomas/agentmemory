@@ -48,3 +48,10 @@
 **Commit:** 5087a01
 **Source:** commit-capture
 
+## 2026-09-06T19:03Z · davecthomas · feat/relevance-selection
+
+**Decision:** order must-read ADRs by relevance and count the budget honestly
+**Why:** Closes #57. The session block had passed its budget: 2504 words of 2500 on a repository four days old, because must_read was a flat set injected newest-first and everything marked must-read went in. Three ADRs governing install and hook mechanics are demoted; a session never needs them and the memory skill still finds them. The rest are now ordered by relevance, foundational tags first, then ADRs whose tags match what this branch has touched, then the remainder. The existing budget truncates the tail, so what falls off is what the session is least likely to want rather than whatever happened to be oldest. Two accounting bugs came out of it. The budget counted a block's body but not its heading, so the block ran over the size it announced, and the marker naming what was dropped was itself uncounted. Both are now reserved for. This repository sits at 2249 words against 2500. Closes #57
+**Commit:** 2bc89e7
+**Source:** commit-capture
+

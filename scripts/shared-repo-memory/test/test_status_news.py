@@ -90,3 +90,32 @@ def test_news_watermark_reports_nothing_new_then_new(repo: Path) -> None:
     assert (
         "later change" in run_script("memory-news.py", cwd=repo).stdout
     )  # --no-mark kept it
+
+
+def test_news_suggests_promoting_a_path_with_repeated_decisions(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    for i in range(3):
+        run_script(
+            "memory-note.py",
+            "--decision",
+            f"Choice {i}",
+            "--why",
+            "w",
+            "--scope",
+            "src/auth.py",
+            cwd=repo,
+        )
+    run_script(
+        "memory-note.py",
+        "--decision",
+        "Elsewhere",
+        "--why",
+        "w",
+        "--scope",
+        "docs/x.md",
+        cwd=repo,
+    )
+    out = run_script("memory-news.py", "--all", cwd=repo).stdout
+    assert "## Worth promoting to an ADR" in out
+    assert "`src/auth.py` has 3 decisions noted" in out
+    assert "docs/x.md" not in out.split("## Worth promoting")[1]  # below threshold

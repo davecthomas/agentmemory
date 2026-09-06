@@ -36,7 +36,8 @@ news, what's new, what happened, what did I miss, catch me up, recent decisions,
    **Decisions you should know** — one bullet per ADR line and per note that changes how someone works in this repo. Keep the ADR id and, when the line says `replaces`, say what it replaced. Mark `_(not injected)_` ADRs as "reachable with the `memory` skill".
 
 
-6. Keep the whole report under 250 words. Quote the digest's decision text; do not invent mechanisms it does not mention.
+6. When the digest has a "Worth promoting to an ADR" section, relay each line as it stands. It means several decisions were noted against one path, so one of them has probably settled into a rule. Do not promote anything yourself; name the path and leave the judgement to the developer.
+7. Keep the whole report under 250 words. Quote the digest's decision text; do not invent mechanisms it does not mention.
 
 ## Rules
 
