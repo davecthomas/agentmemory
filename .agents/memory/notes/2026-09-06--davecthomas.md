@@ -14,3 +14,10 @@
 **Commit:** dae1428
 **Source:** commit-capture
 
+## 2026-09-06T13:41Z · davecthomas · fix/self-contained-skills
+
+**Decision:** agentmemory skills call only this repo's scripts; no branching on tools from other repos.
+**Why:** memory-commit told the agent to use an external commit skill when present, so behaviour depended on another repository being installed and the common path went untested.
+**Alternatives:** Detect and delegate when the other tool exists.
+**Scope:** skills/
+
