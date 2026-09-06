@@ -27,6 +27,7 @@ python3 "$HOME/.agent/shared-repo-memory/memory-query.py" <topic or path> [more 
 ```
 
 - Pass a topic ("runtime detection"), a path (`scripts/shared-repo-memory/`), or both. A path that exists also yields its recent commits.
+- Narrow with `--since YYYY-MM-DD`, `--until YYYY-MM-DD`, or `--author <name>` when the developer asks about a period or a person ("what did we decide about auth last quarter", "what has Priya been deciding").
 - Read the ADRs section first; those are the durable decisions. Notes are recent and may not have been promoted yet.
 - Quote the ADR id when you rely on one, so the developer can check it.
 - If the answer is "Nothing in ADRs, notes, or docs mentions this yet", say so, then look at the code, and record what you learn with `memory-note` if it was non-obvious.
