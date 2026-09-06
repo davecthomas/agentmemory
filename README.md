@@ -12,7 +12,8 @@ Current version: `0.5.0`. The v0.5 rebuild and the audit behind it are in [docs/
 
 ```
 Session starts        →  SessionStart hook injects: ADR index, must-read ADR
-                         decisions, recent notes, catch-up. Bounded to a word budget.
+                         decisions, the last 3 days of notes in full, decision
+                         lines for the rest, catch-up. Bounded to a word budget.
 
 Agent makes a          →  memory-note skill appends 3 lines to
 non-obvious choice        .agents/memory/notes/YYYY-MM-DD.md (staged, not committed)
@@ -78,7 +79,8 @@ If the repo has history but no ADRs, `/memory-bootstrap` mines the design docs a
 {
   "decision_surfaces": ["docs/**"],
   "context_budget_words": 2500,
-  "notes_window_days": 14
+  "notes_window_days": 14,
+  "notes_full_days": 3
 }
 ```
 

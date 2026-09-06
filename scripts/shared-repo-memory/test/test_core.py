@@ -45,7 +45,9 @@ def test_matches_surface_globs() -> None:
 def test_build_memory_context_orders_and_budgets(repo: Path) -> None:
     adr_dir = repo / common.ADR_DIR
     adr_dir.mkdir(parents=True)
-    (adr_dir / "INDEX.md").write_text("# ADR index\n\n| a |\n", encoding="utf-8")
+    (adr_dir / "INDEX.md").write_text(
+        "# ADR index\n\n| ADR-0001 | t1 |\n", encoding="utf-8"
+    )
     promote = load("promote-adr.py")
     for i in (1, 2):
         (adr_dir / f"ADR-000{i}-t{i}.md").write_text(
@@ -68,12 +70,20 @@ def test_build_memory_context_orders_and_budgets(repo: Path) -> None:
         "**Why:** ancient note\n",
         encoding="utf-8",
     )
+    week_ago = common.today(common.utc_now() - __import__("datetime").timedelta(days=7))
+    (notes / f"{week_ago}.md").write_text(
+        f"# n\n\n## {week_ago}T00:00Z · a · main\n\n**Decision:** week-old decision\n"
+        "**Why:** week-old why text\n",
+        encoding="utf-8",
+    )
     (repo / common.LOCAL_DIR).mkdir(parents=True)
     (repo / common.LOCAL_DIR / "catchup.md").write_text(
         "catch me up\n", encoding="utf-8"
     )
 
     context = common.build_memory_context(repo)
+    assert "week-old decision" in context and "week-old why text" not in context
+    assert "### Recent decisions" in context
     assert context.index("### ADR index") < context.index("### ADR-0002: t2")
     assert "decision 2" in context and "decision 1" not in context  # only must_read
     assert "recent note" in context and "ancient note" not in context  # window
