@@ -195,7 +195,9 @@ def author_slug(root: Path) -> str:
     """
     email: str = git(["config", "--get", "user.email"], root)
     if email:
-        return slugify(email.split("@", 1)[0])
+        # GitHub noreply addresses look like 2355287-name@users.noreply...;
+        # drop the numeric id so slugs and filenames read as a name.
+        return slugify(re.sub(r"^\d+[-+]", "", email.split("@", 1)[0]))
     name: str = git(["config", "--get", "user.name"], root)
     if name:
         return slugify(name)

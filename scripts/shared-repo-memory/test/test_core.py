@@ -125,6 +125,33 @@ def test_memory_note_appends_and_stages(repo: Path) -> None:
     assert text.count("**Decision:** Use X") == 2
 
 
+def test_dismiss_marks_candidate_reviewed(repo: Path) -> None:
+    from conftest import run_script
+
+    note = load("memory-note.py")
+    path = note.append_note(
+        repo,
+        note.render_entry(
+            decision="hook", why="w", author="a", branch="main", candidate=True
+        ),
+        date="2026-01-02",
+        author="a",
+    )
+    result = run_script("memory-note.py", "--dismiss", str(path), "1", cwd=repo)
+    assert result.returncode == 0, result.stderr
+    text = path.read_text(encoding="utf-8")
+    assert "**Candidate:** reviewed" in text and "**Candidate:** true" not in text
+    again = run_script("memory-note.py", "--dismiss", str(path), "1", cwd=repo)
+    assert again.returncode != 0
+
+
+def test_author_slug_drops_noreply_id(repo: Path) -> None:
+    run_git(
+        repo, "config", "user.email", "2355287-davecthomas@users.noreply.github.com"
+    )
+    assert common.author_slug(repo) == "davecthomas"
+
+
 def test_memory_note_cli(repo: Path) -> None:
     from conftest import run_script
 
