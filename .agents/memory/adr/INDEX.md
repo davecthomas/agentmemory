@@ -23,3 +23,4 @@
 | ADR-0023 | [Black is pinned to an exact version](ADR-0023-black-is-pinned-to-an-exact-version.md) | accepted | 2026-09-05 | no |
 | ADR-0024 | [The agent is the only reader of memory files; no human review step exists over them](ADR-0024-the-agent-is-the-only-reader-of-memory-files-no-human-review-step-exists-over-th.md) | accepted | 2026-09-06 | yes |
 | ADR-0025 | [agentmemory skills depend only on agentmemory's own scripts](ADR-0025-agentmemory-skills-depend-only-on-agentmemory-s-own-scripts.md) | accepted | 2026-09-06 | yes |
+| ADR-2026-09-06-ba4f | [ADR ids are the promotion date plus a content-derived suffix](ADR-2026-09-06-ba4f-adr-ids-are-the-promotion-date-plus-a-content-derived-suffix.md) | accepted | 2026-09-06 | yes |

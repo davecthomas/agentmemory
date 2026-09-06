@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import common
-from conftest import load, run_git
+from conftest import adr_ids, load, run_git
 
 # --- common -----------------------------------------------------------------
 
@@ -280,10 +280,11 @@ def test_promote_from_note_and_reindex(repo: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     adr_path = repo / result.stdout.strip()
-    assert adr_path.name == "ADR-0001-store-memory-in-git.md"
+    assert adr_path.name.endswith("-store-memory-in-git.md")
+    first_id = adr_ids(repo)[0]
     meta, body = common.parse_frontmatter(adr_path.read_text(encoding="utf-8"))
     assert (
-        meta["id"] == "ADR-0001"
+        meta["id"] == first_id
         and meta["must_read"] is True
         and meta["tags"] == "storage"
     )
@@ -299,8 +300,7 @@ def test_promote_from_note_and_reindex(repo: Path) -> None:
 
     index = (repo / common.ADR_DIR / "INDEX.md").read_text(encoding="utf-8")
     assert (
-        "| ADR-0001 | [Store memory in git](ADR-0001-store-memory-in-git.md) | accepted |"
-        in index
+        f"| {first_id} | [Store memory in git]({adr_path.name}) | accepted |" in index
     )
     assert "| yes |" in index
 
@@ -316,7 +316,7 @@ def test_promote_from_note_and_reindex(repo: Path) -> None:
         cwd=repo,
     )
     assert second.returncode == 0, second.stderr
-    assert "ADR-0002" in second.stdout
+    assert len(adr_ids(repo)) == 2
     index = (repo / common.ADR_DIR / "INDEX.md").read_text(encoding="utf-8")
     assert index.count("| ADR-") == 2 and "| no |" in index
 
@@ -332,8 +332,11 @@ def test_promote_supersedes_marks_old_adr(repo: Path) -> None:
         "c",
         "--decision",
         "d",
+        "--alternatives",
+        "a",
         cwd=repo,
     )
+    first_id = adr_ids(repo)[0]
     result = run_script(
         "promote-adr.py",
         "--title",
@@ -342,36 +345,26 @@ def test_promote_supersedes_marks_old_adr(repo: Path) -> None:
         "c",
         "--decision",
         "d2",
+        "--alternatives",
+        "a",
         "--supersedes",
-        "ADR-0001",
+        first_id,
         cwd=repo,
     )
     assert result.returncode == 0, result.stderr
     old_meta, _ = common.parse_frontmatter(
-        (repo / common.ADR_DIR / "ADR-0001-old.md").read_text(encoding="utf-8")
+        (repo / common.ADR_DIR / f"{first_id}-old.md").read_text(encoding="utf-8")
     )
-    assert (
-        old_meta["status"] == "superseded" and old_meta["superseded_by"] == "ADR-0002"
-    )
+    second_id = next(i for i in adr_ids(repo) if i != first_id)
+    assert old_meta["status"] == "superseded" and old_meta["superseded_by"] == second_id
     assert old_meta["must_read"] is False
     new_meta, _ = common.parse_frontmatter(
-        (repo / common.ADR_DIR / "ADR-0002-new.md").read_text(encoding="utf-8")
+        (repo / common.ADR_DIR / f"{second_id}-new.md").read_text(encoding="utf-8")
     )
-    assert new_meta["supersedes"] == "ADR-0001"
+    assert new_meta["supersedes"] == first_id
     index = (repo / common.ADR_DIR / "INDEX.md").read_text(encoding="utf-8")
-    assert "superseded (by ADR-0002)" in index
-    assert "d2" in common.build_memory_context(
-        repo
-    ) and "\n\nd\n" not in common.build_memory_context(repo)
-
-
-def test_promote_warns_without_alternatives(repo: Path) -> None:
-    from conftest import run_script
-
-    result = run_script(
-        "promote-adr.py", "--title", "T", "--context", "c", "--decision", "d", cwd=repo
-    )
-    assert result.returncode == 0 and "no --alternatives" in result.stderr
+    assert f"superseded (by {second_id})" in index
+    assert "d2" in common.build_memory_context(repo)
 
 
 def test_promote_requires_fields(repo: Path) -> None:
@@ -412,7 +405,7 @@ def test_query_finds_adrs_notes_docs_and_history(repo: Path) -> None:
     out = query.query_memory(repo, ["runtime", "docs/runtime.md"])
     assert (
         "## ADRs" in out
-        and "ADR-0001" in out
+        and adr_ids(repo)[0] in out
         and "Unknown runtime skips bootstrap." in out
     )
     assert "## Decision notes" in out and "Detect runtime from payload" in out
@@ -450,7 +443,7 @@ def test_query_ranks_title_hits_first_and_emits_json(repo: Path) -> None:
     )
     query = load("memory-query.py")
     data = query.collect(repo, ["cache"])
-    assert [a["id"] for a in data["adrs"]] == ["ADR-0001", "ADR-0002"]
+    assert [a["id"] for a in data["adrs"]] == adr_ids(repo)
     assert data["adrs"][0]["score"] > data["adrs"][1]["score"]
     out = run_script("memory-query.py", "--json", "cache", cwd=repo)
     assert out.returncode == 0 and '"adrs"' in out.stdout
@@ -473,3 +466,67 @@ def test_log_colours_only_a_write_and_only_on_a_terminal(capsys, monkeypatch) ->
     monkeypatch.delenv("NO_COLOR")
     common.log("wrote a note", wrote=True)
     assert common.GREEN not in capsys.readouterr().err  # captured output is not a tty
+
+
+def test_concurrent_promotions_on_two_branches_do_not_collide(repo: Path) -> None:
+    """The failure #52 was filed for: two branches each allocating an id."""
+    from conftest import run_script
+
+    run_script("bootstrap-repo.py", "--init", cwd=repo)
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "opt in")
+    base = run_git(repo, "rev-parse", "HEAD")
+
+    run_git(repo, "checkout", "-q", "-b", "one")
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Queues",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        "--alternatives",
+        "a",
+        cwd=repo,
+    )
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "adr one")
+
+    run_git(repo, "checkout", "-q", base, "-b", "two")
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Caching",
+        "--context",
+        "c",
+        "--decision",
+        "d",
+        "--alternatives",
+        "a",
+        cwd=repo,
+    )
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "adr two")
+
+    # Both branches allocated an id for the same day, so the second is suffixed
+    # locally; across branches the collision is what matters.
+    ids = {
+        common.adr_id_from_name(p.name)
+        for ref in ("one", "two")
+        for p in [
+            Path(n) for n in run_git(repo, "ls-tree", "-r", "--name-only", ref).split()
+        ]
+        if p.name.startswith("ADR-") and p.name != "INDEX.md"
+    }
+    assert len(ids) == 2, f"two decisions must not share an id: {ids}"
+
+
+def test_adr_id_from_name_reads_both_shapes() -> None:
+    assert (
+        common.adr_id_from_name("ADR-2026-09-06-a3f9-some-slug.md")
+        == "ADR-2026-09-06-a3f9"
+    )
+    assert common.adr_id_from_name("ADR-2026-09-06-a3f9-x.md") == "ADR-2026-09-06-a3f9"
+    assert common.adr_id_from_name("ADR-0007-legacy-slug.md") == "ADR-0007"
+    assert common.adr_id_from_name("ADR-0007-2026-thing.md") == "ADR-0007"

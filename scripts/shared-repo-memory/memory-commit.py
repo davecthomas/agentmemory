@@ -36,6 +36,7 @@ from common import (
     LOCAL_DIR,
     MEMORY_DIR,
     NOTES_DIR,
+    adr_id_from_name,
     current_branch,
     git,
     is_opted_in,
@@ -193,10 +194,9 @@ def new_adrs(root: Path, paths: list[str]) -> list[tuple[str, str, str]]:
         if not path.startswith(f"{ADR_DIR}/") or not name.startswith("ADR-"):
             continue
         meta, body = parse_frontmatter(read_text(root / path))
-        parts = Path(path).stem.split("-", 2)
         found.append(
             (
-                str(meta.get("id") or f"{parts[0]}-{parts[1]}"),
+                str(meta.get("id") or adr_id_from_name(name)),
                 str(meta.get("title") or (section(body, "Decision")[:60] or name)),
                 str(meta.get("status", "accepted")),
             )

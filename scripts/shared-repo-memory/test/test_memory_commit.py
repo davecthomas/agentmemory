@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import common
-from conftest import run_git, run_script
+from conftest import adr_ids, run_git, run_script
 
 
 def _mc(*args: str, cwd: Path):
@@ -42,7 +42,7 @@ def test_first_commit_message_lists_decisions_and_adrs(repo: Path) -> None:
     assert result.returncode == 0, result.stderr
     msg = result.stdout
     assert msg.startswith("memory: 1 decision and 1 ADR from ")
-    assert "- ADR-0001 (accepted): Queues for retries" in msg
+    assert f"- {adr_ids(repo)[0]} (accepted): Queues for retries" in msg
     assert "Use a queue" in msg
     assert "first decision-memory commit" in msg  # pointer, once
     assert f"{common.NOTES_DIR}/" in result.stderr

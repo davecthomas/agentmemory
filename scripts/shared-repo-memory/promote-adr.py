@@ -21,6 +21,7 @@ leaves the session context.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -42,21 +43,36 @@ from common import (
 )
 
 
-def next_id(root: Path) -> str:
-    """Return the next unused ADR identifier.
+def next_id(root: Path, *, seed: str, date: str | None = None) -> str:
+    """Return an ADR identifier that needs no coordination to allocate.
+
+    The id is the promotion date plus four hex characters derived from the
+    decision's own text: ``ADR-2026-09-06-a3f9``. A sequential number is
+    allocated against one branch's view of ``adr/``, so two people promoting
+    in the same window both take it and merge into a repository where two
+    decisions claim one id. A date alone has the same problem whenever two
+    people promote on the same day, which is the ordinary case. Seeding the
+    suffix from the text means two different decisions differ wherever they
+    were written, and the same decision promoted twice is caught locally.
 
     Args:
         root: Repository root.
+        seed: Text the suffix is derived from, normally title plus decision.
+        date: ISO date to use; today when omitted.
 
     Returns:
-        str: ``ADR-NNNN``.
+        str: ``ADR-2026-09-06-a3f9``.
     """
-    highest: int = 0
-    for path in (root / ADR_DIR).glob("ADR-*.md"):
-        match = re.match(r"ADR-(\d+)", path.name)
-        if match:
-            highest = max(highest, int(match.group(1)))
-    return f"ADR-{highest + 1:04d}"
+    day: str = date or today()
+    digest: str = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:4]
+    taken: set[str] = {str(adr["meta"]["id"]) for adr in list_adrs(root)}
+    candidate: str = f"ADR-{day}-{digest}"
+    salt: int = 0
+    while candidate in taken:
+        salt += 1
+        digest = hashlib.sha256(f"{seed}{salt}".encode()).hexdigest()[:4]
+        candidate = f"ADR-{day}-{digest}"
+    return candidate
 
 
 def render_adr(
@@ -129,7 +145,9 @@ def mark_superseded(root: Path, old_id: str, new_id: str) -> Path:
     Returns:
         Path: The rewritten file.
     """
-    matches = list((root / ADR_DIR).glob(f"{old_id}-*.md"))
+    matches = [
+        adr["path"] for adr in list_adrs(root) if str(adr["meta"]["id"]) == old_id
+    ]
     if len(matches) != 1:
         raise SystemExit(
             f"--supersedes {old_id}: expected one file, found {len(matches)}"
@@ -265,7 +283,7 @@ def main() -> int:
             "accepted ADR with placeholder Alternatives. Add them before committing."
         )
 
-    adr_id: str = next_id(root)
+    adr_id: str = next_id(root, seed=f"{title}\n{decision}")
     path: Path = root / ADR_DIR / f"{adr_id}-{slugify(title)}.md"
     write_text(
         path,

@@ -75,3 +75,12 @@ def run_script(
         text=True,
         env=merged,
     )
+
+
+def adr_ids(root: Path) -> list[str]:
+    """Ids of the ADRs in a repo, in filename order.
+
+    Ids carry a content-derived suffix, so a test discovers them rather than
+    predicting them.
+    """
+    return [str(a["meta"]["id"]) for a in common.list_adrs(root)]

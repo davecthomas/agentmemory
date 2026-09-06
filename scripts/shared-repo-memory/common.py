@@ -527,6 +527,38 @@ def section(body: str, heading: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def adr_id_from_name(name: str) -> str:
+    """Return the id encoded in an ADR filename.
+
+    Two shapes are valid. ``ADR-2026-09-06-a3f9-<slug>.md`` is what
+    ``promote-adr.py`` writes now: the date sorts and reads, and the four hex
+    characters after it are derived from the decision's own text, so two people
+    promoting on the same day on separate branches still get different ids
+    without coordinating. ``ADR-0007-<slug>.md`` is the sequential shape used
+    before, still read so existing repositories keep working.
+
+    Args:
+        name: ADR filename or stem.
+
+    Returns:
+        str: ``ADR-2026-09-06-a3f9`` or ``ADR-0007``.
+    """
+    stem = name[:-3] if name.endswith(".md") else name
+    parts = stem.split("-")
+    dated = (
+        len(parts) >= 5
+        and len(parts[1]) == 4
+        and parts[1].isdigit()
+        and len(parts[2]) == 2
+        and parts[2].isdigit()
+        and len(parts[3]) == 2
+        and parts[3].isdigit()
+    )
+    if dated:
+        return "-".join(parts[:5])  # ADR-YYYY-MM-DD-hhhh
+    return "-".join(parts[:2])  # ADR-NNNN
+
+
 def list_adrs(root: Path) -> list[dict[str, Any]]:
     """Load every ADR file with its parsed frontmatter and body.
 
@@ -541,8 +573,7 @@ def list_adrs(root: Path) -> list[dict[str, Any]]:
     adrs: list[dict[str, Any]] = []
     for path in sorted((root / ADR_DIR).glob("ADR-*.md")):
         meta, body = parse_frontmatter(read_text(path))
-        parts: list[str] = path.stem.split("-", 2)
-        meta.setdefault("id", f"{parts[0]}-{parts[1]}")
+        meta.setdefault("id", adr_id_from_name(path.name))
         if "title" not in meta:
             h1 = re.search(r"^# (?:ADR-\d+:?\s*)?(.+)$", body, re.MULTILINE)
             meta["title"] = h1.group(1).strip() if h1 else path.stem
