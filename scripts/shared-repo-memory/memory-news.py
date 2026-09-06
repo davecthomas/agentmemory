@@ -33,6 +33,7 @@ from common import (
     list_adrs,
     list_notes,
     load_json,
+    load_module,
     log,
     note_date,
     read_text,
@@ -379,6 +380,17 @@ def news(root: Path, days: int, *, since_last_read: bool = True) -> str:
             out.append("")
         if adrs.get(day):
             out += ["### ADRs", *adrs[day], ""]
+
+    audit = load_module(Path(__file__).resolve().parent / "memory-audit.py")
+    stale = audit.stale_adrs(root)
+    if stale:
+        out += ["## ADRs worth re-reading", ""]
+        for commits, adr_id, title, scope in stale[:2]:
+            out.append(
+                f"- {adr_id} ({title}) governs `{scope}`, changed in {commits} "
+                "commits since the decision."
+            )
+        out.append("")
 
     candidates = promotion_candidates(notes, PROMOTION_THRESHOLD)
     if candidates:

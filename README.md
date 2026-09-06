@@ -233,6 +233,11 @@ Expect `Opted in: yes` and `Wiring: complete`.
 }
 ```
 
+An ADR can also name the code it governs with `--scope`, and `memory-audit.py` reports any whose scope has changed a lot since the decision landed, so a stale rule gets re-read rather than silently obeyed.
+
+```json
+```
+
 Per-author note filenames mean two people writing notes on the same day never touch the same file, so decision memory does not create merge conflicts.
 
 ## Skills
@@ -269,6 +274,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |
 | `commit-capture.py` | Git hook. Note from a decision-bearing commit. |
 | `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repository scope. |
+| `memory-audit.py` | ADRs whose governed code has changed a lot since the decision. |
 | `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |
 | `memory-commit.py` | Stage uncommitted memory and draft its commit message. |
 | `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits, ADR-promotion suggestions. |

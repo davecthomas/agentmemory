@@ -292,11 +292,8 @@ def test_promote_from_note_and_reindex(repo: Path) -> None:
     assert common.section(body, "Context") == "No service to run"
     assert common.section(body, "Alternatives") == "A vector DB"
     sources = common.section(body, "Sources")
-    assert (
-        "Commit abc1234" in sources
-        and "entry 1" in sources
-        and "Scope: docs/" in sources
-    )
+    assert "Commit abc1234" in sources and "entry 1" in sources
+    assert meta["scope"] == "docs/"  # the note's Scope becomes the ADR's scope field
 
     index = (repo / common.ADR_DIR / "INDEX.md").read_text(encoding="utf-8")
     assert (
