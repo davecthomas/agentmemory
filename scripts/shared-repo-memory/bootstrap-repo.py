@@ -52,7 +52,14 @@ GITATTRIBUTES_ENTRIES: tuple[str, ...] = (f"{NOTES_DIR}/*.md merge=union",)
 
 GITIGNORE_BEGIN: str = "# >>> agentmemory (managed block; do not edit) >>>"
 GITIGNORE_END: str = "# <<< agentmemory <<<"
-GITIGNORE_ENTRIES: tuple[str, ...] = (f"{GITHOOKS_DIR}/", f"{LOCAL_DIR}/")
+# INDEX.md is derived from the ADR files. A committed copy conflicts whenever
+# two branches each promote an ADR, and the conflict carries nothing a rebuild
+# cannot recover, so it is generated locally and ignored.
+GITIGNORE_ENTRIES: tuple[str, ...] = (
+    f"{GITHOOKS_DIR}/",
+    f"{LOCAL_DIR}/",
+    f"{ADR_DIR}/INDEX.md",
+)
 
 AGENTS_BEGIN: str = "<!-- agentmemory:begin (managed block; do not edit) -->"
 AGENTS_END: str = "<!-- agentmemory:end -->"
@@ -357,11 +364,6 @@ def main() -> int:
             log(f"{'would create' if dry else 'creating'} {rel}/")
             if not dry:
                 ensure_dir(root / rel)
-    index: Path = root / ADR_DIR / "INDEX.md"
-    if not index.is_file():
-        log(f"{'would create' if dry else 'creating'} {ADR_DIR}/INDEX.md")
-        if not dry:
-            write_text(index, INDEX_INITIAL)
     ensure_gitignore(root, dry_run=dry)
     ensure_managed_block(
         root / ".gitattributes",

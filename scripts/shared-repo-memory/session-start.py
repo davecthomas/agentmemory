@@ -90,8 +90,6 @@ def wiring_issues(root: Path) -> list[str]:
     for rel in (ADR_DIR, NOTES_DIR, LOCAL_DIR, GITHOOKS_DIR):
         if not (root / rel).is_dir():
             issues.append(rel)
-    if not (root / ADR_DIR / "INDEX.md").is_file():
-        issues.append(f"{ADR_DIR}/INDEX.md")
     for name in bootstrap.HOOK_NAMES:
         if read_text(root / GITHOOKS_DIR / name) != bootstrap.hook_text(name):
             issues.append(f"{GITHOOKS_DIR}/{name}")

@@ -93,7 +93,7 @@ def test_opt_in_files_ride_with_the_first_memory_commit(repo: Path) -> None:
     assert _mc("--commit", cwd=repo).returncode == 0
     files = run_git(repo, "show", "--format=", "--name-only", "HEAD").split()
     assert ".gitignore" in files and "AGENTS.md" in files
-    assert f"{common.ADR_DIR}/INDEX.md" in files
+    assert not any(f.endswith("INDEX.md") for f in files)  # derived, not committed
     assert not run_git(repo, "status", "--porcelain", "--", ".gitignore", "AGENTS.md")
 
 

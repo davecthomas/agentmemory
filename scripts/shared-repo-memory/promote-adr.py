@@ -33,6 +33,7 @@ from common import (
     log,
     parse_frontmatter,
     read_text,
+    render_adr_index,
     render_frontmatter,
     repo_root,
     safe_main,
@@ -161,34 +162,13 @@ def mark_superseded(root: Path, old_id: str, new_id: str) -> Path:
     return path
 
 
-def index_rows(root: Path) -> str:
-    """Render ``INDEX.md`` from the ADR files on disk.
-
-    Args:
-        root: Repository root.
-
-    Returns:
-        str: Full index Markdown.
-    """
-    rows: list[str] = []
-    for adr in list_adrs(root):
-        meta = adr["meta"]
-        must: str = "yes" if meta.get("must_read") is True else "no"
-        status: str = str(meta.get("status", "accepted"))
-        if meta.get("superseded_by"):
-            status += f" (by {meta['superseded_by']})"
-        rows.append(
-            f"| {meta['id']} | [{meta['title']}]({adr['path'].name}) | {status} "
-            f"| {meta.get('date', '')} | {must} |"
-        )
-    return (
-        "# ADR index\n\n| ADR | Title | Status | Date | Must read |\n"
-        "|---|---|---|---|---|\n" + "\n".join(rows) + ("\n" if rows else "")
-    )
-
-
 def refresh_index(root: Path) -> Path:
-    """Rewrite ``INDEX.md``.
+    """Write the derived index to disk for anyone browsing the repository.
+
+    The index is not committed (see the managed .gitignore block): it is
+    derived from the ADR files, and a committed copy conflicts every time two
+    branches each promote. Writing it locally keeps `adr/INDEX.md` readable
+    in a checkout without putting it in anyone's merge.
 
     Args:
         root: Repository root.
@@ -197,7 +177,7 @@ def refresh_index(root: Path) -> Path:
         Path: The index file.
     """
     path: Path = root / ADR_DIR / "INDEX.md"
-    write_text(path, index_rows(root))
+    write_text(path, render_adr_index(root))
     return path
 
 
@@ -303,9 +283,9 @@ def main() -> int:
     retired: list[Path] = [
         mark_superseded(root, old, adr_id) for old in args.supersedes
     ]
-    index: Path = refresh_index(root)
+    refresh_index(root)
     if not args.no_stage:
-        stage(root, [path, index, *retired])
+        stage(root, [path, *retired])
     log(f"{adr_id} promoted in {path.relative_to(root)}", wrote=True)
     print(path.relative_to(root))
     return 0
