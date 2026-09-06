@@ -152,19 +152,47 @@ Installing turns nothing on. Every hook exits silently in a repository that has 
 
 ### Opt a repository in
 
-In a Claude Code session inside the repository:
+`./install.sh` put the tooling on your machine and turned nothing on. Each repository opts in separately, from a Claude Code session inside it.
+
+**1. Open a new session in the repository you want memory in.**
+
+```bash
+cd ~/code/your-other-repo   # your repository, not the agentmemory checkout
+claude                      # a new session, so it loads the hooks you just installed
+```
+
+A session you opened before running `./install.sh` does not have the hooks. Start a fresh one.
+
+**2. Turn it on.** In that session, run:
 
 ```
 /agentmemory init
 ```
 
-or say "turn on agentmemory for this repo". This writes `.agents/memory/config.json`, the opt-in marker, and creates `adr/`, `notes/`, and `local/`. It also adds a managed block to `.gitignore`, generates the git hooks under `.githooks/`, and sets `core.hooksPath`. When the repository has an `AGENTS.md` or `CLAUDE.md`, it adds a "Decision memory" block there too, so an agent without agentmemory still learns the convention.
+or say "turn on agentmemory for this repo".
 
-**Commit `config.json` and the whole team is in.** Teammates who never install agentmemory still see the Markdown in every pull request. Teammates who install it get the memory in their agent's context automatically.
+This writes `.agents/memory/config.json`, the opt-in marker, and creates `adr/`, `notes/`, and `local/`. It also adds a managed block to `.gitignore`, generates the git hooks under `.githooks/`, and sets `core.hooksPath`. When the repository has an `AGENTS.md` or `CLAUDE.md`, it adds a "Decision memory" block there too, so an agent without agentmemory still learns the convention.
 
-`/agentmemory status` reports wiring and counts. `/agentmemory off` reverses the repository wiring and leaves the memory files in place.
+**3. Commit the opt-in.** Three paths change, and all three belong in the commit:
 
-If the repository has history but no ADRs, run `/memory-bootstrap`. It mines design docs and commit messages for the decisions that still govern the code, then promotes the strongest few.
+```bash
+git add .agents/memory .gitignore AGENTS.md   # AGENTS.md or CLAUDE.md, when you have one
+git commit -m "Turn on agentmemory decision memory"
+```
+
+Committing `config.json` opts the whole team in. Teammates who never install agentmemory still see the Markdown in every pull request. Teammates who install it get the memory in their agent's context automatically.
+
+**4. Restart the session, then check.** `SessionStart` reads memory as a session opens, so the session that ran `init` does not carry it yet. Exit, open a new one, and run:
+
+```
+/agentmemory status
+```
+
+Expect `Opted in: yes` and `Wiring: complete`.
+
+**5. Seed it, when the repository already has history.** Run `/memory-bootstrap`. It mines design docs and commit messages for the decisions that still govern the code, then promotes the strongest few.
+
+`/agentmemory off` reverses the repository wiring and leaves the memory files in place.
 
 ### Rolling it out to a team
 
