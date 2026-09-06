@@ -58,7 +58,7 @@ python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
 Memory that gets written silently teaches a developer nothing about what the system captures. End with exactly one line naming what was written and where, in this form:
 
 ```
-Recorded: <what> -> <path>
+**Recorded:** <what> -> <path>
 ```
 
 One line, no ceremony, even when the developer did not ask to be told. When nothing was written, say that instead.
@@ -66,5 +66,5 @@ One line, no ceremony, even when the developer did not ask to be told. When noth
 Report the whole set in one line:
 
 ```
-Recorded: 4 ADRs seeded from docs and history -> .agents/memory/adr/
+**Recorded:** 4 ADRs seeded from docs and history -> .agents/memory/adr/
 ```

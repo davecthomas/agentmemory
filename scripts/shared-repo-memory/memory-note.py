@@ -133,6 +133,7 @@ def main() -> int:
     path: Path = append_note(root, entry, author=author)
     if args.stage:
         stage(root, [path])
+    log(f"decision note recorded in {path.relative_to(root)}", wrote=True)
     print(str(path.relative_to(root)))
     return 0
 

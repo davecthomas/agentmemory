@@ -43,7 +43,7 @@ Hooks and skills write memory but never commit it (ADR-0004). This is the explic
 4. Report the write in one line, then say it belongs in the same pull request as the code it explains:
 
    ```
-   Recorded: 2 decisions and 1 ADR committed -> <sha>
+   **Recorded:** 2 decisions and 1 ADR committed -> <sha>
    ```
 
 ## Rules

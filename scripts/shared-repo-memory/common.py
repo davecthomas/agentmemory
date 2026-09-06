@@ -59,7 +59,28 @@ ADR_SECTIONS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-def log(message: str) -> None:
+GREEN: str = "\033[32m"
+RESET: str = "\033[0m"
+
+
+def color_enabled() -> bool:
+    """Whether stderr should carry ANSI colour.
+
+    True only when stderr is a terminal, so output captured by an agent, a
+    pipe, or CI stays plain. ``NO_COLOR`` disables it and
+    ``AGENTMEMORY_COLOR=always`` forces it on for testing.
+
+    Returns:
+        bool: Whether to emit escape codes.
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("AGENTMEMORY_COLOR") == "always":
+        return True
+    return sys.stderr.isatty()
+
+
+def log(message: str, *, wrote: bool = False) -> None:
     """Write one line to stderr with the agentmemory prefix.
 
     Hook stdout is reserved for the JSON response the agent reads, so every
@@ -67,7 +88,12 @@ def log(message: str) -> None:
 
     Args:
         message: Text to print.
+        wrote: Mark a line that records memory being written. It prints green
+            on a terminal, so a developer watching a commit scroll past sees
+            that something was remembered.
     """
+    if wrote and color_enabled():
+        message = f"{GREEN}{message}{RESET}"
     print(f"[agentmemory v{VERSION}] {message}", file=sys.stderr)
 
 

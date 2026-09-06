@@ -288,6 +288,7 @@ def main() -> int:
     index: Path = refresh_index(root)
     if not args.no_stage:
         stage(root, [path, index, *retired])
+    log(f"{adr_id} promoted in {path.relative_to(root)}", wrote=True)
     print(path.relative_to(root))
     return 0
 
