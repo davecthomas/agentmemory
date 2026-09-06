@@ -35,7 +35,7 @@ news, what's new, what happened, what did I miss, catch me up, recent decisions,
 
    **Decisions you should know** — one bullet per ADR line and per non-candidate note that changes how someone works in this repo. Keep the ADR id and, when the line says `replaces`, say what it replaced. Mark `_(not injected)_` ADRs as "reachable with the `memory` skill".
 
-   **Unreviewed candidates: N** — one bullet each, then one sentence: promote with `adr-promoter`, or delete the entry from the note file. Omit the section when N is 0.
+   **Unreviewed candidates: N** — one bullet each, then one sentence: promote with `adr-promoter`, or dismiss it with `memory-note.py --dismiss <file> <entry>`. Omit the section when N is 0.
 
 6. Keep the whole report under 250 words. Quote the digest's decision text; do not invent mechanisms it does not mention.
 

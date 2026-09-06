@@ -38,3 +38,4 @@ python3 "$HOME/.agent/shared-repo-memory/memory-note.py" \
 - The script appends to today's note file and stages it. Do not commit.
 - Tell the developer in one line that a note was recorded and where.
 - A note that turns out to be architectural gets promoted later with `adr-promoter`; do not promote from here.
+- To clear a hook-captured candidate that is not a decision: `memory-note.py --dismiss <notes-file> <entry-number>`. It stays in the file marked reviewed.
