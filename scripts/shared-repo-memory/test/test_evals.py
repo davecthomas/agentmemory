@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import common
-from conftest import SCRIPTS, run_script
+from conftest import SCRIPTS, adr_ids, run_script
 
 EVALS: Path = SCRIPTS.parents[1] / "evals"
 
@@ -164,9 +164,10 @@ def test_check_memory_detects_duplicate_ids_and_dangling_supersedes(repo: Path) 
     # What a merge of two concurrent branches leaves behind: a second file
     # claiming the same id, listed under that id in the index.
     adr_dir = repo / common.ADR_DIR
-    clash = adr_dir / "ADR-0001-second.md"
+    first_id = adr_ids(repo)[0]
+    clash = adr_dir / f"{first_id}-second.md"
     clash.write_text(
-        (adr_dir / "ADR-0001-first.md")
+        (adr_dir / f"{first_id}-first.md")
         .read_text(encoding="utf-8")
         .replace("First", "Second"),
         encoding="utf-8",
@@ -174,12 +175,12 @@ def test_check_memory_detects_duplicate_ids_and_dangling_supersedes(repo: Path) 
     index = adr_dir / "INDEX.md"
     index.write_text(
         index.read_text(encoding="utf-8")
-        + "| ADR-0001 | [Second](ADR-0001-second.md) | accepted | 2026-01-01 | yes |\n",
+        + f"| {first_id} | [Second]({first_id}-second.md) | accepted | 2026-01-01 | yes |\n",
         encoding="utf-8",
     )
     problems = "\n".join(_check(repo))
-    assert "ADR-0001 is claimed by 2 files" in problems
-    assert "INDEX.md: ADR-0001 appears in 2 rows" in problems
+    assert f"{first_id} is claimed by 2 files" in problems
+    assert f"INDEX.md: {first_id} appears in 2 rows" in problems
 
 
 def test_check_memory_flags_supersedes_that_names_no_adr(repo: Path) -> None:

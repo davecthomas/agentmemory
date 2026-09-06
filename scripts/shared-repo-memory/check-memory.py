@@ -72,8 +72,7 @@ def check_adrs(root: Path) -> list[str]:
                 problems.append(f"{rel}: frontmatter lacks {key}")
         if not isinstance(raw_meta.get("must_read"), bool):
             problems.append(f"{rel}: must_read must be true or false")
-        expected: str = adr["path"].name.split("-", 2)
-        expected_id: str = f"{expected[0]}-{expected[1]}"
+        expected_id: str = common.adr_id_from_name(adr["path"].name)
         if raw_meta.get("id") != expected_id:
             problems.append(f"{rel}: id {raw_meta.get('id')!r} does not match filename")
         for heading in common.ADR_SECTIONS:

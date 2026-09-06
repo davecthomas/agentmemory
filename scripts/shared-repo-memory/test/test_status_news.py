@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import common
-from conftest import run_git, run_script
+from conftest import adr_ids, run_git, run_script
 
 
 def test_status_and_news_before_and_after_opt_in(repo: Path) -> None:
@@ -35,13 +35,13 @@ def test_status_and_news_before_and_after_opt_in(repo: Path) -> None:
     assert "Opted in: yes" in status.stdout
     assert "ADRs: 1 (1 must-read, 0 superseded)" in status.stdout
     assert "Note files: 1" in status.stdout
-    assert "Must-read: ADR-0001" in status.stdout
+    assert f"Must-read: {adr_ids(repo)[0]}" in status.stdout
     assert "Wiring: complete" in status.stdout
 
     news = run_script("memory-news.py", cwd=repo)
     assert news.returncode == 0, news.stderr
     assert "Noted thing" in news.stdout
-    assert "ADR-0001" in news.stdout and "Keep it simple" in news.stdout
+    assert adr_ids(repo)[0] in news.stdout and "Keep it simple" in news.stdout
     assert "add src" in news.stdout
 
     with_context = run_script("memory-status.py", "--context", cwd=repo)
