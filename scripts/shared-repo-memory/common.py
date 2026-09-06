@@ -516,6 +516,18 @@ def list_adrs(root: Path) -> list[dict[str, Any]]:
     return adrs
 
 
+def note_date(path: Path) -> str:
+    """``notes/2026-09-05--alice.md`` -> ``2026-09-05``; plain daily files too.
+
+    Args:
+        path: A note file.
+
+    Returns:
+        str: The ISO date prefix of the filename.
+    """
+    return path.stem.split("--", 1)[0]
+
+
 def list_notes(root: Path, window_days: int | None = None) -> list[Path]:
     """Return decision-note files, newest first, optionally within a window.
 
@@ -526,11 +538,15 @@ def list_notes(root: Path, window_days: int | None = None) -> list[Path]:
     Returns:
         list[Path]: Note files sorted newest first.
     """
-    notes: list[Path] = sorted((root / NOTES_DIR).glob("????-??-??.md"), reverse=True)
+    notes: list[Path] = sorted(
+        (root / NOTES_DIR).glob("????-??-??*.md"),
+        key=lambda p: (note_date(p), p.name),
+        reverse=True,
+    )
     if window_days is None:
         return notes
     cutoff: str = today(utc_now() - timedelta(days=window_days))
-    return [note for note in notes if note.stem >= cutoff]
+    return [note for note in notes if note_date(note) >= cutoff]
 
 
 def note_index(
@@ -556,7 +572,7 @@ def note_index(
             match = re.search(r"^\*\*Decision:\*\*\s*(.+)$", block, re.MULTILINE)
             if match:
                 flag = " (candidate)" if "**Candidate:** true" in block else ""
-                lines.append(f"- {note.stem}: {match.group(1).strip()}{flag}")
+                lines.append(f"- {note_date(note)}: {match.group(1).strip()}{flag}")
     return lines
 
 

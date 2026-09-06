@@ -15,6 +15,10 @@ sys.path.insert(0, str(SCRIPTS))
 
 import common  # noqa: E402
 
+# Generated hooks resolve scripts from this variable first, so a test repo's
+# hooks run the checkout's code rather than whatever is installed in $HOME.
+os.environ["AGENTMEMORY_SCRIPTS"] = str(SCRIPTS)
+
 
 def run_git(root: Path, *args: str) -> str:
     return subprocess.run(

@@ -71,19 +71,27 @@ def render_entry(
     return "\n".join(lines) + "\n\n"
 
 
-def append_note(root: Path, entry: str, *, date: str | None = None) -> Path:
+def append_note(
+    root: Path, entry: str, *, date: str | None = None, author: str | None = None
+) -> Path:
     """Append an entry to the day's note file, creating it with a header.
+
+    The file is ``YYYY-MM-DD--<author>.md`` when an author is given, so two
+    people writing notes on the same day never edit the same file and never
+    merge-conflict. Plain ``YYYY-MM-DD.md`` files from before remain valid.
 
     Args:
         root: Repository root.
         entry: Rendered entry from ``render_entry``.
         date: ``YYYY-MM-DD`` override; today when omitted.
+        author: Author slug for the per-author filename.
 
     Returns:
         Path: The note file.
     """
     day: str = date or today()
-    path: Path = root / NOTES_DIR / f"{day}.md"
+    name: str = f"{day}--{author}.md" if author else f"{day}.md"
+    path: Path = root / NOTES_DIR / name
     existing: str = read_text(path)
     if not existing:
         existing = f"# Decision notes {day}\n\n"
@@ -106,15 +114,16 @@ def main() -> int:
     if root is None:
         log("memory-note: not inside a git repository")
         return 1
+    author: str = author_slug(root)
     entry: str = render_entry(
         decision=args.decision,
         why=args.why,
-        author=author_slug(root),
+        author=author,
         branch=current_branch(root),
         alternatives=args.alternatives,
         scope=args.scope,
     )
-    path: Path = append_note(root, entry)
+    path: Path = append_note(root, entry, author=author)
     if not args.no_stage:
         stage(root, [path])
     print(str(path.relative_to(root)))

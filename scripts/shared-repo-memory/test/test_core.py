@@ -133,7 +133,7 @@ def test_memory_note_cli(repo: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     rel = result.stdout.strip()
-    assert rel == f"{common.NOTES_DIR}/{common.today()}.md"
+    assert rel == f"{common.NOTES_DIR}/{common.today()}--alice.md"
     assert "**Decision:** D" in (repo / rel).read_text(encoding="utf-8")
     assert rel in run_git(repo, "diff", "--cached", "--name-only")
 

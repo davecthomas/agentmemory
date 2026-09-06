@@ -43,7 +43,7 @@ MAX_SESSIONS: int = 20
 
 
 def notes_size(root: Path) -> int:
-    """Size in bytes of today's note file, 0 when absent.
+    """Total size in bytes of today's note files (all authors), 0 when none.
 
     Args:
         root: Repository root.
@@ -51,8 +51,7 @@ def notes_size(root: Path) -> int:
     Returns:
         int: Byte size.
     """
-    path = root / NOTES_DIR / f"{today()}.md"
-    return path.stat().st_size if path.is_file() else 0
+    return sum(p.stat().st_size for p in (root / NOTES_DIR).glob(f"{today()}*.md"))
 
 
 def record_session(root: Path, session_id: str) -> None:
