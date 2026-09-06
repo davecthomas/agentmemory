@@ -1,5 +1,5 @@
 {
-  "_comment": "Questions a fresh session should answer from this repo's decision memory. must_mention terms are matched case-insensitively; any one alternative inside a nested list counts. expected is the reference answer for --judge. Questions tagged holdout were written from git history and AGENTS.md, not from the ADRs, so they measure gaps as well as coverage.",
+  "_comment": "Questions a fresh session should answer from this repo's decision memory. must_mention terms are matched case-insensitively; any one alternative inside a nested list counts. expected is the reference answer for --judge. Questions tagged holdout were written from git history and AGENTS.md, not from the ADRs, so they measure gaps as well as coverage. Questions marked quick form the --quick tier.",
   "questions": [
     {
       "id": "storage-location",
@@ -13,7 +13,8 @@
           "no single"
         ]
       ],
-      "expected": "Under .agents/memory/ in the repo. The .agents namespace is agent-neutral: no single vendor's directory owns repo-wide state, and the memory travels with clones and PRs."
+      "expected": "Under .agents/memory/ in the repo. The .agents namespace is agent-neutral: no single vendor's directory owns repo-wide state, and the memory travels with clones and PRs.",
+      "quick": true
     },
     {
       "id": "no-service",
@@ -45,7 +46,8 @@
           "/agentmemory"
         ]
       ],
-      "expected": "No. A repo opts in by committing .agents/memory/config.json, written by bootstrap-repo.py --init (the agentmemory skill, /agentmemory init). Without that file every hook exits silently."
+      "expected": "No. A repo opts in by committing .agents/memory/config.json, written by bootstrap-repo.py --init (the agentmemory skill, /agentmemory init). Without that file every hook exits silently.",
+      "quick": true
     },
     {
       "id": "capture-unit",
@@ -71,7 +73,8 @@
           "background"
         ]
       ],
-      "expected": "Two ways: a decision note written by the agent or a human when a non-obvious choice is made, and a candidate note appended by the post-commit hook when a commit touches decision_surfaces or has a Decision: line. Per-turn capture discarded the why and cost a background claude -p session per turn to reconstruct it, publishing almost nothing."
+      "expected": "Two ways: a decision note written by the agent or a human when a non-obvious choice is made, and a candidate note appended by the post-commit hook when a commit touches decision_surfaces or has a Decision: line. Per-turn capture discarded the why and cost a background claude -p session per turn to reconstruct it, publishing almost nothing.",
+      "quick": true
     },
     {
       "id": "commit-capture-rule",
@@ -121,7 +124,8 @@
           "words"
         ]
       ],
-      "expected": "In order: the ADR INDEX, the Decision section of every must_read ADR newest first, notes from the last notes_window_days, then local/catchup.md. Bounded by context_budget_words (default 2500); later blocks are dropped and a trailing line names what was omitted."
+      "expected": "In order: the ADR INDEX, the Decision section of every must_read ADR newest first, notes from the last notes_window_days, then local/catchup.md. Bounded by context_budget_words (default 2500); later blocks are dropped and a trailing line names what was omitted.",
+      "quick": true
     },
     {
       "id": "post-compact",
@@ -243,7 +247,8 @@
           "skip"
         ]
       ],
-      "expected": "Payload fingerprint, then process ancestry, then environment variables, then an UnknownAdapter that skips instead of guessing, because falling through to Codex misattributed shards and spawned bootstraps with the wrong credentials."
+      "expected": "Payload fingerprint, then process ancestry, then environment variables, then an UnknownAdapter that skips instead of guessing, because falling through to Codex misattributed shards and spawned bootstraps with the wrong credentials.",
+      "quick": true
     },
     {
       "id": "holdout-uninstall-safety",
@@ -332,7 +337,8 @@
           "review"
         ]
       ],
-      "expected": "On 2026-09-05 the memory system was rebuilt as v0.5 across a run of pull requests by davecthomas: per-turn capture was replaced by decision notes and commit-time capture, repos now opt in via config.json, Claude Code is the only runtime, and the session context is one budgeted block; those decisions are ADR-0019 to ADR-0022, with ADR-0023 pinning black. Several decision notes were recorded (hold-out eval questions, check-memory in the pre-commit hook, post-commit capture timing). One hook-captured candidate note is unreviewed and should be promoted or deleted."
+      "expected": "On 2026-09-05 the memory system was rebuilt as v0.5 across a run of pull requests by davecthomas: per-turn capture was replaced by decision notes and commit-time capture, repos now opt in via config.json, Claude Code is the only runtime, and the session context is one budgeted block; those decisions are ADR-0019 to ADR-0022, with ADR-0023 pinning black. Several decision notes were recorded (hold-out eval questions, check-memory in the pre-commit hook, post-commit capture timing). One hook-captured candidate note is unreviewed and should be promoted or deleted.",
+      "quick": true
     }
   ]
 }

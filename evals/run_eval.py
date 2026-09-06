@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,8 @@ JUDGE_PROMPT: str = (
     "detail; penalise invented mechanisms."
 )
 TOKENS_PER_WORD: float = 1.3
+DEFAULT_MODEL: str = "claude-haiku-4-5-20251001"
+DEFAULT_CONCURRENCY: int = 6
 ERROR_PREFIX: str = "[claude exited"
 MAX_FAILURE_RATE: float = 0.2
 SYSTEM_PROMPT: str = (
@@ -308,10 +311,26 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=None)
     parser.add_argument("--questions", default=str(HERE / "questions.json"))
-    parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"answer model; default {DEFAULT_MODEL} for speed, 'default' for the CLI default",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="the questions marked quick, none vs memory, no judge; about a minute",
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=DEFAULT_CONCURRENCY, help="parallel calls"
+    )
     parser.add_argument("--limit", type=int, default=0, help="first N questions only")
     parser.add_argument("--only", default=None, help="comma-separated question ids")
-    parser.add_argument("--conditions", default="none,legacy,memory")
+    parser.add_argument(
+        "--conditions",
+        default="none,memory",
+        help="add legacy to compare against the v0.4 block (slower)",
+    )
     parser.add_argument(
         "--legacy-ref", default="29a591a", help="commit holding the v0.4 memory tree"
     )
@@ -340,6 +359,11 @@ def main() -> int:
     questions: list[dict[str, Any]] = json.loads(Path(args.questions).read_text())[
         "questions"
     ]
+    if args.model == "default":
+        args.model = None
+    if args.quick:
+        questions = [q for q in questions if q.get("quick")]
+        args.judge = False
     if args.only:
         wanted = set(args.only.split(","))
         questions = [q for q in questions if q["id"] in wanted]
@@ -363,76 +387,82 @@ def main() -> int:
         )
         conditions = [c for c in conditions if c != "legacy"]
 
+    neutral = Path(tempfile.mkdtemp(prefix="agentmemory-eval-"))
+
+    def build_prompt(q: dict[str, Any], cond: str) -> str:
+        if cond == "memory" and q.get("input") == "news":
+            return f"Repository news digest:\n\n{digest}\n\n---\n\nQuestion: {q['question']}"
+        if cond == "memory":
+            return f"Repository decision memory:\n\n{context}\n\n---\n\nQuestion: {q['question']}"
+        if cond == "legacy":
+            return f"Repository decision memory:\n\n{legacy}\n\n---\n\nQuestion: {q['question']}"
+        return q["question"]
+
+    def run_one(q: dict[str, Any], cond: str) -> dict[str, Any]:
+        prompt = build_prompt(q, cond)
+        if args.dry_run:
+            return {"score": None, "prompt_words": common.word_count(prompt)}
+        scores: list[float] = []
+        judged: list[float] = []
+        answers: list[str] = []
+        missed: list[str] = []
+        failed = 0
+        started = time.time()
+        for _ in range(max(1, args.runs)):
+            answer = ask(prompt, model=args.model, cwd=neutral, timeout=args.timeout)
+            answers.append(answer)
+            if answer.startswith(ERROR_PREFIX):
+                failed += 1
+                scores.append(0.0)
+                missed = [str(x) for x in q["must_mention"]]
+                continue
+            value, missed = score(answer, q["must_mention"])
+            scores.append(value)
+            if args.judge and q.get("expected"):
+                graded = judge(
+                    q["question"],
+                    q["expected"],
+                    answer,
+                    model=args.judge_model or args.model,
+                    cwd=neutral,
+                    timeout=args.timeout,
+                )
+                if graded is not None:
+                    judged.append(graded)
+        return {
+            "score": round(sum(scores) / len(scores), 3),
+            "spread": spread(scores),
+            "judge": round(sum(judged) / len(judged), 3) if judged else None,
+            "runs": len(scores),
+            "failed": failed,
+            "missed": missed,
+            "seconds": round(time.time() - started, 1),
+            "answers": answers,
+        }
+
+    jobs = [(q, cond) for q in questions for cond in conditions]
+    with ThreadPoolExecutor(max_workers=max(1, args.concurrency)) as pool:
+        results = list(pool.map(lambda jc: run_one(*jc), jobs))
     rows: list[dict[str, Any]] = []
     calls: int = 0
     failures: int = 0
-    neutral = Path(tempfile.mkdtemp(prefix="agentmemory-eval-"))
     for q in questions:
         row: dict[str, Any] = {"id": q["id"], "question": q["question"], "results": {}}
         for cond in conditions:
-            prompt: str = q["question"]
-            if cond == "memory" and q.get("input") == "news":
-                prompt = f"Repository news digest:\n\n{digest}\n\n---\n\nQuestion: {q['question']}"
-            elif cond == "memory":
-                prompt = f"Repository decision memory:\n\n{context}\n\n---\n\nQuestion: {q['question']}"
-            elif cond == "legacy":
-                prompt = f"Repository decision memory:\n\n{legacy}\n\n---\n\nQuestion: {q['question']}"
-            if args.dry_run:
-                row["results"][cond] = {
-                    "score": None,
-                    "prompt_words": common.word_count(prompt),
-                }
-                continue
-            scores: list[float] = []
-            judged: list[float] = []
-            answers: list[str] = []
-            missed: list[str] = []
-            started = time.time()
-            for _ in range(max(1, args.runs)):
-                answer: str = ask(
-                    prompt, model=args.model, cwd=neutral, timeout=args.timeout
+            res = results[jobs.index((q, cond))]
+            row["results"][cond] = res
+            if not args.dry_run:
+                calls += res["runs"]
+                failures += res["failed"]
+                judge_text = (
+                    f"  judge {res['judge']:.2f}" if res["judge"] is not None else ""
                 )
-                calls += 1
-                if answer.startswith(ERROR_PREFIX):
-                    failures += 1
-                    print(f"{q['id']:<28} {cond:<7} FAILED {answer[:80]}", flush=True)
-                    scores.append(0.0)
-                    answers.append(answer)
-                    missed = [str(m) for m in q["must_mention"]]
-                    continue
-                value, missed = score(answer, q["must_mention"])
-                scores.append(value)
-                answers.append(answer)
-                if args.judge and q.get("expected"):
-                    graded = judge(
-                        q["question"],
-                        q["expected"],
-                        answer,
-                        model=args.judge_model or args.model,
-                        cwd=neutral,
-                        timeout=args.timeout,
-                    )
-                    if graded is not None:
-                        judged.append(graded)
-            mean_score = round(sum(scores) / len(scores), 3)
-            row["results"][cond] = {
-                "score": mean_score,
-                "spread": spread(scores),
-                "judge": round(sum(judged) / len(judged), 3) if judged else None,
-                "runs": len(scores),
-                "missed": missed,
-                "seconds": round(time.time() - started, 1),
-                "answers": answers,
-            }
-            judge_text = (
-                f"  judge {row['results'][cond]['judge']:.2f}" if judged else ""
-            )
-            print(
-                f"{q['id']:<28} {cond:<7} {mean_score:5.2f}"
-                f"{'±' + str(spread(scores)) if args.runs > 1 else ''}{judge_text}"
-                f"  missed: {', '.join(missed) or '-'}",
-                flush=True,
-            )
+                print(
+                    f"{q['id']:<28} {cond:<7} {res['score']:5.2f}"
+                    f"{'±' + str(res['spread']) if args.runs > 1 else ''}{judge_text}"
+                    f"  missed: {', '.join(res['missed']) or '-'}",
+                    flush=True,
+                )
         rows.append(row)
 
     if calls and failures / calls > MAX_FAILURE_RATE:

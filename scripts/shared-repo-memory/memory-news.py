@@ -21,6 +21,7 @@ import argparse
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from common import (
@@ -157,8 +158,7 @@ def parse_commits(root: Path, limit: int) -> list[Commit]:
         [
             "log",
             f"--max-count={limit}",
-            "--format=%h%x1f%ad%x1f%s",
-            "--date=short",
+            "--format=%h%x1f%at%x1f%s",
             "--",
             ".",
             f":(exclude){MEMORY_DIR}",
@@ -170,7 +170,10 @@ def parse_commits(root: Path, limit: int) -> list[Commit]:
         parts = line.split("\x1f")
         if len(parts) != 3:
             continue
-        sha, date, subject = parts
+        sha, epoch, subject = parts
+        # Notes are dated in UTC; take the commit date in UTC too so one
+        # day's work never splits across two headings at midnight.
+        date = datetime.fromtimestamp(int(epoch), UTC).strftime("%Y-%m-%d")
         branch_m = re.match(r"^([a-z]+/[\w.-]+): ", subject)
         pr_m = re.search(r"\(#(\d+)\)\s*$", subject)
         commits.append(
