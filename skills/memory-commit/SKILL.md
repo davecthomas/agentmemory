@@ -38,7 +38,11 @@ Hooks and skills write memory but never commit it (ADR-0004). This is the explic
 
    The script stages the memory paths and commits them with the drafted message. It commits nothing else and never pushes.
 
-4. Report the commit and say it belongs in the same pull request as the code it explains.
+4. Report the write in one line, then say it belongs in the same pull request as the code it explains:
+
+   ```
+   Recorded: 2 decisions and 1 ADR committed -> <sha>
+   ```
 
 ## Rules
 

@@ -38,12 +38,30 @@ def test_nudges_once_when_work_unrecorded(repo: Path) -> None:
     assert _stop(repo, active=True) == ""
 
 
-def test_silent_when_a_note_was_written(repo: Path) -> None:
+def test_reports_a_written_note_once_then_is_silent(repo: Path) -> None:
     assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
     _start(repo)
     (repo / "x.py").write_text("x", encoding="utf-8")
     run_script("memory-note.py", "--decision", "D", "--why", "W", cwd=repo)
-    assert _stop(repo) == ""
+    first = json.loads(_stop(repo))
+    assert first["decision"] == "block"
+    assert "1 decision note was recorded" in first["reason"]
+    assert common.NOTES_DIR in first["reason"]
+    assert "memory-note" not in first["reason"]  # a report, not the nudge
+    assert _stop(repo) == ""  # said once
+
+
+def test_reports_a_hook_written_note(repo: Path) -> None:
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "opt in")
+    _start(repo)
+    (repo / "docs").mkdir(exist_ok=True)
+    (repo / "docs" / "d.md").write_text("x\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "add doc\n\nChosen because it is simpler.")
+    reported = json.loads(_stop(repo))
+    assert "decision note was recorded" in reported["reason"]
 
 
 def test_memory_only_changes_do_not_count(repo: Path) -> None:

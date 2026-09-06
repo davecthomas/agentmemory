@@ -36,5 +36,16 @@ python3 "$HOME/.agent/shared-repo-memory/memory-note.py" \
 - Decision is one sentence in the active voice. Why states the constraint or trade-off, not a restatement of the decision.
 - Scope lists the paths the decision governs, when it is not repo-wide.
 - The script appends to today's note file and stages it. Do not commit.
-- Tell the developer in one line that a note was recorded and where.
 - A note that turns out to be architectural gets promoted later with `adr-promoter`; do not promote from here.
+
+## Report the write
+
+Memory that gets written silently teaches a developer nothing about what the system captures. End with exactly one line naming what was written and where, in this form:
+
+```
+Recorded: <what> -> <path>
+```
+
+One line, no ceremony, even when the developer did not ask to be told. When nothing was written, say that instead.
+
+Example: `Recorded: decision on retry backoff -> .agents/memory/notes/2026-09-06--dave.md`

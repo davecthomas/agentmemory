@@ -110,7 +110,8 @@ Agent makes a         ->  memory-note skill appends 3 lines to
 non-obvious choice        .agents/memory/notes/YYYY-MM-DD--<author>.md (staged)
 
 Turn ends with repo   ->  Stop hook asks once per session: record a note with
-changes but no note       memory-note, or say no decision was made. No LLM spawn.
+changes but no note       memory-note, or say no decision was made. When a note
+                          was written, it says so instead. No LLM spawn.
 
 Developer commits     ->  post-commit hook writes a note when the commit touches
                           docs/**, carries a "Decision:" line, or its body explains
