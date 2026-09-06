@@ -259,6 +259,11 @@ def main() -> int:
         )
     if not (title and context and decision):
         parser.error("--title, --context and --decision are required (or --from-note)")
+    if not alternatives.strip():
+        log(
+            "warning: no --alternatives given; the pre-commit memory check rejects an "
+            "accepted ADR with placeholder Alternatives. Add them before committing."
+        )
 
     adr_id: str = next_id(root)
     path: Path = root / ADR_DIR / f"{adr_id}-{slugify(title)}.md"

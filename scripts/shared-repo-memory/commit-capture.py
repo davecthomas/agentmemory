@@ -72,7 +72,11 @@ def strip_branch_prefix(subject: str, branch: str) -> str:
         str: Subject without the prefix the commit skill adds.
     """
     prefix: str = f"{branch}: "
-    return subject[len(prefix) :] if branch and subject.startswith(prefix) else subject
+    if branch and subject.startswith(prefix):
+        return subject[len(prefix) :]
+    # Any <type>/<slug>: prefix, so subjects written on another branch or
+    # carried through a squash merge are cleaned the same way.
+    return re.sub(r"^[a-z]+/[\w.-]+: ", "", subject)
 
 
 def decision_line(body: str) -> str:

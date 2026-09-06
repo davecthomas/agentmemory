@@ -210,6 +210,13 @@ def test_capture_strips_structured_message_scaffolding(repo: Path) -> None:
     assert "=======" not in text and "Actions" not in text and "touch docs" not in text
 
 
+def test_capture_strips_foreign_branch_prefix(repo: Path) -> None:
+    capture = load("commit-capture.py")
+    _commit(repo, "docs/x.md", "feat/elsewhere: pick Y\n\nY because Z.")
+    text = capture.capture(repo).read_text(encoding="utf-8")
+    assert "**Decision:** pick Y" in text
+
+
 def test_capture_ignores_memory_only_commits(repo: Path) -> None:
     capture = load("commit-capture.py")
     _commit(repo, f"{common.NOTES_DIR}/2026-01-01.md", "note only")
@@ -328,6 +335,15 @@ def test_promote_supersedes_marks_old_adr(repo: Path) -> None:
     assert "d2" in common.build_memory_context(
         repo
     ) and "\n\nd\n" not in common.build_memory_context(repo)
+
+
+def test_promote_warns_without_alternatives(repo: Path) -> None:
+    from conftest import run_script
+
+    result = run_script(
+        "promote-adr.py", "--title", "T", "--context", "c", "--decision", "d", cwd=repo
+    )
+    assert result.returncode == 0 and "no --alternatives" in result.stderr
 
 
 def test_promote_requires_fields(repo: Path) -> None:
