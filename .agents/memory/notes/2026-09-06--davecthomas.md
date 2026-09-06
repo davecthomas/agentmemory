@@ -34,3 +34,10 @@
 **Commit:** 28c3e54
 **Source:** commit-capture
 
+## 2026-09-06T18:23Z · davecthomas · fix/duplicate-adr-ids
+
+**Decision:** catch duplicate ADR ids, and fix two bugs the attempt exposed
+**Why:** Closes #54. Two branches that each promote an ADR allocate the same id and merge into a repository where two decisions claim it. check-memory passed that state, because it only verified that index rows and files correspond, which they still do. It now fails on an id claimed by more than one file, an id listed twice in the index, and a supersedes or superseded_by value that does not resolve to exactly one ADR. Committing that change hit two bugs of its own. memory-commit passed the message on stdin, which a pre-commit hook inherits, and it truncated the failure to 300 characters, which hid the cause. The cause was that git exports GIT_DIR and GIT_INDEX_FILE to hooks, so every test fixture that shells out to git init was pointed at the real repository and errored at setup. Closes #54
+**Commit:** 6ef34b3
+**Source:** commit-capture
+
