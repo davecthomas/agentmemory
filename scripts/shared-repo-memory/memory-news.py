@@ -42,6 +42,7 @@ from common import (
     stamp,
 )
 
+PROMOTION_THRESHOLD: int = 3
 MAX_DAYS: int = 7
 MAX_CLUSTERS_PER_DAY: int = 6
 MAX_ITEMS_PER_CLUSTER: int = 6
@@ -52,6 +53,7 @@ DECISION_WORDS: int = 30
 @dataclass
 class Note:
     date: str
+    scope: list[str]
     when: str
     author: str
     branch: str
@@ -129,9 +131,11 @@ def parse_notes(root: Path, days: int) -> list[Note]:
                 m = re.search(rf"^\*\*{key}:\*\*\s*(.+)$", block, re.MULTILINE)
                 return m.group(1).strip() if m else ""
 
+            scope_line = grab("Scope")
             notes.append(
                 Note(
                     date=note_date(path),
+                    scope=[s.strip() for s in scope_line.split(",") if s.strip()],
                     when=parts[0] if parts else note_date(path),
                     author=author,
                     branch=branch,
@@ -273,6 +277,31 @@ def write_watermark(root: Path) -> None:
     dump_json(path, state)
 
 
+def promotion_candidates(
+    notes: list[Note], threshold: int
+) -> list[tuple[str, list[Note]]]:
+    """Group notes by the path they scope, where a group is large enough to promote.
+
+    Notes are cheap and ADR promotion is explicit (ADR-0005), and nothing
+    bridged the two except somebody noticing. Several notes scoping one path
+    inside the window is the signal that a decision there has settled and
+    deserves an ADR.
+
+    Args:
+        notes: Parsed notes, newest first.
+        threshold: How many notes on one path make a candidate.
+
+    Returns:
+        list[tuple[str, list[Note]]]: ``(path, notes)``, largest group first.
+    """
+    by_path: dict[str, list[Note]] = defaultdict(list)
+    for note in notes:
+        for scope in note.scope:
+            by_path[scope].append(note)
+    groups = [(p, ns) for p, ns in by_path.items() if len(ns) >= threshold]
+    return sorted(groups, key=lambda g: (-len(g[1]), g[0]))
+
+
 def news(root: Path, days: int, *, since_last_read: bool = True) -> str:
     """Build the digest.
 
@@ -351,6 +380,16 @@ def news(root: Path, days: int, *, since_last_read: bool = True) -> str:
         if adrs.get(day):
             out += ["### ADRs", *adrs[day], ""]
 
+    candidates = promotion_candidates(notes, PROMOTION_THRESHOLD)
+    if candidates:
+        out += ["## Worth promoting to an ADR", ""]
+        for path, group in candidates[:3]:
+            dates = ", ".join(sorted({n.date for n in group}))
+            out.append(
+                f"- `{path}` has {len(group)} decisions noted ({dates}). "
+                "If one governs the code now, promote it with `adr-promoter`."
+            )
+        out.append("")
     if len(out) == 2:
         out.append(
             "No decision memory yet. Run `/memory-bootstrap` to seed it from docs and history."
