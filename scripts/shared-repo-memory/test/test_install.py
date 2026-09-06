@@ -68,6 +68,27 @@ def test_install_then_uninstall_roundtrip(home: Path) -> None:
     assert data["theme"] == "dark"
 
 
+def test_uninstall_removes_legacy_and_spares_foreign_skills(home: Path) -> None:
+    uninstall = common.load_module(SCRIPTS / "uninstall.py")
+    skills_root = home / ".agent" / "skills"
+    claude_skills = home / ".claude" / "skills"
+    other_root = home / "other-checkout" / "skills"
+    for base in (skills_root, claude_skills, other_root):
+        base.mkdir(parents=True, exist_ok=True)
+
+    legacy = uninstall.LEGACY_SKILLS[0]
+    (skills_root / legacy).mkdir()
+    (claude_skills / legacy).symlink_to(skills_root / legacy)
+    (other_root / "memory").mkdir()
+    (claude_skills / "memory").symlink_to(other_root / "memory")
+
+    uninstall.remove_skills(skills_root, claude_skills, ["memory"], dry_run=False)
+
+    assert not (claude_skills / legacy).exists() and not (skills_root / legacy).exists()
+    assert (claude_skills / "memory").is_symlink()  # points elsewhere: untouched
+    assert (other_root / "memory").is_dir()
+
+
 def test_install_dry_run_writes_nothing(home: Path) -> None:
     result = run_script(
         "install.py", "--dry-run", "--repo-root", str(CHECKOUT), cwd=CHECKOUT
