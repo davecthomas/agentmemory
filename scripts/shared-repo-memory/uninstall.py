@@ -36,6 +36,18 @@ from common import (
 
 HERE: Path = Path(__file__).resolve().parent
 
+# Skills earlier versions installed and this one no longer ships. Without this
+# list an uninstall removes only what the current checkout ships, so a renamed
+# or dropped skill stays in ~/.claude/skills forever, and an agent can still
+# load instructions for a pipeline that no longer exists. Never remove a name
+# from this list; add to it whenever a shipped skill is dropped or renamed.
+LEGACY_SKILLS: tuple[str, ...] = (
+    "adr-inspector",
+    "memory-checkpointer",
+    "memory-writer",
+    "shard-enricher",
+)
+
 
 def unwire_claude(settings_path: Path, root: Path, *, dry_run: bool) -> None:
     """Remove hook entries pointing into ``root`` and the two flags.
@@ -88,7 +100,11 @@ def unwire_claude(settings_path: Path, root: Path, *, dry_run: bool) -> None:
 def remove_skills(
     skills_root: Path, claude_skills: Path, names: list[str], *, dry_run: bool
 ) -> None:
-    """Remove shipped skill symlinks and copies.
+    """Remove agentmemory skill symlinks and canonical copies.
+
+    Removes the skills this checkout ships plus ``LEGACY_SKILLS``. A symlink
+    is only removed when it points into ``skills_root``, so a skill of the
+    same name owned by another checkout is left alone.
 
     Args:
         skills_root: ``~/.agent/skills``.
@@ -96,7 +112,7 @@ def remove_skills(
         names: Skill names shipped by this checkout.
         dry_run: Log only.
     """
-    for name in names:
+    for name in dict.fromkeys([*names, *LEGACY_SKILLS]):
         link: Path = claude_skills / name
         if link.is_symlink() and link.resolve() == (skills_root / name).resolve():
             log(f"{'would remove' if dry_run else 'removing'} {link}")
