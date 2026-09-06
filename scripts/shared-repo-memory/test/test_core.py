@@ -530,3 +530,46 @@ def test_adr_id_from_name_reads_both_shapes() -> None:
     assert common.adr_id_from_name("ADR-2026-09-06-a3f9-x.md") == "ADR-2026-09-06-a3f9"
     assert common.adr_id_from_name("ADR-0007-legacy-slug.md") == "ADR-0007"
     assert common.adr_id_from_name("ADR-0007-2026-thing.md") == "ADR-0007"
+
+
+def test_promoting_the_same_decision_twice_is_refused(repo: Path) -> None:
+    from conftest import run_script
+
+    args = [
+        "promote-adr.py",
+        "--title",
+        "Retries use a queue",
+        "--context",
+        "c",
+        "--decision",
+        "Queue-backed retries",
+        "--alternatives",
+        "cron",
+    ]
+    assert run_script(*args, cwd=repo).returncode == 0
+    again = run_script(*args, cwd=repo)
+    assert again.returncode != 0
+    assert "already records this decision today" in again.stderr
+    assert len(adr_ids(repo)) == 1
+
+    forced = run_script(*args, "--force", cwd=repo)
+    assert forced.returncode == 0, forced.stderr
+    assert len(adr_ids(repo)) == 2  # deliberate second copy
+
+
+def test_a_different_decision_with_the_same_title_still_promotes(repo: Path) -> None:
+    from conftest import run_script
+
+    base = [
+        "promote-adr.py",
+        "--title",
+        "Caching policy",
+        "--context",
+        "c",
+        "--alternatives",
+        "a",
+    ]
+    assert run_script(*base, "--decision", "cache for a day", cwd=repo).returncode == 0
+    second = run_script(*base, "--decision", "cache for an hour", cwd=repo)
+    assert second.returncode == 0, second.stderr
+    assert len(adr_ids(repo)) == 2
