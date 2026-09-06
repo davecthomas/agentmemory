@@ -34,6 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "decision_surfaces": ["docs/**"],
     "context_budget_words": 2500,
     "notes_window_days": 14,
+    "notes_full_days": 3,
 }
 
 # A commit body that contains one of these explains a why; the miner and the
@@ -532,12 +533,15 @@ def list_notes(root: Path, window_days: int | None = None) -> list[Path]:
     return [note for note in notes if note.stem >= cutoff]
 
 
-def note_index(root: Path, *, exclude: set[Path] | None = None) -> list[str]:
+def note_index(
+    root: Path, *, exclude: set[Path] | None = None, only: set[Path] | None = None
+) -> list[str]:
     """One line per note entry: ``- YYYY-MM-DD: <decision>``, newest first.
 
     Args:
         root: Repository root.
         exclude: Note files to skip (those already injected in full).
+        only: When given, index these files and no others.
 
     Returns:
         list[str]: Markdown bullet lines.
@@ -545,6 +549,8 @@ def note_index(root: Path, *, exclude: set[Path] | None = None) -> list[str]:
     lines: list[str] = []
     for note in list_notes(root):
         if exclude and note in exclude:
+            continue
+        if only is not None and note not in only:
             continue
         for block in reversed(re.split(r"(?m)^## ", read_text(note))[1:]):
             match = re.search(r"^\*\*Decision:\*\*\s*(.+)$", block, re.MULTILINE)
@@ -569,11 +575,13 @@ def memory_counts(root: Path) -> tuple[int, int]:
 def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> str:
     """Build the bounded Markdown block injected at session start.
 
-    Order: ADR index, the Decision section of each must-read ADR (newest
-    first), recent decision notes in full (newest first), a one-line index of
-    every older note entry so nothing recorded is invisible, then the local
-    catch-up. Later blocks are dropped once ``context_budget_words`` is
-    reached and a trailing line names what was omitted.
+    Order: ADR index (skipped when it has no rows), the Decision section of
+    each must-read ADR (newest first), notes from the last ``notes_full_days``
+    in full, decision lines only for the rest of ``notes_window_days``, a
+    one-line index of everything older so nothing recorded is invisible,
+    then the local catch-up. Later blocks are dropped once
+    ``context_budget_words`` is reached and a trailing line names what was
+    omitted.
 
     Args:
         root: Repository root.
@@ -587,7 +595,7 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
     blocks: list[tuple[str, str]] = []
 
     index_text: str = read_text(root / ADR_DIR / "INDEX.md").strip()
-    if index_text:
+    if index_text and "| ADR-" in index_text:
         blocks.append(("ADR index", index_text))
     for adr in reversed(list_adrs(root)):
         meta = adr["meta"]
@@ -595,10 +603,21 @@ def build_memory_context(root: Path, config: dict[str, Any] | None = None) -> st
             decision: str = section(adr["body"], "Decision")
             if decision:
                 blocks.append((f"{meta['id']}: {meta['title']}", decision))
-    recent: list[Path] = list_notes(root, int(cfg["notes_window_days"]))
-    for note in recent:
+    full: list[Path] = list_notes(root, int(cfg.get("notes_full_days", 3)))
+    for note in full:
         blocks.append((f"Decision notes {note.stem}", read_text(note).strip()))
-    older: list[str] = note_index(root, exclude=set(recent))
+    window: list[Path] = [
+        n for n in list_notes(root, int(cfg["notes_window_days"])) if n not in full
+    ]
+    recent_lines: list[str] = note_index(root, only=set(window))
+    if recent_lines:
+        blocks.append(
+            (
+                "Recent decisions (one line each; ask the `memory` skill for the why)",
+                "\n".join(recent_lines),
+            )
+        )
+    older: list[str] = note_index(root, exclude=set(full) | set(window))
     if older:
         blocks.append(
             (
