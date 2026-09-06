@@ -44,7 +44,13 @@ python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
 
    Use the source's date for context in the Context text; the ADR date is the promotion date.
 4. Promote sequentially so ids stay ordered. Mark `--no-must-read` for decisions that matter only within one area.
-5. Report the ADRs created with one line each, and name any decision you found but did not promote and why.
+5. Report it the way the developer cares about, in three short parts:
+
+   1. The outcome, in a sentence: their agent now starts every session knowing these decisions, and so does every teammate's agent once the ADRs are pushed.
+   2. The decisions themselves, one line each, titles only.
+   3. One closing line: they are Markdown under `.agents/memory/adr/`, so review and edit them like code, then commit.
+
+   Do not explain the mining, the scoring, or the sources unless asked. If you rejected a strong candidate, say so in one line.
 6. Do not write notes from history; notes are for decisions made now. Do not commit.
 
 ## Report the write
@@ -57,7 +63,7 @@ Recorded: <what> -> <path>
 
 One line, no ceremony, even when the developer did not ask to be told. When nothing was written, say that instead.
 
-Report the whole set in one line, then the ids:
+Report the whole set in one line:
 
 ```
 Recorded: 4 ADRs seeded from docs and history -> .agents/memory/adr/
