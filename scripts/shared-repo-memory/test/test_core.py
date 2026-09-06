@@ -454,3 +454,22 @@ def test_query_ranks_title_hits_first_and_emits_json(repo: Path) -> None:
     assert data["adrs"][0]["score"] > data["adrs"][1]["score"]
     out = run_script("memory-query.py", "--json", "cache", cwd=repo)
     assert out.returncode == 0 and '"adrs"' in out.stdout
+
+
+def test_log_colours_only_a_write_and_only_on_a_terminal(capsys, monkeypatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("AGENTMEMORY_COLOR", "always")
+    common.log("wrote a note", wrote=True)
+    common.log("ordinary line")
+    err = capsys.readouterr().err
+    assert common.GREEN in err.splitlines()[0] and common.RESET in err.splitlines()[0]
+    assert common.GREEN not in err.splitlines()[1]
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    common.log("wrote a note", wrote=True)
+    assert common.GREEN not in capsys.readouterr().err  # NO_COLOR wins
+
+    monkeypatch.delenv("AGENTMEMORY_COLOR")
+    monkeypatch.delenv("NO_COLOR")
+    common.log("wrote a note", wrote=True)
+    assert common.GREEN not in capsys.readouterr().err  # captured output is not a tty

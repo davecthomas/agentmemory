@@ -325,7 +325,7 @@ def main() -> int:
         if result.returncode != 0:
             log(f"memory-commit: commit failed: {result.stderr.strip()[:300]}")
             return 1
-        log(f"memory-commit: committed {len(paths)} memory files")
+        log(f"memory-commit: committed {len(paths)} memory files", wrote=True)
         return 0
     print(message, end="")
     for path in paths:

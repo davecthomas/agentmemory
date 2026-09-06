@@ -152,7 +152,7 @@ def main() -> int:
         return 0
     if args.stage:
         stage(root, [path])
-    log(f"decision note captured from commit into {path.relative_to(root)}")
+    log(f"decision note captured from commit into {path.relative_to(root)}", wrote=True)
     return 0
 
 

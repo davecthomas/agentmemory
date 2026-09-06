@@ -43,9 +43,9 @@ python3 "$HOME/.agent/shared-repo-memory/memory-note.py" \
 Memory that gets written silently teaches a developer nothing about what the system captures. End with exactly one line naming what was written and where, in this form:
 
 ```
-Recorded: <what> -> <path>
+**Recorded:** <what> -> <path>
 ```
 
 One line, no ceremony, even when the developer did not ask to be told. When nothing was written, say that instead.
 
-Example: `Recorded: decision on retry backoff -> .agents/memory/notes/2026-09-06--dave.md`
+Example: `**Recorded:** decision on retry backoff -> .agents/memory/notes/2026-09-06--dave.md`

@@ -21,3 +21,9 @@
 **Alternatives:** Detect and delegate when the other tool exists.
 **Scope:** skills/
 
+## 2026-09-06T14:29Z · davecthomas · feat/green-memory-writes
+
+**Decision:** Colour memory writes green on a terminal
+**Why:** a developer watching a commit scroll past should see that something was remembered; captured output stays plain so logs are not polluted
+**Scope:** scripts/
+
