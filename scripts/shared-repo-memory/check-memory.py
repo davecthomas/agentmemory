@@ -5,7 +5,7 @@ Runs from the generated ``pre-commit`` hook in every opted-in repo, and from
 CI here, so broken memory cannot be committed:
 
 * every ``INDEX.md`` row names an existing ADR file, and every ADR file has
-  a row
+  a row, and no id appears twice in either
 * every ADR has frontmatter with ``id``, ``title``, ``status``, ``date``,
   ``must_read`` and the five required sections
 * every relative Markdown link under ``.agents/memory/`` resolves
@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,6 +45,24 @@ def check_adrs(root: Path) -> list[str]:
         problems.append(f"{common.ADR_DIR}/{name}: missing from INDEX.md")
     for name in sorted(indexed - files):
         problems.append(f"INDEX.md: row points at missing {name}")
+
+    # Two people promoting on separate branches each allocate the next id
+    # against their own view of adr/, so a merge can land two decisions under
+    # one id. Nothing else notices: the rows and files still correspond.
+    by_id: dict[str, list[str]] = {}
+    for adr in common.list_adrs(root):
+        by_id.setdefault(str(adr["meta"]["id"]), []).append(adr["path"].name)
+    for adr_id, names in sorted(by_id.items()):
+        if len(names) > 1:
+            problems.append(
+                f"{adr_id} is claimed by {len(names)} files: {', '.join(sorted(names))}"
+            )
+    for adr_id, count in sorted(
+        Counter(re.findall(r"^\| (ADR-[^ |]+)", index_text, re.MULTILINE)).items()
+    ):
+        if count > 1:
+            problems.append(f"INDEX.md: {adr_id} appears in {count} rows")
+
     for adr in common.list_adrs(root):
         rel: str = adr["path"].relative_to(root).as_posix()
         meta, body = adr["meta"], adr["body"]
@@ -67,6 +86,13 @@ def check_adrs(root: Path) -> list[str]:
             and common.section(body, "Alternatives").strip() == PLACEHOLDER
         ):
             problems.append(f"{rel}: accepted ADR has placeholder Alternatives")
+        for field in ("supersedes", "superseded_by"):
+            for ref in str(raw_meta.get(field, "")).replace(",", " ").split():
+                if len(by_id.get(ref, [])) != 1:
+                    problems.append(
+                        f"{rel}: {field} names {ref}, which matches "
+                        f"{len(by_id.get(ref, []))} ADRs"
+                    )
     return problems
 
 

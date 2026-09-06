@@ -19,6 +19,14 @@ import common  # noqa: E402
 # hooks run the checkout's code rather than whatever is installed in $HOME.
 os.environ["AGENTMEMORY_SCRIPTS"] = str(SCRIPTS)
 
+# git exports GIT_DIR, GIT_INDEX_FILE and friends to every hook subprocess.
+# The suite runs from this repo's pre-commit hook, and a fixture that shells
+# out to `git init` while those point at the real repository writes into it
+# instead of the temporary one. Scrub them so a test repo is always hermetic.
+for _var in [k for k in os.environ if k.startswith("GIT_")]:
+    if _var not in {"GIT_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND"}:
+        del os.environ[_var]
+
 
 def run_git(root: Path, *args: str) -> str:
     return subprocess.run(
