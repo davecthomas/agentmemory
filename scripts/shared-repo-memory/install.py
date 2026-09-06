@@ -38,6 +38,7 @@ SCRIPTS: tuple[str, ...] = (
     "memory-status.py",
     "memory-news.py",
     "memory-bootstrap.py",
+    "memory-commit.py",
     "turn-nudge.py",
     "uninstall.py",
 )
