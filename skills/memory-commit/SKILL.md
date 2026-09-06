@@ -16,7 +16,9 @@ memory commit, commit memory, commit the notes, commit decision memory, memory s
 - The developer asks to commit notes, ADRs, or "the memory"
 - `/agentmemory status` or `news` shows memory that has never been committed
 
-Hooks and skills write memory but never commit it (ADR-0004). This is the explicit step.
+- A repository was just opted in with `/agentmemory init` and the opt-in needs committing
+
+Hooks and skills write memory but never commit it (ADR-0004). This is the explicit step, and the only one: no other skill here runs `git commit`.
 
 ---
 
@@ -47,6 +49,7 @@ Hooks and skills write memory but never commit it (ADR-0004). This is the explic
 ## Rules
 
 - One commit, memory paths only. Never mix code into it, and never commit code from this skill.
+- The opt-in edits `init` makes to `.gitignore` and `AGENTS.md` ride along, but only while their whole uncommitted diff sits inside the agentmemory block. When the script reports one as mixed with the developer's own edits, relay that and leave it to them.
 - Never push. Pushing stays with the developer.
 - Do not edit note or ADR content here. A wrong note gets fixed with `memory-note`, a wrong ADR with `adr-promoter`.
 - The message names decisions and ADRs. Setup and configuration instructions belong in `AGENTS.md` and the README, not in a commit message repeated forever. The script adds a longer pointer to the repository's first memory commit only.
