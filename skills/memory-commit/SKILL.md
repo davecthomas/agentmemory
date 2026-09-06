@@ -30,11 +30,13 @@ Hooks and skills write memory but never commit it (ADR-0004). This is the explic
 
    It prints the drafted message to stdout and the file list to stderr, changing nothing. When there is no uncommitted memory it says so and stops; report that and stop too.
 2. Show the developer the message and the files.
-3. Commit. If the repository or the developer uses a commit skill, hand it the drafted message and the paths. Otherwise:
+3. Commit, once the developer agrees:
 
    ```bash
    python3 "$HOME/.agent/shared-repo-memory/memory-commit.py" --commit
    ```
+
+   The script stages the memory paths and commits them with the drafted message. It commits nothing else and never pushes.
 
 4. Report the commit and say it belongs in the same pull request as the code it explains.
 
@@ -44,3 +46,4 @@ Hooks and skills write memory but never commit it (ADR-0004). This is the explic
 - Never push. Pushing stays with the developer.
 - Do not edit note or ADR content here. A wrong note gets fixed with `memory-note`, a wrong ADR with `adr-promoter`.
 - The message names decisions and ADRs. Setup and configuration instructions belong in `AGENTS.md` and the README, not in a commit message repeated forever. The script adds a longer pointer to the repository's first memory commit only.
+- Use only `memory-commit.py`. Another commit helper may be installed on the developer's machine, but agentmemory ships on its own and cannot depend on one being there.
