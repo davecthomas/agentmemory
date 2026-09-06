@@ -27,3 +27,10 @@
 **Why:** a developer watching a commit scroll past should see that something was remembered; captured output stays plain so logs are not polluted
 **Scope:** scripts/
 
+## 2026-09-06T14:30Z · davecthomas · feat/green-memory-writes
+
+**Decision:** print memory writes in green on a terminal
+**Why:** A developer watching a commit scroll past had no visual cue that anything was remembered. Lines that record a write now print green, and only when stderr is a terminal, so output an agent captures and output in CI stay plain. NO_COLOR turns it off and AGENTMEMORY_COLOR=always forces it on. memory-note and promote-adr gained a stderr line as well, since they only printed a path to stdout, which the developer rarely sees. In chat the same convention is markdown rather than colour, so the skills report a bold Recorded line.
+**Commit:** 28c3e54
+**Source:** commit-capture
+
