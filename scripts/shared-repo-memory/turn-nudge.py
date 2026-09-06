@@ -39,6 +39,10 @@ REASON: str = (
     "`memory-note` skill. If there was no such choice, reply that no decision "
     "note is needed and finish."
 )
+WROTE: str = (
+    "agentmemory: {n} decision note{s} {were} recorded this session in {paths}. "
+    "Tell the developer in one line what was recorded and where, then finish."
+)
 MAX_SESSIONS: int = 20
 
 
@@ -74,6 +78,7 @@ def record_session(root: Path, session_id: str) -> None:
         "started": stamp(),
         "notes_size": notes_size(root),
         "nudged": False,
+        "reported": False,
     }
     for old in sorted(sessions, key=lambda k: sessions[k].get("started", ""))[
         :-MAX_SESSIONS
@@ -105,6 +110,20 @@ def work_happened(root: Path) -> bool:
         root,
     )
     return bool(status.strip())
+
+
+def notes_written(root: Path, since: int) -> list[Path]:
+    """Today's note files that grew since the session started.
+
+    Args:
+        root: Repository root.
+        since: Total byte size of today's notes at session start.
+
+    Returns:
+        list[Path]: The note files, when the total grew.
+    """
+    files = sorted((root / NOTES_DIR).glob(f"{today()}*.md"))
+    return files if sum(f.stat().st_size for f in files) > since else []
 
 
 def should_nudge(root: Path, payload: dict[str, Any]) -> bool:
@@ -145,6 +164,31 @@ def main() -> int:
         return 0
     if should_nudge(root, payload):
         print(json.dumps({"decision": "block", "reason": REASON}))
+        return 0
+    # A note may have been written by the post-commit hook rather than by a
+    # skill, in which case nothing has told the developer. Say so once.
+    session = str(payload.get("session_id", ""))
+    state = load_json(root / LOCAL_DIR / "state.json", {})
+    info = (state.get("sessions", {}) if isinstance(state, dict) else {}).get(session)
+    if isinstance(info, dict) and not info.get("reported"):
+        written = notes_written(root, int(info.get("notes_size", 0)))
+        if written:
+            info["reported"] = True
+            dump_json(root / LOCAL_DIR / "state.json", state)
+            n = len(written)
+            print(
+                json.dumps(
+                    {
+                        "decision": "block",
+                        "reason": WROTE.format(
+                            n=n,
+                            s="" if n == 1 else "s",
+                            were="was" if n == 1 else "were",
+                            paths=", ".join(str(p.relative_to(root)) for p in written),
+                        ),
+                    }
+                )
+            )
     return 0
 
 

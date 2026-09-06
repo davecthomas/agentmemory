@@ -46,3 +46,19 @@ python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
 4. Promote sequentially so ids stay ordered. Mark `--no-must-read` for decisions that matter only within one area.
 5. Report the ADRs created with one line each, and name any decision you found but did not promote and why.
 6. Do not write notes from history; notes are for decisions made now. Do not commit.
+
+## Report the write
+
+Memory that gets written silently teaches a developer nothing about what the system captures. End with exactly one line naming what was written and where, in this form:
+
+```
+Recorded: <what> -> <path>
+```
+
+One line, no ceremony, even when the developer did not ask to be told. When nothing was written, say that instead.
+
+Report the whole set in one line, then the ids:
+
+```
+Recorded: 4 ADRs seeded from docs and history -> .agents/memory/adr/
+```

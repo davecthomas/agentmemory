@@ -46,3 +46,21 @@ python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
 - `must_read` defaults to true, which injects the Decision section at every session start. Use `--no-must-read` for decisions that matter only when touching one area; the `memory` skill still finds them.
 - The script writes the ADR, rebuilds `INDEX.md`, and stages both. Do not commit.
 - To rebuild the index alone: `promote-adr.py --reindex`.
+
+## Report the write
+
+Memory that gets written silently teaches a developer nothing about what the system captures. End with exactly one line naming what was written and where, in this form:
+
+```
+Recorded: <what> -> <path>
+```
+
+One line, no ceremony, even when the developer did not ask to be told. When nothing was written, say that instead.
+
+An ADR is the most durable thing this system writes, so say which one and whether it is must-read:
+
+```
+Recorded: ADR-0025 (must-read) agentmemory skills depend only on agentmemory's own scripts -> .agents/memory/adr/ADR-0025-...md
+```
+
+When the promotion superseded an earlier ADR, name it in the same line.
