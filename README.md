@@ -115,9 +115,12 @@ changes but no note       memory-note, or say no decision was made. No LLM spawn
 Developer commits     ->  post-commit hook writes a note when the commit touches
                           docs/**, carries a "Decision:" line, or its body explains
                           a why (because / so that / instead of). The commit body
-                          becomes the note. Staged, rides in the next commit.
+                          becomes the note.
 
 Note proves durable   ->  adr-promoter writes ADR-NNNN-<slug>.md, rebuilds INDEX.md
+
+Before the PR          ->  memory-commit gathers outstanding memory into its own
+                          commit, in the same pull request as the code
 
 Teammate pulls        ->  post-merge hook writes local/catchup.md from git log
 
@@ -231,11 +234,12 @@ Per-author note filenames mean two people writing notes on the same day never to
 
 | Skill | Use |
 |---|---|
+| `adr-promoter` | Turn a note (or stated decision) into an ADR |
 | `agentmemory` | `init`, `status`, `off` for the current repository |
 | `memory` | "What do we know about X?" |
-| `memory-note` | Record a decision the moment you make it |
-| `adr-promoter` | Turn a note (or stated decision) into an ADR |
 | `memory-bootstrap` | Seed ADRs from existing docs and commits |
+| `memory-commit` | Commit outstanding memory as its own commit in this PR |
+| `memory-note` | Record a decision the moment you make it |
 | `news` | What changed in memory since you last looked |
 
 ### For humans
@@ -255,20 +259,21 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 
 | Script | Role |
 |---|---|
-| `session-start.py` | Hook. Repairs wiring, injects context. `--print-context` prints the block. |
-| `post-compact.py` | Hook. Re-injects context after compaction. |
-| `turn-nudge.py` | Hook (`Stop`). Once per session, asks for a note when work went unrecorded. |
 | `bootstrap-repo.py` | `--init` opts a repository in; otherwise repairs wiring. |
 | `catchup.py` | Git hook. Writes `local/catchup.md` from memory changes since last seen. |
 | `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |
-| `memory-status.py` | Backs `/agentmemory status`: wiring, counts, context size. |
-| `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits. |
-| `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |
-| `memory-note.py` | Append a note. |
 | `commit-capture.py` | Git hook. Note from a decision-bearing commit. |
-| `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--supersedes`, `--reindex`. |
-| `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--json`. |
 | `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repository scope. |
+| `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |
+| `memory-commit.py` | Stage uncommitted memory and draft its commit message. |
+| `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits. |
+| `memory-note.py` | Append a note. |
+| `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--json`. |
+| `memory-status.py` | Backs `/agentmemory status`: wiring, counts, context size. |
+| `post-compact.py` | Hook. Re-injects context after compaction. |
+| `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--supersedes`, `--reindex`. |
+| `session-start.py` | Hook. Repairs wiring, injects context. `--print-context` prints the block. |
+| `turn-nudge.py` | Hook (`Stop`). Once per session, asks for a note when work went unrecorded. |
 
 Together they are about 2,100 lines of Python with no dependencies beyond the standard library.
 

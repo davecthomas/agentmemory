@@ -33,6 +33,13 @@ def test_section_extracts_until_next_heading() -> None:
     assert common.section(body, "Missing") == ""
 
 
+def test_git_preserves_leading_status_column(repo: Path) -> None:
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    raw = common.git(["status", "--porcelain"], repo, strip=False)
+    assert raw.startswith(" M README.md"), raw
+    assert common.git(["status", "--porcelain"], repo).startswith("M README.md")
+
+
 def test_matches_surface_globs() -> None:
     assert common.matches_surface("docs/a/b.md", ["docs/**"])
     assert common.matches_surface("docs/plan.md", ["docs/**"])
@@ -142,6 +149,10 @@ def test_memory_note_cli(repo: Path) -> None:
     rel = result.stdout.strip()
     assert rel == f"{common.NOTES_DIR}/{common.today()}--alice.md"
     assert "**Decision:** D" in (repo / rel).read_text(encoding="utf-8")
+    assert rel not in run_git(
+        repo, "diff", "--cached", "--name-only"
+    )  # memory-commit stages
+    run_script("memory-note.py", "--decision", "E", "--why", "W", "--stage", cwd=repo)
     assert rel in run_git(repo, "diff", "--cached", "--name-only")
 
 

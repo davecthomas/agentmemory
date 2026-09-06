@@ -139,21 +139,27 @@ def read_stdin_json() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def git(args: list[str], cwd: Path, *, check: bool = False) -> str:
-    """Run a git command and return its stripped stdout.
+def git(args: list[str], cwd: Path, *, check: bool = False, strip: bool = True) -> str:
+    """Run a git command and return its stdout.
 
     Args:
         args: Arguments after ``git``.
         cwd: Directory to run in.
         check: Raise ``CalledProcessError`` on a non-zero exit when True.
+        strip: Strip surrounding whitespace. Pass False for output whose
+            leading whitespace is significant: ``git status --porcelain``
+            puts a space in the first status column, and stripping the whole
+            block eats it on the first line only, shortening that one path.
 
     Returns:
-        str: Stripped stdout; empty string on failure when ``check`` is False.
+        str: Stdout; empty string on failure when ``check`` is False.
     """
     result = subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=check
     )
-    return result.stdout.strip() if result.returncode == 0 else ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip() if strip else result.stdout
 
 
 def repo_root(explicit: str | Path | None = None) -> Path | None:

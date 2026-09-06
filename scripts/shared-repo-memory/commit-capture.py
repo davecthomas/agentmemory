@@ -5,7 +5,9 @@ A commit qualifies when its message body has a ``Decision:`` line, explains a
 reason (``because``, ``so that``, ``instead of``, ``rather than``, trade-off),
 or touches a path matching ``decision_surfaces`` in
 ``.agents/memory/config.json`` (default ``docs/**``). The commit body is
-copied verbatim as the *why*; no LLM is involved. Commits that only touch ``.agents/memory/`` are skipped so
+copied verbatim as the *why*; no LLM is involved. The note is left unstaged
+for ``memory-commit.py`` to gather, so it never rides silently into the next
+code commit. Commits that only touch ``.agents/memory/`` are skipped so
 the hook never feeds itself.
 """
 
@@ -137,7 +139,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=None)
     parser.add_argument("--sha", default="HEAD")
-    parser.add_argument("--no-stage", action="store_true")
+    parser.add_argument(
+        "--stage", action="store_true", help="stage the note; memory-commit does this"
+    )
     args = parser.parse_args()
     root = repo_root(args.repo_root)
     if root is None:
@@ -146,7 +150,7 @@ def main() -> int:
     path = capture(root, args.sha)
     if path is None:
         return 0
-    if not args.no_stage:
+    if args.stage:
         stage(root, [path])
     log(f"decision note captured from commit into {path.relative_to(root)}")
     return 0

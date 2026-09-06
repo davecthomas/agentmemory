@@ -7,3 +7,10 @@
 **Commit:** 7437411
 **Source:** commit-capture
 
+## 2026-09-06T12:31Z · davecthomas · docs/readme-walkthrough
+
+**Decision:** make the opt-in a five-step walkthrough
+**Why:** The opt-in section said "in a Claude Code session inside the repository" and left three things to guess: that you leave the agentmemory checkout and cd to your own repo, that the session must be a new one because the hooks were installed after the old one started, and which files to commit. A scratch-repo run confirms init changes .agents/, .gitignore, and AGENTS.md, none of which the README listed. The section is now numbered steps with the shell commands, the commit, a restart, and /agentmemory status as the check that it worked.
+**Commit:** dae1428
+**Source:** commit-capture
+

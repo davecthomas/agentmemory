@@ -2,8 +2,13 @@
 """Append one decision note to ``.agents/memory/notes/YYYY-MM-DD.md``.
 
 Notes are the capture unit for decision memory: three lines written at the
-moment a non-obvious choice is made, by the agent or by a human. The file is
-staged so the note rides in the same commit as the code it explains.
+moment a non-obvious choice is made, by the agent or by a human.
+
+The note is written and left unstaged. ``memory-commit.py`` gathers the
+repository's outstanding memory into its own commit, so decisions land in the
+same pull request as the code without being swept into an unrelated commit.
+``--stage`` restores the old behaviour for anyone who wants the note carried
+by their next commit.
 """
 
 from __future__ import annotations
@@ -108,7 +113,9 @@ def main() -> int:
     parser.add_argument("--why", required=True)
     parser.add_argument("--alternatives", default="")
     parser.add_argument("--scope", action="append", default=[])
-    parser.add_argument("--no-stage", action="store_true")
+    parser.add_argument(
+        "--stage", action="store_true", help="stage the note; memory-commit does this"
+    )
     args = parser.parse_args()
     root = repo_root(args.repo_root)
     if root is None:
@@ -124,7 +131,7 @@ def main() -> int:
         scope=args.scope,
     )
     path: Path = append_note(root, entry, author=author)
-    if not args.no_stage:
+    if args.stage:
         stage(root, [path])
     print(str(path.relative_to(root)))
     return 0
