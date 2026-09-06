@@ -41,3 +41,10 @@
 **Commit:** 6ef34b3
 **Source:** commit-capture
 
+## 2026-09-06T18:48Z · davecthomas · fix/derived-adr-index
+
+**Decision:** derive the ADR index instead of committing it
+**Why:** Closes #53. INDEX.md is rebuilt deterministically from the ADR files, yet it was committed, so every pair of branches that each promoted an ADR produced a merge conflict carrying nothing a rebuild could not recover. The index is now generated on demand: common.render_adr_index builds it, session context renders it rather than reading a file, and the managed .gitignore block ignores it. promote-adr still writes a local copy so a checkout keeps a readable adr/INDEX.md, and stops staging it. Verified: two branches each promoting an ADR now merge with the ort strategy and no conflict, and the derived index lists both. Closes #53
+**Commit:** 5087a01
+**Source:** commit-capture
+

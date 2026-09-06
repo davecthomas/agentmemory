@@ -206,3 +206,16 @@ def test_post_compact_reinjects(repo: Path, home: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["hookSpecificOutput"]["hookEventName"] == "PostCompact"
     assert "compact me" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_workflow_written_only_when_the_repo_uses_actions(repo: Path) -> None:
+    bootstrap = load("bootstrap-repo.py")
+    # No .github/workflows: nothing is written, and the developer is told why.
+    assert not bootstrap.ensure_workflow(repo, dry_run=False)
+    assert not (repo / bootstrap.WORKFLOW_RELATIVE).exists()
+
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    assert bootstrap.ensure_workflow(repo, dry_run=False)
+    written = (repo / bootstrap.WORKFLOW_RELATIVE).read_text(encoding="utf-8")
+    assert "check-memory.py" in written and "davecthomas/agentmemory" in written
+    assert not bootstrap.ensure_workflow(repo, dry_run=False)  # idempotent
