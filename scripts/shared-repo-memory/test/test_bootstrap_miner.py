@@ -40,6 +40,17 @@ def test_miner_ranks_docs_and_reasoned_commits(repo: Path) -> None:
         "newest\n\nChosen instead of the old path because it is smaller.",
     )
 
+    (repo / "docs" / "archive").mkdir()
+    (repo / "docs" / "archive" / "old.md").write_text(
+        "# Old\n\n## Storage decision\n\nAn old decision with enough words to pass the "
+        "minimum length filter for a section.\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "stale.md").write_text(
+        "> Archived 2020: replaced.\n\n## Design principle\n\nStale text long enough to "
+        "count as a section body for the miner to consider.\n",
+        encoding="utf-8",
+    )
     out = run_script("memory-bootstrap.py", "--limit", "4", cwd=repo)
     assert out.returncode == 0, out.stderr
     text = out.stdout
@@ -50,3 +61,4 @@ def test_miner_ranks_docs_and_reasoned_commits(repo: Path) -> None:
     assert text.count("Kind: commit") == 2 and text.count("Kind: doc") == 1
     assert "plain change" not in text
     assert "§ Install" not in text
+    assert "archive/old.md" not in text and "stale.md" not in text

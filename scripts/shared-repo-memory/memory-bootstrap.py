@@ -71,9 +71,12 @@ def doc_candidates(root: Path) -> list[Candidate]:
     found: list[Candidate] = []
     for path in paths:
         rel = path.relative_to(root).as_posix()
-        if rel.startswith(MEMORY_DIR):
+        if rel.startswith(MEMORY_DIR) or "/archive/" in f"/{rel}":
             continue
         text = read_text(path)
+        first = next((ln for ln in text.splitlines() if ln.strip()), "")
+        if re.search(r"archived|superseded|deprecated", first, re.IGNORECASE):
+            continue
         for match in re.finditer(r"(?m)^(#{1,4})\s+(.+?)\s*$", text):
             heading = match.group(2)
             if not HEADING_WORDS.search(heading):
