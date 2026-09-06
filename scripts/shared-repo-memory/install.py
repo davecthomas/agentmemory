@@ -55,6 +55,28 @@ def same(a: Path, b: Path) -> bool:
     return a.is_file() and b.is_file() and a.read_bytes() == b.read_bytes()
 
 
+def copy_template(checkout: Path, dst_dir: Path, *, dry_run: bool) -> None:
+    """Install the CI workflow template beside the scripts.
+
+    ``bootstrap-repo.py`` writes it into an opted-in repository, and it runs
+    from the install root, so the template has to be there too.
+
+    Args:
+        checkout: The agentmemory checkout.
+        dst_dir: Install root.
+        dry_run: Log only.
+    """
+    src = checkout / "templates" / "agentmemory-check.yml"
+    if not src.is_file():
+        return
+    dst = dst_dir / "agentmemory-check.yml"
+    state = "unchanged" if same(src, dst) else "update"
+    log(f"template agentmemory-check.yml: {'would ' if dry_run else ''}{state}")
+    if not dry_run and state != "unchanged":
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
 def copy_scripts(src_dir: Path, dst_dir: Path, *, dry_run: bool) -> None:
     """Copy every script in ``SCRIPTS`` and mark it executable.
 
@@ -166,6 +188,7 @@ def main() -> int:
     copy_scripts(
         checkout / "scripts" / "shared-repo-memory", root, dry_run=args.dry_run
     )
+    copy_template(checkout, root, dry_run=args.dry_run)
     install_skills(
         checkout / "skills",
         home / ".agent" / "skills",

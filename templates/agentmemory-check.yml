@@ -1,0 +1,37 @@
+# Validates this repository's decision memory on every pull request.
+#
+# agentmemory's scripts live on a developer's machine, not in this repository,
+# so the job fetches them. That is deliberate: the check has to run for a
+# teammate who never installed agentmemory, which is exactly the person whose
+# commits nothing else validates.
+#
+# Written by `bootstrap-repo.py --init`. Pin `ref` to a release tag once one
+# exists; `main` tracks the latest checks.
+name: agentmemory
+
+on:
+  pull_request:
+    paths:
+      - ".agents/memory/**"
+  push:
+    branches: [main]
+    paths:
+      - ".agents/memory/**"
+
+jobs:
+  memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: davecthomas/agentmemory
+          ref: main
+          path: .agentmemory-tools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check decision memory
+        run: |
+          python .agentmemory-tools/scripts/shared-repo-memory/check-memory.py \
+            --repo-root "$GITHUB_WORKSPACE"

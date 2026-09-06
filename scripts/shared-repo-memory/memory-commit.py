@@ -125,6 +125,11 @@ def opt_in_paths(root: Path) -> tuple[list[str], list[str]]:
 
     safe: list[str] = []
     mixed: list[str] = []
+    workflow = root / bootstrap.WORKFLOW_RELATIVE
+    if workflow.is_file() and not git(
+        ["ls-files", "--error-unmatch", bootstrap.WORKFLOW_RELATIVE], root
+    ):
+        safe.append(bootstrap.WORKFLOW_RELATIVE)
     for name, begin, end in candidates:
         text = read_text(root / name)
         if begin not in text or end not in text:

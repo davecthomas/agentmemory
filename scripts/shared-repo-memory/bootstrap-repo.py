@@ -237,6 +237,47 @@ def strip_gitignore(root: Path, *, dry_run: bool) -> bool:
     return True
 
 
+WORKFLOW_RELATIVE: str = ".github/workflows/agentmemory-check.yml"
+
+
+def ensure_workflow(root: Path, *, dry_run: bool) -> bool:
+    """Copy the CI check into a repository that already uses GitHub Actions.
+
+    The pre-commit hook only exists where someone ran ``install.sh``, so it
+    cannot gate a teammate who never did. CI can. Only written when
+    ``.github/workflows/`` is already present, so opting in never introduces
+    CI to a repository that does not use it.
+
+    Args:
+        root: Repository root.
+        dry_run: Log instead of writing.
+
+    Returns:
+        bool: True when the workflow was written (or would be).
+    """
+    workflows: Path = root / ".github" / "workflows"
+    if not workflows.is_dir():
+        log(
+            "no .github/workflows/; skipping the CI check. Copy "
+            f"templates/agentmemory-check.yml from the agentmemory checkout to "
+            f"{WORKFLOW_RELATIVE} to gate memory in CI."
+        )
+        return False
+    target: Path = root / WORKFLOW_RELATIVE
+    template: Path = (
+        Path(__file__).resolve().parents[2] / "templates" / "agentmemory-check.yml"
+    )
+    if not template.is_file():
+        # Running from the installed copy, which ships the template beside it.
+        template = Path(__file__).resolve().parent / "agentmemory-check.yml"
+    if not template.is_file() or read_text(target) == read_text(template):
+        return False
+    log(f"{'would write' if dry_run else 'writing'} {WORKFLOW_RELATIVE}")
+    if not dry_run:
+        write_text(target, read_text(template))
+    return True
+
+
 def agents_file(root: Path) -> Path | None:
     """Return the repo's agent instruction file, preferring AGENTS.md.
 
@@ -373,6 +414,7 @@ def main() -> int:
         dry_run=dry,
     )
     ensure_agents_block(root, dry_run=dry)
+    ensure_workflow(root, dry_run=dry)
     ensure_hooks(root, dry_run=dry)
     if git(["config", "--get", "core.hooksPath"], root) != GITHOOKS_DIR:
         log(f"{'would set' if dry else 'setting'} core.hooksPath = {GITHOOKS_DIR}")
