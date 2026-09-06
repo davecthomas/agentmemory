@@ -76,3 +76,44 @@ def test_local_cache_is_never_included(repo: Path) -> None:
     run_script("memory-note.py", "--decision", "D", "--why", "W", cwd=repo)
     listed = _mc("--no-stage", cwd=repo).stderr
     assert common.NOTES_DIR in listed and common.LOCAL_DIR not in listed
+
+
+def test_opt_in_files_ride_with_the_first_memory_commit(repo: Path) -> None:
+    (repo / "AGENTS.md").write_text("# Rules\n\nBe kind.\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "add rules")
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+
+    msg = _mc("--no-stage", cwd=repo).stdout
+    assert msg.startswith("memory: turn on decision memory from ")
+    assert "Opting this repository in" in msg
+    assert ".gitignore" in msg and "AGENTS.md" in msg
+
+    assert _mc("--commit", cwd=repo).returncode == 0
+    files = run_git(repo, "show", "--format=", "--name-only", "HEAD").split()
+    assert ".gitignore" in files and "AGENTS.md" in files
+    assert f"{common.ADR_DIR}/INDEX.md" in files
+    assert not run_git(repo, "status", "--porcelain", "--", ".gitignore", "AGENTS.md")
+
+
+def test_opt_in_file_with_unrelated_edits_is_left_alone(repo: Path) -> None:
+    (repo / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "gitignore")
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    # The developer edits the same file for their own reasons.
+    gi = repo / ".gitignore"
+    gi.write_text(
+        gi.read_text(encoding="utf-8") + "\nnode_modules/\n", encoding="utf-8"
+    )
+
+    result = _mc("--no-stage", cwd=repo)
+    assert (
+        ".gitignore carries the agentmemory block alongside your own edits"
+        in result.stderr
+    )
+    assert ".gitignore" not in result.stdout
+    assert _mc("--commit", cwd=repo).returncode == 0
+    assert ".gitignore" not in run_git(repo, "show", "--format=", "--name-only", "HEAD")
+    assert "node_modules" in (repo / ".gitignore").read_text(encoding="utf-8")

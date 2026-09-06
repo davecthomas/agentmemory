@@ -48,10 +48,10 @@ python3 "$HOME/.agent/shared-repo-memory/promote-adr.py" \
 
    1. The outcome, in a sentence: their agent now starts every session knowing these decisions, and so does every teammate's agent once the ADRs are pushed.
    2. The decisions themselves, one line each, titles only.
-   3. One closing line: they are Markdown under `.agents/memory/adr/`, so review and edit them like code, then commit.
+   3. One closing line: they are Markdown under `.agents/memory/adr/`, so review and edit them like code, then run `/memory-commit` to commit them.
 
    Do not explain the mining, the scoring, or the sources unless asked. If you rejected a strong candidate, say so in one line.
-6. Do not write notes from history; notes are for decisions made now. Do not commit.
+6. Do not write notes from history; notes are for decisions made now. Do not commit; `/memory-commit` is the commit path.
 
 ## Report the write
 

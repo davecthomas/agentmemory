@@ -33,12 +33,7 @@ python3 "$HOME/.agent/shared-repo-memory/bootstrap-repo.py" --init
 Then say what it means for the developer, not what was wired. Three short parts, nothing more:
 
 1. The outcome, in a sentence: their agent now keeps decisions across sessions, and once they push, their teammates' agents read the same decisions.
-2. The one thing they must do, as a copy-pasteable block:
-
-   ```bash
-   git add .agents/memory .gitignore AGENTS.md
-   git commit -m "Turn on agentmemory"
-   ```
+2. The one thing they must do: run `/memory-commit`, which commits the opt-in for them. Offer to run it now.
 
 3. One closing line: nothing else about how they work changes, and `/agentmemory status` shows what memory holds.
 

@@ -177,12 +177,13 @@ or say "turn on agentmemory for this repo".
 
 This writes `.agents/memory/config.json`, the opt-in marker, and creates `adr/`, `notes/`, and `local/`. It also adds a managed block to `.gitignore`, generates the git hooks under `.githooks/`, and sets `core.hooksPath`. When the repository has an `AGENTS.md` or `CLAUDE.md`, it adds a "Decision memory" block there too, so an agent without agentmemory still learns the convention.
 
-**3. Commit the opt-in.** Three paths change, and all three belong in the commit:
+**3. Commit the opt-in.** In the same session:
 
-```bash
-git add .agents/memory .gitignore AGENTS.md   # AGENTS.md or CLAUDE.md, when you have one
-git commit -m "Turn on agentmemory decision memory"
 ```
+/memory-commit
+```
+
+It gathers the memory directory and the opt-in edits to `.gitignore` and `AGENTS.md`, and commits them with a message explaining what the directory is. It leaves any file where you have your own uncommitted edits, and says so.
 
 Committing `config.json` opts the whole team in. Teammates who never install agentmemory still see the Markdown in every pull request. Teammates who install it get the memory in their agent's context automatically.
 

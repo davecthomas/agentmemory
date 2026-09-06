@@ -12,6 +12,12 @@ the ``AGENTS.md`` block that ``bootstrap-repo.py --init`` writes. The one
 exception is a repository's first memory commit, where ``.agents/memory/``
 appears for the first time and a teammate deserves a pointer.
 
+It also picks up the opt-in edits ``bootstrap-repo.py --init`` makes outside
+``.agents/memory/``: the managed block in ``.gitignore`` and in ``AGENTS.md``
+or ``CLAUDE.md``. Those files belong to the developer, so each is included
+only while its whole uncommitted diff sits inside the managed block. An
+unrelated edit in the same file leaves it out, and the message says so.
+
 ``--commit`` performs the commit. Without it the files are staged and the
 message goes to stdout, so a caller can route it through its own commit flow.
 """
@@ -32,6 +38,7 @@ from common import (
     current_branch,
     git,
     is_opted_in,
+    load_module,
     log,
     note_date,
     parse_frontmatter,
@@ -41,6 +48,7 @@ from common import (
     section,
 )
 
+HERE: Path = Path(__file__).resolve().parent
 MAX_LISTED: int = 12
 POINTER: str = (
     "Captured by agentmemory. The convention lives in the repository's "
@@ -82,6 +90,57 @@ def outstanding(root: Path) -> list[str]:
         if path and not path.startswith(f"{LOCAL_DIR}/"):
             paths.append(path)
     return sorted(set(paths))
+
+
+def opt_in_paths(root: Path) -> tuple[list[str], list[str]]:
+    """Managed opt-in files that are safe to commit, and those that are not.
+
+    ``--init`` adds a marked block to ``.gitignore`` and to the repository's
+    agent instruction file. Both are the developer's files, so a path is
+    returned as safe only when the managed block is uncommitted and every
+    changed line falls inside it.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        tuple[list[str], list[str]]: ``(safe, mixed)`` repo-relative paths.
+            ``mixed`` holds files carrying an uncommitted block alongside
+            edits of the developer's own.
+    """
+    bootstrap = load_module(HERE / "bootstrap-repo.py")
+    candidates: list[tuple[str, str, str]] = [
+        (".gitignore", bootstrap.GITIGNORE_BEGIN, bootstrap.GITIGNORE_END)
+    ]
+    agents = bootstrap.agents_file(root)
+    if agents is not None:
+        candidates.append((agents.name, bootstrap.AGENTS_BEGIN, bootstrap.AGENTS_END))
+
+    safe: list[str] = []
+    mixed: list[str] = []
+    for name, begin, end in candidates:
+        text = read_text(root / name)
+        if begin not in text or end not in text:
+            continue
+        if begin in git(["show", f"HEAD:{name}"], root):
+            continue  # the block is already committed
+        status = git(["status", "--porcelain", "--", name], root, strip=False)
+        if not status.strip():
+            continue
+        block = text[text.index(begin) : text.index(end) + len(end)]
+        if status.lstrip().startswith("??"):
+            # A file bootstrap created; safe when it holds the block and nothing else.
+            outside = text.replace(block, "").strip()
+            (safe if not outside else mixed).append(name)
+            continue
+        diff = git(["diff", "HEAD", "--", name], root, strip=False).splitlines()
+        removed = [ln for ln in diff if ln.startswith("-") and not ln.startswith("---")]
+        added = [
+            ln[1:] for ln in diff if ln.startswith("+") and not ln.startswith("+++")
+        ]
+        inside = all(not ln.strip() or ln in block for ln in added)
+        (safe if inside and not removed else mixed).append(name)
+    return safe, mixed
 
 
 def new_decisions(root: Path, paths: list[str]) -> list[tuple[str, str]]:
@@ -171,6 +230,7 @@ def build_message(
     *,
     branch: str,
     first: bool,
+    opt_in: list[str] | None = None,
 ) -> str:
     """Compose the commit message for the outstanding memory.
 
@@ -179,6 +239,7 @@ def build_message(
         paths: Outstanding memory paths.
         branch: Current branch, used in the subject.
         first: Whether this is the repository's first memory commit.
+        opt_in: Managed opt-in files carried by the same commit.
 
     Returns:
         str: Full commit message.
@@ -191,7 +252,15 @@ def build_message(
     if adrs:
         counts.append(f"{len(adrs)} ADR{'s' if len(adrs) != 1 else ''}")
     what: str = " and ".join(counts) if counts else f"{len(paths)} memory files"
+    if opt_in and not counts:
+        what = "turn on decision memory"
     lines: list[str] = [f"memory: {what} from {branch}", ""]
+    if opt_in:
+        lines += [
+            "Opting this repository in, so every agent on the team reads the",
+            f"same decisions: {', '.join(opt_in)}.",
+            "",
+        ]
     if decisions:
         lines.append("Decisions recorded:")
         lines += [f"- {date}: {text}" for date, text in decisions[:MAX_LISTED]]
@@ -226,15 +295,23 @@ def main() -> int:
         log("memory-commit: repository has not opted in; run /agentmemory init first")
         return 1
     paths: list[str] = outstanding(root)
-    if not paths:
+    safe, mixed = opt_in_paths(root)
+    if not paths and not safe:
         log("memory-commit: no uncommitted decision memory")
         return 0
+    for name in mixed:
+        log(
+            f"memory-commit: {name} carries the agentmemory block alongside your "
+            "own edits, so it is left for you to commit"
+        )
     message: str = build_message(
         root,
         paths,
         branch=current_branch(root),
         first=is_first_memory_commit(root),
+        opt_in=safe,
     )
+    paths = paths + safe
     if not args.no_stage:
         git(["add", "--", *paths], root)
     if args.commit:
