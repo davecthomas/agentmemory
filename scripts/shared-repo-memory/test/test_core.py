@@ -637,3 +637,36 @@ def test_budget_counts_headings(repo: Path) -> None:
     cfg = {**common.DEFAULT_CONFIG, "context_budget_words": 120}
     context = common.build_memory_context(repo, cfg)
     assert common.word_count(context) <= 120 * 1.1
+
+
+def test_query_filters_by_window_and_author(repo: Path) -> None:
+
+    note = load("memory-note.py")
+    note.append_note(
+        repo,
+        note.render_entry(
+            decision="Old auth choice", why="w", author="priya", branch="main"
+        ),
+        date="2026-01-05",
+        author="priya",
+    )
+    note.append_note(
+        repo,
+        note.render_entry(
+            decision="New auth choice", why="w", author="marco", branch="main"
+        ),
+        date="2026-08-20",
+        author="marco",
+    )
+    query = load("memory-query.py")
+
+    assert len(query.collect(repo, ["auth"])["notes"]) == 2
+    recent = query.collect(repo, ["auth"], since="2026-06-01")["notes"]
+    assert [n["decision"] for n in recent] == ["New auth choice"]
+    old = query.collect(repo, ["auth"], until="2026-06-01")["notes"]
+    assert [n["decision"] for n in old] == ["Old auth choice"]
+    mine = query.collect(repo, ["auth"], author="priya")["notes"]
+    assert [n["decision"] for n in mine] == ["Old auth choice"]
+    assert (
+        query.collect(repo, ["auth"], since="2026-06-01", author="priya")["notes"] == []
+    )

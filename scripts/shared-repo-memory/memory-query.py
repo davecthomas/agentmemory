@@ -2,7 +2,8 @@
 """Answer "what do we know about X?" from repo memory.
 
 Searches ADRs, decision notes, and ``docs/*.md`` for the query terms, and
-when a term is a tracked path also shows its recent git history. Results
+when a term is a tracked path also shows its recent git history. ``--since``,
+``--until`` and ``--author`` narrow it to a window or a person. Results
 within each section are ranked by how many distinct terms they match, with
 title hits weighted above body hits. Output is bounded Markdown meant to be
 read by an agent mid-session; ``--json`` emits the same data for tooling.
@@ -67,16 +68,30 @@ def _snippet(text: str) -> str:
     )
 
 
-def collect(root: Path, query: list[str]) -> dict[str, Any]:
+def collect(
+    root: Path,
+    query: list[str],
+    *,
+    since: str = "",
+    until: str = "",
+    author: str = "",
+) -> dict[str, Any]:
     """Gather ranked matches for a query.
 
     Args:
         root: Repository root.
         query: Query words or paths.
+        since: Keep entries dated on or after this ISO date.
+        until: Keep entries dated on or before this ISO date.
+        author: Keep notes by this author; matched as a substring of the slug.
 
     Returns:
         dict[str, Any]: ``adrs``, ``notes``, ``docs``, ``history`` lists.
     """
+
+    def in_window(date: str) -> bool:
+        return (not since or date >= since) and (not until or date <= until)
+
     terms: list[str] = _terms(query)
     result: dict[str, Any] = {
         "query": query,
@@ -91,7 +106,7 @@ def collect(root: Path, query: list[str]) -> dict[str, Any]:
     for adr in list_adrs(root):
         meta, body = adr["meta"], adr["body"]
         score = _rank(f"{meta['title']} {meta.get('tags', '')}", body, terms)
-        if score:
+        if score and in_window(str(meta.get("date", ""))):
             result["adrs"].append(
                 {
                     "id": meta["id"],
@@ -111,12 +126,20 @@ def collect(root: Path, query: list[str]) -> dict[str, Any]:
         for block in re.split(r"(?m)^## ", read_text(note))[1:]:
             decision = re.search(r"\*\*Decision:\*\*\s*(.+)", block)
             why = re.search(r"\*\*Why:\*\*\s*(.+)", block)
+            header = block.splitlines()[0]
+            parts = [x.strip() for x in header.split("·")]
+            who = parts[1] if len(parts) > 1 else ""
             score = _rank(decision.group(1) if decision else "", block, terms)
-            if score:
+            if (
+                score
+                and in_window(note_date(note))
+                and (not author or author.lower() in who.lower())
+            ):
                 result["notes"].append(
                     {
                         "date": note_date(note),
-                        "header": block.splitlines()[0].strip(),
+                        "author": who,
+                        "header": header.strip(),
                         "decision": decision.group(1).strip() if decision else "",
                         "why": _snippet(why.group(1)) if why else "",
                         "score": score,
@@ -166,7 +189,7 @@ def collect(root: Path, query: list[str]) -> dict[str, Any]:
     return result
 
 
-def query_memory(root: Path, query: list[str]) -> str:
+def query_memory(root: Path, query: list[str], **filters: str) -> str:
     """Build the Markdown answer for a query.
 
     Args:
@@ -178,7 +201,7 @@ def query_memory(root: Path, query: list[str]) -> str:
     """
     if not _terms(query):
         return "Give me a topic or a path to look up."
-    data = collect(root, query)
+    data = collect(root, query, **filters)
     out: list[str] = [f"# Memory for: {' '.join(query)}", ""]
     if data["adrs"]:
         out += ["## ADRs", ""]
@@ -212,6 +235,9 @@ def query_memory(root: Path, query: list[str]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=None)
+    parser.add_argument("--since", default="", metavar="YYYY-MM-DD")
+    parser.add_argument("--until", default="", metavar="YYYY-MM-DD")
+    parser.add_argument("--author", default="", help="filter notes by author slug")
     parser.add_argument("--json", action="store_true", help="emit JSON instead")
     parser.add_argument("query", nargs="+")
     args = parser.parse_args()
@@ -219,10 +245,11 @@ def main() -> int:
     if root is None:
         log("memory-query: not inside a git repository")
         return 1
+    filters = {"since": args.since, "until": args.until, "author": args.author}
     if args.json:
-        print(json.dumps(collect(root, args.query), indent=2))
+        print(json.dumps(collect(root, args.query, **filters), indent=2))
         return 0
-    print(query_memory(root, args.query), end="")
+    print(query_memory(root, args.query, **filters), end="")
     return 0
 
 

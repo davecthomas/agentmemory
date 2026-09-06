@@ -273,7 +273,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `memory-commit.py` | Stage uncommitted memory and draft its commit message. |
 | `memory-news.py` | Backs `news`: catch-up, recent notes, newest ADRs, recent commits, ADR-promotion suggestions. |
 | `memory-note.py` | Append a note. |
-| `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--json`. |
+| `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--since`/`--until`/`--author`, `--json`. |
 | `memory-status.py` | Backs `/agentmemory status`: wiring, counts, context size. |
 | `post-compact.py` | Hook. Re-injects context after compaction. |
 | `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--supersedes`, `--reindex`. |
