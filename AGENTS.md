@@ -176,3 +176,15 @@ Begin each commit message with the new version tag for context, e.g., `v1.2.0 up
 ## Decision memory
 
 This repo is opted in to agentmemory (`.agents/memory/config.json`). Record non-obvious choices with the `memory-note` skill; promote durable ones with `adr-promoter`; ask `memory` before re-deriving why something is the way it is. See README.md.
+
+<!-- agentmemory:begin (managed block; do not edit) -->
+## Decision memory
+
+This repository keeps its decisions in `.agents/memory/`: ADRs under `adr/`
+(the durable, must-obey set) and dated decision notes under `notes/`. Before
+changing a subsystem, read the relevant ADRs. When you make a non-obvious
+choice, append a note (`Decision`, `Why`, `Alternatives`, `Scope`) to
+`.agents/memory/notes/YYYY-MM-DD--<you>.md` and commit it with the change.
+With agentmemory installed, the `memory`, `memory-note`, and `adr-promoter`
+skills do this for you.
+<!-- agentmemory:end -->

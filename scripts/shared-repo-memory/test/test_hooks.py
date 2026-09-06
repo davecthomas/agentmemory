@@ -40,6 +40,23 @@ def test_bootstrap_is_idempotent(repo: Path) -> None:
     assert (repo / ".gitignore").read_text(encoding="utf-8") == gitignore
 
 
+def test_agents_block_added_idempotently_and_stripped(repo: Path) -> None:
+    bootstrap = load("bootstrap-repo.py")
+    (repo / "AGENTS.md").write_text("# Rules\n\nBe kind.\n", encoding="utf-8")
+    assert bootstrap.ensure_agents_block(repo, dry_run=False)
+    assert not bootstrap.ensure_agents_block(repo, dry_run=False)
+    text = (repo / "AGENTS.md").read_text(encoding="utf-8")
+    assert text.count("## Decision memory") == 1 and text.startswith("# Rules")
+    assert bootstrap.strip_agents_block(repo, dry_run=False)
+    assert (repo / "AGENTS.md").read_text(encoding="utf-8") == "# Rules\n\nBe kind.\n"
+
+
+def test_agents_block_skipped_without_file(repo: Path) -> None:
+    bootstrap = load("bootstrap-repo.py")
+    assert not bootstrap.ensure_agents_block(repo, dry_run=False)
+    assert not (repo / "AGENTS.md").exists()
+
+
 def test_gitignore_block_strip_restores_original(repo: Path) -> None:
     bootstrap = load("bootstrap-repo.py")
     (repo / ".gitignore").write_text("*.pyc\n", encoding="utf-8")

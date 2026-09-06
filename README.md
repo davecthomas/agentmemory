@@ -57,7 +57,7 @@ In a Claude Code session inside the repo:
 /agentmemory init
 ```
 
-or say "turn on agentmemory for this repo". This runs `bootstrap-repo.py --init`, which writes `.agents/memory/config.json` (the opt-in marker), creates `adr/`, `notes/`, and `local/`, adds a managed block to `.gitignore`, generates the git hooks under `.githooks/`, and sets `core.hooksPath`. Commit `config.json` and the whole team is opted in; teammates without agentmemory installed see only Markdown.
+or say "turn on agentmemory for this repo". This runs `bootstrap-repo.py --init`, which writes `.agents/memory/config.json` (the opt-in marker), creates `adr/`, `notes/`, and `local/`, adds a managed block to `.gitignore`, adds a "Decision memory" block to `AGENTS.md` or `CLAUDE.md` when one exists (so an agent without agentmemory still learns the convention), generates the git hooks under `.githooks/`, and sets `core.hooksPath`. Commit `config.json` and the whole team is opted in; teammates without agentmemory installed see only Markdown.
 
 `/agentmemory status` reports wiring and counts. `/agentmemory off` reverses the repo wiring and leaves the memory files in place.
 
