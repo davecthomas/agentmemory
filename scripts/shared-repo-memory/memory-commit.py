@@ -111,7 +111,12 @@ def opt_in_paths(root: Path) -> tuple[list[str], list[str]]:
     """
     bootstrap = load_module(HERE / "bootstrap-repo.py")
     candidates: list[tuple[str, str, str]] = [
-        (".gitignore", bootstrap.GITIGNORE_BEGIN, bootstrap.GITIGNORE_END)
+        (".gitignore", bootstrap.GITIGNORE_BEGIN, bootstrap.GITIGNORE_END),
+        (
+            ".gitattributes",
+            bootstrap.GITATTRIBUTES_BEGIN,
+            bootstrap.GITATTRIBUTES_END,
+        ),
     ]
     agents = bootstrap.agents_file(root)
     if agents is not None:

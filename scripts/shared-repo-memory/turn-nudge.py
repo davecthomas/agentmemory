@@ -96,8 +96,9 @@ def work_happened(root: Path) -> bool:
     Returns:
         bool: Whether repo files changed.
     """
-    # .gitignore is excluded because bootstrap --init edits it; that is wiring,
-    # not work, and would otherwise nudge on the first stop after opting in.
+    # .gitignore and .gitattributes are excluded because bootstrap --init edits
+    # them; that is wiring, not work, and would otherwise nudge on the first
+    # stop after opting in.
     status = git(
         [
             "status",
@@ -106,6 +107,7 @@ def work_happened(root: Path) -> bool:
             ".",
             f":(exclude){MEMORY_DIR}",
             ":(exclude).gitignore",
+            ":(exclude).gitattributes",
         ],
         root,
     )

@@ -99,6 +99,8 @@ def wiring_issues(root: Path) -> list[str]:
         issues.append("core.hooksPath")
     if bootstrap.GITIGNORE_BEGIN not in read_text(root / ".gitignore"):
         issues.append(".gitignore block")
+    if bootstrap.GITATTRIBUTES_BEGIN not in read_text(root / ".gitattributes"):
+        issues.append(".gitattributes block")
     return issues
 
 
