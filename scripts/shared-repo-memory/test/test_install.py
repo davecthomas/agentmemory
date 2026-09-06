@@ -48,7 +48,7 @@ def test_install_then_uninstall_roundtrip(home: Path) -> None:
     }
     assert events["SessionStart"] == [str(root / "session-start.py")]
     assert events["PostCompact"] == [str(root / "post-compact.py")]
-    assert events["Stop"] == ["/usr/bin/true"]
+    assert events["Stop"] == ["/usr/bin/true", str(root / "turn-nudge.py")]
 
     again = run_script("install.py", "--repo-root", str(CHECKOUT), cwd=CHECKOUT)
     assert again.returncode == 0
