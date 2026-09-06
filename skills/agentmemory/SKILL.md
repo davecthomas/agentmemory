@@ -35,6 +35,7 @@ Then tell the developer, in a few lines:
 
 - `.agents/memory/config.json` was written and staged; committing it opts the whole team in
 - what got wired locally: `.githooks/` (pre-commit, post-commit, post-checkout, post-merge, post-rewrite), `core.hooksPath`, the managed `.gitignore` block
+- a managed "Decision memory" block was added to `AGENTS.md` or `CLAUDE.md` when one exists, so agents without agentmemory still learn the convention; commit it too
 - the default `decision_surfaces` is `["docs/**"]`; edit `config.json` to change it
 - if the repo has history but no ADRs yet, offer `/memory-bootstrap`
 

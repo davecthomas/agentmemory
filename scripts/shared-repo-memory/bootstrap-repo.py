@@ -46,6 +46,20 @@ GITIGNORE_BEGIN: str = "# >>> agentmemory (managed block; do not edit) >>>"
 GITIGNORE_END: str = "# <<< agentmemory <<<"
 GITIGNORE_ENTRIES: tuple[str, ...] = (f"{GITHOOKS_DIR}/", f"{LOCAL_DIR}/")
 
+AGENTS_BEGIN: str = "<!-- agentmemory:begin (managed block; do not edit) -->"
+AGENTS_END: str = "<!-- agentmemory:end -->"
+AGENTS_BLOCK: str = f"""{AGENTS_BEGIN}
+## Decision memory
+
+This repository keeps its decisions in `.agents/memory/`: ADRs under `adr/`
+(the durable, must-obey set) and dated decision notes under `notes/`. Before
+changing a subsystem, read the relevant ADRs. When you make a non-obvious
+choice, append a note (`Decision`, `Why`, `Alternatives`, `Scope`) to
+`.agents/memory/notes/YYYY-MM-DD--<you>.md` and commit it with the change.
+With agentmemory installed, the `memory`, `memory-note`, and `adr-promoter`
+skills do this for you.
+{AGENTS_END}"""
+
 INDEX_INITIAL: str = (
     "# ADR index\n\n"
     "| ADR | Title | Status | Date | Must read |\n"
@@ -148,6 +162,84 @@ def strip_gitignore(root: Path, *, dry_run: bool) -> bool:
     return True
 
 
+def agents_file(root: Path) -> Path | None:
+    """Return the repo's agent instruction file, preferring AGENTS.md.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        Path | None: ``AGENTS.md`` or ``CLAUDE.md`` when one exists.
+    """
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        if (root / name).is_file():
+            return root / name
+    return None
+
+
+def ensure_agents_block(root: Path, *, dry_run: bool) -> bool:
+    """Add or refresh the managed block in AGENTS.md or CLAUDE.md.
+
+    Only touches a file that already exists; a repo without one gets a hint
+    in the log instead of a new top-level file.
+
+    Args:
+        root: Repository root.
+        dry_run: Log instead of writing.
+
+    Returns:
+        bool: True when the file changed (or would change).
+    """
+    path = agents_file(root)
+    if path is None:
+        log("no AGENTS.md or CLAUDE.md; add one and rerun to document the convention")
+        return False
+    text = read_text(path)
+    if AGENTS_BLOCK in text:
+        return False
+    if AGENTS_BEGIN in text and AGENTS_END in text:
+        start = text.index(AGENTS_BEGIN)
+        end = text.index(AGENTS_END) + len(AGENTS_END)
+        updated = text[:start] + AGENTS_BLOCK + text[end:]
+    else:
+        updated = text.rstrip("\n") + "\n\n" + AGENTS_BLOCK + "\n"
+    log(
+        f"{'would update' if dry_run else 'updating'} {path.name} decision-memory block"
+    )
+    if not dry_run:
+        write_text(path, updated)
+    return True
+
+
+def strip_agents_block(root: Path, *, dry_run: bool) -> bool:
+    """Remove the managed block from AGENTS.md or CLAUDE.md.
+
+    Args:
+        root: Repository root.
+        dry_run: Log instead of writing.
+
+    Returns:
+        bool: True when a block was found.
+    """
+    path = agents_file(root)
+    if path is None:
+        return False
+    text = read_text(path)
+    if AGENTS_BEGIN not in text or AGENTS_END not in text:
+        return False
+    start = text.index(AGENTS_BEGIN)
+    end = text.index(AGENTS_END) + len(AGENTS_END)
+    updated = (text[:start].rstrip("\n") + "\n" + text[end:].lstrip("\n")).rstrip(
+        "\n"
+    ) + "\n"
+    log(
+        f"{'would strip' if dry_run else 'stripping'} {path.name} decision-memory block"
+    )
+    if not dry_run:
+        write_text(path, updated)
+    return True
+
+
 def ensure_hooks(root: Path, *, dry_run: bool) -> None:
     """Write every generated hook whose content differs from canonical.
 
@@ -203,6 +295,7 @@ def main() -> int:
         if not dry:
             write_text(index, INDEX_INITIAL)
     ensure_gitignore(root, dry_run=dry)
+    ensure_agents_block(root, dry_run=dry)
     ensure_hooks(root, dry_run=dry)
     if git(["config", "--get", "core.hooksPath"], root) != GITHOOKS_DIR:
         log(f"{'would set' if dry else 'setting'} core.hooksPath = {GITHOOKS_DIR}")
