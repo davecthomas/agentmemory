@@ -28,18 +28,23 @@ All scripts live in `$HOME/.agent/shared-repo-memory/`. Run them from the repo r
 
 ```bash
 python3 "$HOME/.agent/shared-repo-memory/bootstrap-repo.py" --init
-git add .agents/memory/config.json .agents/memory/adr/INDEX.md
 ```
 
-Then tell the developer, in a few lines:
+Then say what it means for the developer, not what was wired. Three short parts, nothing more:
 
-- `.agents/memory/config.json` was written and staged; committing it opts the whole team in
-- what got wired locally: `.githooks/` (pre-commit, post-commit, post-checkout, post-merge, post-rewrite), `core.hooksPath`, the managed `.gitignore` block
-- a managed "Decision memory" block was added to `AGENTS.md` or `CLAUDE.md` when one exists, so agents without agentmemory still learn the convention; commit it too
-- the default `decision_surfaces` is `["docs/**"]`; edit `config.json` to change it
-- if the repo has history but no ADRs yet, offer `/memory-bootstrap`
+1. The outcome, in a sentence: their agent now keeps decisions across sessions, and once they push, their teammates' agents read the same decisions.
+2. The one thing they must do, as a copy-pasteable block:
 
-Do not commit. The developer commits `config.json` with their next change.
+   ```bash
+   git add .agents/memory .gitignore AGENTS.md
+   git commit -m "Turn on agentmemory"
+   ```
+
+3. One closing line: nothing else about how they work changes, and `/agentmemory status` shows what memory holds.
+
+Add a fourth line only when the repository has commit history but no ADRs: offer `/memory-bootstrap` to seed it from what is already there.
+
+Do not list the hooks, the config keys, the `.gitignore` block, or the file layout. A developer who wants them will ask, and they are in the README. Do not commit for them.
 
 ### `status`
 
