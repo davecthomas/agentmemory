@@ -18,6 +18,9 @@ Session starts        →  SessionStart hook injects: ADR index, must-read ADR
 Agent makes a          →  memory-note skill appends 3 lines to
 non-obvious choice        .agents/memory/notes/YYYY-MM-DD.md (staged, not committed)
 
+Turn ends with repo     →  Stop hook asks once per session: record a note with
+changes but no note       memory-note, or say no decision was made. No LLM spawn.
+
 Developer commits      →  post-commit hook appends a candidate note when the commit
                          touches docs/**, carries a "Decision:" line, or its body
                          explains a why (because / so that / instead of). The note is
@@ -42,7 +45,7 @@ cd agentmemory
 ./install.sh            # --dry-run to preview, --force to replace non-symlink skill dirs
 ```
 
-The installer copies the scripts to `~/.agent/shared-repo-memory/`, the skills to `~/.agent/skills/` with symlinks from `~/.claude/skills/`, and adds `SessionStart` and `PostCompact` hooks to `~/.claude/settings.json`. Restart open Claude Code sessions afterwards.
+The installer copies the scripts to `~/.agent/shared-repo-memory/`, the skills to `~/.agent/skills/` with symlinks from `~/.claude/skills/`, and adds `SessionStart`, `PostCompact`, and `Stop` hooks to `~/.claude/settings.json`. Restart open Claude Code sessions afterwards.
 
 Installing turns nothing on. Every hook exits silently in a repo that has not opted in.
 
@@ -114,6 +117,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 |---|---|
 | `session-start.py` | Hook. Repairs wiring, injects context. `--print-context` prints the block. |
 | `post-compact.py` | Hook. Re-injects context after compaction. |
+| `turn-nudge.py` | Hook (`Stop`). Once per session, asks for a note when work went unrecorded. |
 | `bootstrap-repo.py` | `--init` opts a repo in; otherwise repairs wiring. |
 | `catchup.py` | Git hook. Writes `local/catchup.md` from memory changes since last seen. |
 | `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |

@@ -155,6 +155,9 @@ def main() -> int:
             return 1
         bootstrapped = True
 
+    nudge = load_module(HERE / "turn-nudge.py")
+    nudge.record_session(root, str(payload.get("session_id", "")))
+
     adr_count, note_count = memory_counts(root)
     context: str = build_memory_context(root)
     parts: list[str] = [context] if context else []

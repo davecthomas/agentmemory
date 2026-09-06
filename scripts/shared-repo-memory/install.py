@@ -38,6 +38,7 @@ SCRIPTS: tuple[str, ...] = (
     "memory-status.py",
     "memory-news.py",
     "memory-bootstrap.py",
+    "turn-nudge.py",
     "uninstall.py",
 )
 
@@ -45,6 +46,7 @@ SCRIPTS: tuple[str, ...] = (
 CLAUDE_HOOKS: tuple[tuple[str, str, int], ...] = (
     ("SessionStart", "session-start.py", 30),
     ("PostCompact", "post-compact.py", 15),
+    ("Stop", "turn-nudge.py", 10),
 )
 
 
