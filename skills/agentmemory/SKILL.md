@@ -47,7 +47,7 @@ Do not commit. The developer commits `config.json` with their next change.
 python3 "$HOME/.agent/shared-repo-memory/memory-status.py"
 ```
 
-Relay its report as is: opted in or not, wiring gaps, ADR and note counts, must-read ADRs, unreviewed candidate notes, and what a new session is given in words and tokens. Add `--context` to see the injected block itself.
+Relay its report as is: opted in or not, wiring gaps, ADR and note counts, must-read ADRs, and what a new session is given in words and tokens. Add `--context` to see the injected block itself.
 
 ### `off`
 

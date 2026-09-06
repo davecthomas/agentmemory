@@ -119,7 +119,6 @@ def collect(root: Path, query: list[str]) -> dict[str, Any]:
                         "header": block.splitlines()[0].strip(),
                         "decision": decision.group(1).strip() if decision else "",
                         "why": _snippet(why.group(1)) if why else "",
-                        "candidate": "**Candidate:** true" in block,
                         "score": score,
                     }
                 )
@@ -192,7 +191,6 @@ def query_memory(root: Path, query: list[str]) -> str:
         out += ["## Decision notes", ""]
         out += [
             f"- {n['date']} ({n['header']}): {n['decision']} — {n['why']}"
-            + (" _(candidate)_" if n["candidate"] else "")
             for n in data["notes"]
         ]
         out.append("")

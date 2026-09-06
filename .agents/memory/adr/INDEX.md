@@ -21,3 +21,4 @@
 | ADR-0021 | [Claude Code is the only supported runtime in v0.5](ADR-0021-claude-code-is-the-only-supported-runtime-in-v0-5.md) | accepted | 2026-09-05 | yes |
 | ADR-0022 | [Session context is one budgeted block: index, must-read decisions, recent notes, catch-up](ADR-0022-session-context-is-one-budgeted-block.md) | accepted | 2026-09-05 | yes |
 | ADR-0023 | [Black is pinned to an exact version](ADR-0023-black-is-pinned-to-an-exact-version.md) | accepted | 2026-09-05 | no |
+| ADR-0024 | [The agent is the only reader of memory files; no human review step exists over them](ADR-0024-the-agent-is-the-only-reader-of-memory-files-no-human-review-step-exists-over-th.md) | accepted | 2026-09-06 | yes |

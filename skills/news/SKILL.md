@@ -33,9 +33,8 @@ news, what's new, what happened, what did I miss, catch me up, recent decisions,
 
    **What happened** — one paragraph, lead cluster first. Say who (from the `decision (name)` lines), when (the day headings), and what the largest cluster was about. Mention smaller clusters in a clause each. No bullet list here.
 
-   **Decisions you should know** — one bullet per ADR line and per non-candidate note that changes how someone works in this repo. Keep the ADR id and, when the line says `replaces`, say what it replaced. Mark `_(not injected)_` ADRs as "reachable with the `memory` skill".
+   **Decisions you should know** — one bullet per ADR line and per note that changes how someone works in this repo. Keep the ADR id and, when the line says `replaces`, say what it replaced. Mark `_(not injected)_` ADRs as "reachable with the `memory` skill".
 
-   **Unreviewed candidates: N** — one bullet each, then one sentence: promote with `adr-promoter`, or dismiss it with `memory-note.py --dismiss <file> <entry>`. Omit the section when N is 0.
 
 6. Keep the whole report under 250 words. Quote the digest's decision text; do not invent mechanisms it does not mention.
 

@@ -58,7 +58,6 @@ class Note:
     decision: str
     why: str
     commit: str
-    candidate: bool
 
 
 @dataclass
@@ -139,7 +138,6 @@ def parse_notes(root: Path, days: int) -> list[Note]:
                     decision=strip_prefix(grab("Decision"), branch),
                     why=grab("Why"),
                     commit=grab("Commit"),
-                    candidate="**Candidate:** true" in block,
                 )
             )
     return notes
@@ -346,22 +344,13 @@ def news(root: Path, days: int, *, since_last_read: bool = True) -> str:
             lead = " — largest" if i == 0 and len(day_clusters) > 1 else ""
             out.append(f"### {label}{lead}")
             for n in cl.notes[:MAX_ITEMS_PER_CLUSTER]:
-                flag = " _(candidate, unreviewed)_" if n.candidate else ""
-                out.append(f"- decision ({n.author}): {n.decision}{flag}")
+                out.append(f"- decision ({n.author}): {n.decision}")
             for c in cl.commits[:MAX_ITEMS_PER_CLUSTER]:
                 out.append(f"- {c.sha} {strip_prefix(c.subject, c.branch)}")
             out.append("")
         if adrs.get(day):
             out += ["### ADRs", *adrs[day], ""]
 
-    candidates = [n for n in notes if n.candidate]
-    if candidates:
-        out += [f"## Unreviewed candidates ({len(candidates)})", ""]
-        out += [
-            f"- {n.date} {n.decision} (promote with adr-promoter, or delete)"
-            for n in candidates
-        ]
-        out.append("")
     if len(out) == 2:
         out.append(
             "No decision memory yet. Run `/memory-bootstrap` to seed it from docs and history."

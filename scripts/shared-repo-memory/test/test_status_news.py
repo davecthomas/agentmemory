@@ -90,17 +90,3 @@ def test_news_watermark_reports_nothing_new_then_new(repo: Path) -> None:
     assert (
         "later change" in run_script("memory-news.py", cwd=repo).stdout
     )  # --no-mark kept it
-
-
-def test_news_flags_candidates(repo: Path) -> None:
-    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
-    note = common.load_module(Path(__file__).resolve().parents[1] / "memory-note.py")
-    note.append_note(
-        repo,
-        note.render_entry(
-            decision="From hook", why="w", author="a", branch="main", candidate=True
-        ),
-    )
-    out = run_script("memory-news.py", cwd=repo).stdout
-    assert "From hook" in out and "candidate, unreviewed" in out
-    assert "unreviewed candidates: 1" in run_script("memory-status.py", cwd=repo).stdout

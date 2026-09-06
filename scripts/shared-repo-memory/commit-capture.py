@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""post-commit hook: turn a decision-bearing commit into a candidate note.
+"""post-commit hook: turn a decision-bearing commit into a decision note.
 
 A commit qualifies when its message body has a ``Decision:`` line, explains a
 reason (``because``, ``so that``, ``instead of``, ``rather than``, trade-off),
@@ -93,7 +93,7 @@ def decision_line(body: str) -> str:
 
 
 def capture(root: Path, sha: str = "HEAD") -> Path | None:
-    """Write a candidate note for one commit when it qualifies.
+    """Write a decision note for one commit when it qualifies.
 
     Args:
         root: Repository root.
@@ -128,7 +128,7 @@ def capture(root: Path, sha: str = "HEAD") -> Path | None:
         branch=branch,
         scope=hits[:MAX_SCOPE],
         commit=short,
-        candidate=True,
+        source="commit-capture",
     )
     return note.append_note(root, entry, author=author)
 
@@ -148,7 +148,7 @@ def main() -> int:
         return 0
     if not args.no_stage:
         stage(root, [path])
-    log(f"candidate decision note appended to {path.relative_to(root)}")
+    log(f"decision note captured from commit into {path.relative_to(root)}")
     return 0
 
 

@@ -14,7 +14,7 @@ adr, promote adr, promote note, architecture decision record, make this an ADR, 
 
 - A decision note in `.agents/memory/notes/` describes a choice that governs the codebase going forward
 - The developer states a decision and asks for it to be recorded durably
-- A commit hook wrote a `Candidate: true` note that deserves promotion
+- A note the commit hook captured (`Source: commit-capture`) describes a decision that governs the code going forward
 
 Promotion is always explicit. Do not promote as a side effect of other work.
 
