@@ -573,8 +573,7 @@ def note_index(
         for block in reversed(re.split(r"(?m)^## ", read_text(note))[1:]):
             match = re.search(r"^\*\*Decision:\*\*\s*(.+)$", block, re.MULTILINE)
             if match:
-                flag = " (candidate)" if "**Candidate:** true" in block else ""
-                lines.append(f"- {note_date(note)}: {match.group(1).strip()}{flag}")
+                lines.append(f"- {note_date(note)}: {match.group(1).strip()}")
     return lines
 
 

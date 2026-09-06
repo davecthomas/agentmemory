@@ -2,13 +2,12 @@
 """Report agentmemory's state for the current repository.
 
 Backs ``/agentmemory status``: opt-in, wiring gaps, counts, must-read ADRs,
-unreviewed candidate notes, and the size of the block a new session gets.
+and the size of the block a new session gets.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
 from common import (
@@ -21,7 +20,6 @@ from common import (
     load_module,
     log,
     note_date,
-    read_text,
     repo_root,
     safe_main,
     word_count,
@@ -29,21 +27,6 @@ from common import (
 
 HERE: Path = Path(__file__).resolve().parent
 TOKENS_PER_WORD: float = 1.3
-
-
-def candidate_count(root: Path) -> int:
-    """Count note entries still marked ``Candidate: true``.
-
-    Args:
-        root: Repository root.
-
-    Returns:
-        int: Number of unreviewed candidate entries.
-    """
-    return sum(
-        len(re.findall(r"^\*\*Candidate:\*\* true", read_text(n), re.MULTILINE))
-        for n in list_notes(root)
-    )
 
 
 def status_report(root: Path, *, with_context: bool = False) -> str:
@@ -77,8 +60,7 @@ def status_report(root: Path, *, with_context: bool = False) -> str:
         f"- Wiring: {'complete' if not issues else 'incomplete: ' + ', '.join(issues) + ' (next session start repairs it)'}",
         f"- ADRs: {len(adrs)} ({len(must)} must-read, {superseded} superseded)",
         f"- Note files: {len(notes)}"
-        + (f", newest {note_date(notes[0])}" if notes else "")
-        + f"; unreviewed candidates: {candidate_count(root)}",
+        + (f", newest {note_date(notes[0])}" if notes else ""),
         f"- Session context: {words} words ≈ {int(words * TOKENS_PER_WORD)} tokens "
         f"of a {cfg['context_budget_words']}-word budget",
         f"- Decision surfaces: {', '.join(cfg['decision_surfaces'])}",

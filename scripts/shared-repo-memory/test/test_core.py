@@ -125,26 +125,6 @@ def test_memory_note_appends_and_stages(repo: Path) -> None:
     assert text.count("**Decision:** Use X") == 2
 
 
-def test_dismiss_marks_candidate_reviewed(repo: Path) -> None:
-    from conftest import run_script
-
-    note = load("memory-note.py")
-    path = note.append_note(
-        repo,
-        note.render_entry(
-            decision="hook", why="w", author="a", branch="main", candidate=True
-        ),
-        date="2026-01-02",
-        author="a",
-    )
-    result = run_script("memory-note.py", "--dismiss", str(path), "1", cwd=repo)
-    assert result.returncode == 0, result.stderr
-    text = path.read_text(encoding="utf-8")
-    assert "**Candidate:** reviewed" in text and "**Candidate:** true" not in text
-    again = run_script("memory-note.py", "--dismiss", str(path), "1", cwd=repo)
-    assert again.returncode != 0
-
-
 def test_author_slug_drops_noreply_id(repo: Path) -> None:
     run_git(
         repo, "config", "user.email", "2355287-davecthomas@users.noreply.github.com"
@@ -182,7 +162,7 @@ def test_capture_skips_commits_off_surface(repo: Path) -> None:
     assert capture.capture(repo) is None
 
 
-def test_capture_on_surface_uses_body_and_marks_candidate(repo: Path) -> None:
+def test_capture_on_surface_uses_body_and_records_source(repo: Path) -> None:
     capture = load("commit-capture.py")
     _commit(
         repo,
@@ -197,7 +177,7 @@ def test_capture_on_surface_uses_body_and_marks_candidate(repo: Path) -> None:
     assert "**Why:** We chose pull over push because push needs a broker." in text
     assert "ai-generated" not in text
     assert "**Scope:** docs/design.md" in text
-    assert "**Candidate:** true" in text
+    assert "**Source:** commit-capture" in text
     assert "**Commit:** " in text
 
 
