@@ -573,3 +573,67 @@ def test_a_different_decision_with_the_same_title_still_promotes(repo: Path) -> 
     second = run_script(*base, "--decision", "cache for an hour", cwd=repo)
     assert second.returncode == 0, second.stderr
     assert len(adr_ids(repo)) == 2
+
+
+def test_must_read_adrs_are_ordered_by_relevance(repo: Path) -> None:
+    from conftest import run_script
+
+    run_script("bootstrap-repo.py", "--init", cwd=repo)
+    for title, tags in (
+        ("Storage rule", "storage"),  # foundational
+        ("Scripts rule", "scripts"),  # relevant once scripts/ is touched
+        ("Frontend rule", "frontend"),  # neither
+    ):
+        run_script(
+            "promote-adr.py",
+            "--title",
+            title,
+            "--context",
+            "c",
+            "--decision",
+            f"{title} decision",
+            "--alternatives",
+            "a",
+            "--tags",
+            tags,
+            cwd=repo,
+        )
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "adrs")
+
+    # Nothing touched yet: foundational leads, the rest keep a stable order.
+    order = [t for t in common.build_memory_context(repo).split("### ") if "rule" in t]
+    assert order[0].startswith("ADR") and "Storage rule" in order[0]
+
+    # A branch that touches scripts/ pulls the scripts ADR ahead of frontend.
+    run_git(repo, "checkout", "-q", "-b", "work")
+    (repo / "scripts").mkdir(exist_ok=True)
+    (repo / "scripts" / "x.py").write_text("x\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "touch scripts")
+    assert "scripts" in common.touched_areas(repo)
+    context = common.build_memory_context(repo)
+    assert context.index("Scripts rule") < context.index("Frontend rule")
+    assert context.index("Storage rule") < context.index("Scripts rule")
+
+
+def test_budget_counts_headings(repo: Path) -> None:
+    from conftest import run_script
+
+    run_script("bootstrap-repo.py", "--init", cwd=repo)
+    for i in range(4):
+        run_script(
+            "promote-adr.py",
+            "--title",
+            f"Rule {i}",
+            "--context",
+            "c",
+            "--decision",
+            "word " * 40,
+            "--alternatives",
+            "a",
+            cwd=repo,
+        )
+    cfg = {**common.DEFAULT_CONFIG, "context_budget_words": 120}
+    context = common.build_memory_context(repo, cfg)
+    assert common.word_count(context) <= 120 * 1.1

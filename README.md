@@ -95,6 +95,8 @@ flowchart TB
     local -.->|session start| S
 ```
 
+Must-read ADRs are injected in relevance order: those tagged foundational first, then those whose tags match what this branch has touched, then the rest. The word budget truncates the tail, so what falls off is what this session is least likely to need, and the `memory` skill still finds it.
+
 Notes are cheap and many: three lines written the moment someone makes a choice. ADRs are few and deliberate: a note gets promoted once a decision proves it governs the codebase. Every session receives the ADR index, the decisions from must-read ADRs, and recent notes. A configurable word budget bounds the whole block, so memory never crowds out the work.
 
 ## How memory gets captured
@@ -226,7 +228,8 @@ Expect `Opted in: yes` and `Wiring: complete`.
   "decision_surfaces": ["docs/**"],
   "context_budget_words": 2500,
   "notes_window_days": 14,
-  "notes_full_days": 3
+  "notes_full_days": 3,
+  "foundational_tags": ["storage", "collaboration", "curation"]
 }
 ```
 

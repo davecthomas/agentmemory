@@ -4,7 +4,7 @@ title: "Shared agent assets use one install, many symlinks"
 status: "accepted"
 date: "2026-04-02"
 tags: "install,architecture"
-must_read: true
+must_read: false
 supersedes: ""
 superseded_by: ""
 ---

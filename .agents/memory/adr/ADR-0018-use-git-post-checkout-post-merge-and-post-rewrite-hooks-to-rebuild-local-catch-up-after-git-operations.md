@@ -4,7 +4,7 @@ title: "Use git post-checkout, post-merge, and post-rewrite hooks to rebuild loc
 status: "accepted"
 date: "2026-04-13"
 tags: "docs"
-must_read: true
+must_read: false
 supersedes: ""
 superseded_by: ""
 ---
