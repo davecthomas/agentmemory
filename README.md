@@ -139,7 +139,7 @@ Honest limits, so you can judge whether it fits.
 - **Not a wiki.** ADRs record the decisions that govern code. Documentation belongs wherever you already keep it. Ten to thirty ADRs is a healthy repository; three hundred means the bar slipped.
 - **Not automatic understanding.** It records decisions a person or agent chose to record. A team that writes nothing gets a memory of nothing.
 - **Not a service.** No database, no vector store, no embeddings, no network calls. This is a deliberate constraint: the repository owns the memory, so it works offline, survives vendor changes, and is auditable in a diff.
-- **Not multi-vendor yet.** v0.5 wires Claude Code only. Scripts install under agent-neutral paths so another runtime can be added, and the Markdown is already readable by any agent that can read files.
+- **Two runtimes, not every runtime.** Claude Code and Cursor are wired: both read the same skills, and each gets memory injected its own way, through a `SessionStart` hook and a generated `.cursor/rules/agentmemory.mdc` respectively. Other agents can read the Markdown but get no injection yet.
 - **Not free of context cost.** The injected block runs roughly 1,500 to 2,500 words. That is the price of every session starting informed, and the budget is yours to set.
 
 ## Getting started
@@ -273,6 +273,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `catchup.py` | Git hook. Writes `local/catchup.md` from memory changes since last seen. |
 | `check-memory.py` | Git hook (pre-commit). Structural checks on `.agents/memory/`. |
 | `commit-capture.py` | Git hook. Note from a decision-bearing commit. |
+| `cursor-rules.py` | Git hook. Renders the memory block into `.cursor/rules/` for Cursor. |
 | `install.py` / `uninstall.py` | Machine scope; `uninstall.py --repo` for repository scope. |
 | `memory-audit.py` | ADRs whose governed code has changed a lot since the decision. |
 | `memory-bootstrap.py` | Backs `memory-bootstrap`: ranked decision candidates from docs and commit bodies. |

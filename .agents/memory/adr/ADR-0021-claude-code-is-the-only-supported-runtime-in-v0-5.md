@@ -1,12 +1,12 @@
 ---
 id: "ADR-0021"
 title: "Claude Code is the only supported runtime in v0.5"
-status: "accepted"
+status: "superseded"
 date: "2026-09-05"
 tags: "scripts"
-must_read: true
+must_read: false
 supersedes: "ADR-0006"
-superseded_by: ""
+superseded_by: "ADR-2026-09-07-205a"
 ---
 
 # ADR-0021: Claude Code is the only supported runtime in v0.5

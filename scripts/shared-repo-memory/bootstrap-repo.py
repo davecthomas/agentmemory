@@ -18,6 +18,7 @@ from pathlib import Path
 from common import (
     ADR_DIR,
     CONFIG_FILE,
+    CURSOR_RULE_RELATIVE,
     DEFAULT_CONFIG,
     GITHOOKS_DIR,
     LOCAL_DIR,
@@ -27,6 +28,7 @@ from common import (
     ensure_dir,
     git,
     is_opted_in,
+    load_module,
     log,
     read_text,
     repo_root,
@@ -59,6 +61,7 @@ GITIGNORE_ENTRIES: tuple[str, ...] = (
     f"{GITHOOKS_DIR}/",
     f"{LOCAL_DIR}/",
     f"{ADR_DIR}/INDEX.md",
+    CURSOR_RULE_RELATIVE,
 )
 
 AGENTS_BEGIN: str = "<!-- agentmemory:begin (managed block; do not edit) -->"
@@ -114,12 +117,20 @@ def hook_text(name: str) -> str:
     else:
         script, label = "catchup.py", f"{name} catch-up"
         extra = f" --trigger {name}"
-    return (
-        head + f'if [ -f "$scripts/{script}" ]; then\n'
+    body = (
+        f'if [ -f "$scripts/{script}" ]; then\n'
         f'  python3 "$scripts/{script}" --repo-root "$repo_root"{extra} '
         f'|| echo "[agentmemory] {label} failed (non-fatal)" >&2\n'
         "fi\n"
     )
+    # Cursor has no session hook, so its rule file is refreshed here instead.
+    body += (
+        'if [ -f "$scripts/cursor-rules.py" ] && [ -d "$repo_root/.cursor" ]; then\n'
+        '  python3 "$scripts/cursor-rules.py" --repo-root "$repo_root" '
+        '|| echo "[agentmemory] cursor rule refresh failed (non-fatal)" >&2\n'
+        "fi\n"
+    )
+    return head + body
 
 
 def ensure_managed_block(
@@ -415,6 +426,8 @@ def main() -> int:
     )
     ensure_agents_block(root, dry_run=dry)
     ensure_workflow(root, dry_run=dry)
+    if (root / ".cursor").is_dir() and not dry:
+        load_module(Path(__file__).resolve().parent / "cursor-rules.py").refresh(root)
     ensure_hooks(root, dry_run=dry)
     if git(["config", "--get", "core.hooksPath"], root) != GITHOOKS_DIR:
         log(f"{'would set' if dry else 'setting'} core.hooksPath = {GITHOOKS_DIR}")
