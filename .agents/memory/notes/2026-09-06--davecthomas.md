@@ -55,3 +55,10 @@
 **Commit:** 2bc89e7
 **Source:** commit-capture
 
+## 2026-09-06T19:21Z · davecthomas · feat/adr-staleness
+
+**Decision:** notice when an ADR's code has moved on without it
+**Why:** Closes #58. An ADR could stay must-read and keep steering sessions long after the code it describes was rewritten around it, because nothing compared the decision against the code. ADRs now carry a scope field naming the paths they govern, inherited from a promoted note's Scope, and memory-audit reports any whose scope has seen heavy change since the ADR landed. news shows the top two. It is advisory: churn is a reason to look, not proof a decision is wrong, and nothing fails over it. Churn is measured from the commit that added the ADR rather than from its date field, because git log --since parses a bare date inconsistently and returned nothing for same-day churn during testing. The commit is also the more honest boundary: it is what the decision was true of. Closes #58
+**Commit:** ffd0261
+**Source:** commit-capture
+
