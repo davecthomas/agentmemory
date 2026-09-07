@@ -142,6 +142,48 @@ Honest limits, so you can judge whether it fits.
 - **Two runtimes, not every runtime.** Claude Code and Cursor are wired: both read the same skills, and each gets memory injected its own way, through a `SessionStart` hook and a generated `.cursor/rules/agentmemory.mdc` respectively. Other agents can read the Markdown but get no injection yet.
 - **Not free of context cost.** The injected block runs roughly 1,500 to 2,500 words. That is the price of every session starting informed, and the budget is yours to set.
 
+## Next: memory across related repositories
+
+Everything above stays inside one repository. That is the right default, and it leaves a
+gap: a decision made in one service constrains the services that call it, and today the
+agent in the calling repository cannot see it.
+
+Closing that gap needs one fact agentmemory does not have — which repositories are
+related, and how. [`schemas/repos-connections.schema.json`](schemas/repos-connections.schema.json)
+defines the file that carries it: every repository in a fleet, and the other repositories
+each one reaches, with the endpoints the relationship rests on.
+
+```yaml
+repos:
+- repo: acme/cards-api
+  service: cards-api
+  related:
+  - repo: acme/checkout-ui
+    role: provider
+    endpoints: [cards-api /v1/cards]
+- repo: acme/checkout-ui
+  service: checkout-ui
+  related:
+  - repo: acme/cards-api
+    role: consumer
+    endpoints: [cards-api /v1/cards]
+```
+
+Three properties make this usable as a memory index. The generator writes every
+relationship on both repositories, so a session in either one finds its neighbours
+without reading the whole file. Endpoints are the join, which catches the pair no import
+graph can — a frontend building its URLs at runtime shares no symbol with the service it
+calls. And each repository commits its own declaration, so the file changes only when
+someone commits one, and it reviews like code.
+
+The schema stays producer-agnostic on purpose: it constrains the shape alone.
+[machine-arch-docs](https://github.com/stagwell-machine/machine-arch-docs) sweeps a
+`.beast/flows.yaml` per repository to emit it, and any other generator emitting the same
+shape works.
+
+**Not built yet.** The schema lands first so a producer and a consumer can be written
+against one contract. Nothing in agentmemory reads this file today.
+
 ## Getting started
 
 Requires Python 3.13+, Git, and Claude Code or Cursor.
