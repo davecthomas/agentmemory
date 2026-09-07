@@ -219,3 +219,59 @@ def test_workflow_written_only_when_the_repo_uses_actions(repo: Path) -> None:
     written = (repo / bootstrap.WORKFLOW_RELATIVE).read_text(encoding="utf-8")
     assert "check-memory.py" in written and "davecthomas/agentmemory" in written
     assert not bootstrap.ensure_workflow(repo, dry_run=False)  # idempotent
+
+
+def test_cursor_rule_written_only_for_a_cursor_repo(repo: Path) -> None:
+    rules = load("cursor-rules.py")
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    run_script(
+        "promote-adr.py",
+        "--title",
+        "Retries",
+        "--context",
+        "c",
+        "--decision",
+        "keep them synchronous",
+        "--alternatives",
+        "a",
+        cwd=repo,
+    )
+
+    # No .cursor directory: nothing is written, since the repo is not a Cursor repo.
+    assert not (repo / common.CURSOR_RULE_RELATIVE).exists()
+
+    (repo / ".cursor").mkdir()
+    written = rules.refresh(repo)
+    assert written is not None
+    text = written.read_text(encoding="utf-8")
+    assert text.startswith("---\n") and "alwaysApply: true" in text
+    assert "keep them synchronous" in text  # the ADR's decision, injected
+    assert "memory-note" in text  # and the instruction to record new ones
+
+    # Derived, so it is gitignored and never committed.
+    bootstrap = load("bootstrap-repo.py")
+    assert common.CURSOR_RULE_RELATIVE in bootstrap.GITIGNORE_ENTRIES
+    assert not run_git(repo, "status", "--porcelain", "--", ".cursor")
+
+
+def test_cursor_rule_tracks_memory_and_is_removed_when_empty(repo: Path) -> None:
+    rules = load("cursor-rules.py")
+    assert run_script("bootstrap-repo.py", "--init", cwd=repo).returncode == 0
+    (repo / ".cursor").mkdir()
+    run_script("memory-note.py", "--decision", "First choice", "--why", "w", cwd=repo)
+    assert "First choice" in rules.refresh(repo).read_text(encoding="utf-8")
+
+    run_script("memory-note.py", "--decision", "Second choice", "--why", "w", cwd=repo)
+    assert "Second choice" in rules.refresh(repo).read_text(encoding="utf-8")
+
+    for note in (repo / common.NOTES_DIR).glob("*.md"):
+        note.unlink()
+    assert rules.refresh(repo) is None
+    assert not (repo / common.CURSOR_RULE_RELATIVE).exists()
+
+
+def test_generated_hooks_refresh_the_cursor_rule() -> None:
+    bootstrap = load("bootstrap-repo.py")
+    for name in ("post-merge", "post-checkout", "post-commit"):
+        assert "cursor-rules.py" in bootstrap.hook_text(name), name
+    assert "cursor-rules.py" not in bootstrap.hook_text("pre-commit")
