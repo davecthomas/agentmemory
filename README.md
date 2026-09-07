@@ -176,10 +176,9 @@ graph can — a frontend building its URLs at runtime shares no symbol with the 
 calls. And each repository commits its own declaration, so the file changes only when
 someone commits one, and it reviews like code.
 
-The schema stays producer-agnostic on purpose: it constrains the shape alone.
-[machine-arch-docs](https://github.com/stagwell-machine/machine-arch-docs) sweeps a
-`.beast/flows.yaml` per repository to emit it, and any other generator emitting the same
-shape works.
+The schema stays producer-agnostic on purpose: it constrains the shape alone. It names no
+generator, no declaration format, and no repository, so any tool that can work out which
+repositories call which can emit it.
 
 **Not built yet.** The schema lands first so a producer and a consumer can be written
 against one contract. Nothing in agentmemory reads this file today.

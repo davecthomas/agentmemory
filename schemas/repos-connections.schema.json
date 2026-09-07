@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/davecthomas/agentmemory/blob/main/schemas/repos-connections.schema.json",
   "title": "repos-connections",
-  "description": "Which repositories a fleet contains, and which other repositories each one reaches. A generator sweeps every repository for a declaration of the endpoints it serves and the endpoints it calls, matches the two, and writes the result here. agentmemory reads it to decide which repositories' memory is relevant to a session in any one of them. The producer this schema was written against is machine-arch-docs/scripts/gen_repo_connections.py, which reads a .beast/flows.yaml per repository; any producer emitting this shape works.",
+  "description": "Which repositories are related to which, and how. A generator sweeps each participating repository for a declaration of the endpoints it serves and the endpoints it calls, matches the two, and writes the result here. agentmemory reads it to decide which related repositories' memory is relevant to a session in any one of them. This schema constrains the shape and nothing else: it names no generator, no declaration format, and no repository, so any producer emitting this shape works.",
   "type": "object",
   "required": ["schema_version", "repos"],
   "additionalProperties": false,
@@ -13,13 +13,13 @@
       "minimum": 1
     },
     "manifest_path": {
-      "description": "Repository-relative path of the per-repository declaration the generator swept, recorded so a reader can tell which producer wrote the file and where to look when an entry seems wrong.",
+      "description": "Repository-relative path of the per-repository declaration the generator swept. Recorded so a reader can tell which producer wrote the file, and where to look when an entry seems wrong. Each producer chooses its own path.",
       "type": "string",
       "minLength": 1,
-      "examples": [".beast/flows.yaml"]
+      "examples": ["docs/connections.yaml"]
     },
     "repos": {
-      "description": "Every repository that published a declaration, sorted by `repo` so a rebuild diffs cleanly. A repository that published nothing is absent, and its absence is invisible here: nothing in this file can distinguish 'reaches no other repository' from 'never declared anything'. A consumer that needs that distinction has to compare against the fleet's own registry.",
+      "description": "Every repository that published a declaration, sorted by `repo` so a rebuild diffs cleanly. A repository that published nothing is absent, and its absence is invisible here: nothing in this file can distinguish 'reaches no other repository' from 'never declared anything'. A consumer that needs that distinction has to compare against whatever registry lists the repositories it expects.",
       "type": "array",
       "items": { "$ref": "#/$defs/repoEntry" }
     }
@@ -35,7 +35,7 @@
           "description": "Where the generator found this repository, which is authoritative over any identity the repository declares about itself. A declaration is written once and goes stale when a repository moves between organisations."
         },
         "service": {
-          "description": "The label this repository's endpoints are namespaced under. Deliberately not globally unique across a fleet; `repo` is what disambiguates two repositories claiming the same label.",
+          "description": "The label this repository's endpoints are namespaced under. Deliberately not globally unique; `repo` is what disambiguates two repositories claiming the same label.",
           "type": "string",
           "minLength": 1
         },
@@ -47,7 +47,7 @@
       }
     },
     "relationship": {
-      "description": "One directed relationship, written from the perspective of the repository whose entry holds it. Every relationship appears twice in the file, once on each participant, so a reader holding one repository finds its neighbours without scanning the whole document.",
+      "description": "One directed relationship, written from the perspective of the repository whose entry holds it. Every relationship appears twice in the file, once on each participant, so a reader holding one repository finds its related repositories without scanning the whole document.",
       "type": "object",
       "required": ["repo", "role", "endpoints"],
       "additionalProperties": false,
@@ -74,7 +74,7 @@
       "description": "A repository as `owner/name`, the form the GitHub API and CODEOWNERS both use.",
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "examples": ["stagwell-machine/machine-beast-test"]
+      "examples": ["acme/cards-api"]
     },
     "endpointKey": {
       "description": "A service label and a path, separated by one space. The HTTP method is deliberately absent: a declaration may name a surface as a bare path where the repository serving it declares several verbs, and those are one surface. Keying on the verb would leave the bare reference orphaned beside the real entries, inventing an endpoint nobody serves.",
@@ -86,25 +86,25 @@
   "examples": [
     {
       "schema_version": 1,
-      "manifest_path": ".beast/flows.yaml",
+      "manifest_path": "docs/connections.yaml",
       "repos": [
         {
-          "repo": "stagwell-machine/machine-beast-test",
+          "repo": "acme/cards-api",
           "service": "cards-api",
           "related": [
             {
-              "repo": "stagwell-machine/machine-beast-test-ui",
+              "repo": "acme/checkout-ui",
               "role": "provider",
               "endpoints": ["cards-api /v1/cards", "cards-api /v1/cards/{card_id}"]
             }
           ]
         },
         {
-          "repo": "stagwell-machine/machine-beast-test-ui",
-          "service": "beast-test-ui",
+          "repo": "acme/checkout-ui",
+          "service": "checkout-ui",
           "related": [
             {
-              "repo": "stagwell-machine/machine-beast-test",
+              "repo": "acme/cards-api",
               "role": "consumer",
               "endpoints": ["cards-api /v1/cards", "cards-api /v1/cards/{card_id}"]
             }
