@@ -155,18 +155,18 @@ each one reaches, with the endpoints the relationship rests on.
 
 ```yaml
 repos:
-- repo: acme/cards-api
-  service: cards-api
+- repo: acme/widget-store
+  service: widget-store
   related:
-  - repo: acme/checkout-ui
+  - repo: acme/storefront
     role: provider
-    endpoints: [cards-api /v1/cards]
-- repo: acme/checkout-ui
-  service: checkout-ui
+    endpoints: [widget-store /v2/widgets]
+- repo: acme/storefront
+  service: storefront
   related:
-  - repo: acme/cards-api
+  - repo: acme/widget-store
     role: consumer
-    endpoints: [cards-api /v1/cards]
+    endpoints: [widget-store /v2/widgets]
 ```
 
 Three properties make this usable as a memory index. The generator writes every

@@ -74,13 +74,13 @@
       "description": "A repository as `owner/name`, the form the GitHub API and CODEOWNERS both use.",
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "examples": ["acme/cards-api"]
+      "examples": ["acme/widget-store"]
     },
     "endpointKey": {
       "description": "A service label and a path, separated by one space. The HTTP method is deliberately absent: a declaration may name a surface as a bare path where the repository serving it declares several verbs, and those are one surface. Keying on the verb would leave the bare reference orphaned beside the real entries, inventing an endpoint nobody serves.",
       "type": "string",
       "pattern": "^[^\\s]+ /\\S*$",
-      "examples": ["cards-api /v1/cards", "cards-api /v1/cards/{card_id}"]
+      "examples": ["widget-store /v2/widgets", "widget-store /v2/widgets/{widget_id}"]
     }
   },
   "examples": [
@@ -89,24 +89,24 @@
       "manifest_path": "docs/connections.yaml",
       "repos": [
         {
-          "repo": "acme/cards-api",
-          "service": "cards-api",
+          "repo": "acme/widget-store",
+          "service": "widget-store",
           "related": [
             {
-              "repo": "acme/checkout-ui",
+              "repo": "acme/storefront",
               "role": "provider",
-              "endpoints": ["cards-api /v1/cards", "cards-api /v1/cards/{card_id}"]
+              "endpoints": ["widget-store /v2/widgets", "widget-store /v2/widgets/{widget_id}"]
             }
           ]
         },
         {
-          "repo": "acme/checkout-ui",
-          "service": "checkout-ui",
+          "repo": "acme/storefront",
+          "service": "storefront",
           "related": [
             {
-              "repo": "acme/cards-api",
+              "repo": "acme/widget-store",
               "role": "consumer",
-              "endpoints": ["cards-api /v1/cards", "cards-api /v1/cards/{card_id}"]
+              "endpoints": ["widget-store /v2/widgets", "widget-store /v2/widgets/{widget_id}"]
             }
           ]
         }
