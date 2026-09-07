@@ -82,7 +82,7 @@ def test_uninstall_removes_legacy_and_spares_foreign_skills(home: Path) -> None:
     (other_root / "memory").mkdir()
     (claude_skills / "memory").symlink_to(other_root / "memory")
 
-    uninstall.remove_skills(skills_root, claude_skills, ["memory"], dry_run=False)
+    uninstall.remove_skills(skills_root, [claude_skills], ["memory"], dry_run=False)
 
     assert not (claude_skills / legacy).exists() and not (skills_root / legacy).exists()
     assert (claude_skills / "memory").is_symlink()  # points elsewhere: untouched
@@ -135,3 +135,43 @@ def test_uninstall_repo_keeps_edited_hook(repo: Path, home: Path) -> None:
     assert hook.is_file()
     assert not (repo / common.GITHOOKS_DIR / "post-commit").exists()
     assert run_git(repo, "config", "--get", "core.hooksPath") == common.GITHOOKS_DIR
+
+
+def test_skills_link_into_every_agent_present(home: Path) -> None:
+    install = load("install.py")
+    (home / ".claude").mkdir()
+    (home / ".cursor").mkdir()
+    assert {t.parent.name for t in install.skill_dirs(home)} == {".claude", ".cursor"}
+
+    result = run_script("install.py", "--repo-root", str(CHECKOUT), cwd=CHECKOUT)
+    assert result.returncode == 0, result.stderr
+    for agent in (".claude", ".cursor"):
+        link = home / agent / "skills" / "memory"
+        assert link.is_symlink() and (link / "SKILL.md").is_file(), agent
+
+
+def test_absent_agent_gets_no_directory(home: Path) -> None:
+    install = load("install.py")
+    (home / ".claude").mkdir()
+    assert [t.parent.name for t in install.skill_dirs(home)] == [".claude"]
+    assert (
+        run_script("install.py", "--repo-root", str(CHECKOUT), cwd=CHECKOUT).returncode
+        == 0
+    )
+    assert not (home / ".cursor").exists()  # never created for an absent agent
+
+
+def test_dangling_link_is_repaired_without_force(home: Path) -> None:
+    install = load("install.py")
+    cursor = home / ".cursor" / "skills"
+    cursor.mkdir(parents=True)
+    (cursor / "memory").symlink_to(home / "gone" / "memory")  # points nowhere
+    assert not (cursor / "memory").exists()
+    install.install_skills(
+        CHECKOUT / "skills",
+        home / ".agent" / "skills",
+        [cursor],
+        dry_run=False,
+        force=False,
+    )
+    assert (cursor / "memory").is_symlink() and (cursor / "memory").exists()

@@ -97,43 +97,72 @@ def copy_scripts(src_dir: Path, dst_dir: Path, *, dry_run: bool) -> None:
         dst.chmod(dst.stat().st_mode | 0o111)
 
 
+def skill_dirs(home: Path) -> list[Path]:
+    """Per-agent skill directories to link into, for agents already set up here.
+
+    Claude Code and Cursor read the same ``SKILL.md`` format from their own
+    directory, so one canonical copy serves both. A directory is only linked
+    into when its parent exists: creating ``~/.cursor`` on a machine without
+    Cursor would leave dead configuration behind.
+
+    Args:
+        home: User home directory.
+
+    Returns:
+        list[Path]: Skill directories to populate.
+    """
+    return [
+        home / agent / "skills"
+        for agent in (".claude", ".cursor")
+        if (home / agent).is_dir() or (home / agent / "skills").is_dir()
+    ]
+
+
 def install_skills(
     skills_src: Path,
     skills_root: Path,
-    claude_skills: Path,
+    targets: list[Path],
     *,
     dry_run: bool,
     force: bool,
 ) -> None:
-    """Copy each skill to ``skills_root`` and symlink it from ``claude_skills``.
+    """Copy each skill to ``skills_root`` and symlink it from each target.
 
     Args:
         skills_src: ``skills/`` in the checkout.
         skills_root: ``~/.agent/skills``.
-        claude_skills: ``~/.claude/skills``.
+        targets: Per-agent skill directories to link from.
         dry_run: Log only.
-        force: Replace a non-symlink entry already at the link path.
+        force: Replace a non-symlink entry already at a link path.
     """
     for skill_dir in sorted(p for p in skills_src.iterdir() if p.is_dir()):
         name: str = skill_dir.name
         dest: Path = skills_root / name
-        link: Path = claude_skills / name
-        log(f"skill {name}: {'would install' if dry_run else 'installing'}")
+        agents = ", ".join(t.parent.name.lstrip(".") for t in targets) or "no agents"
+        log(
+            f"skill {name}: {'would install' if dry_run else 'installing'} for {agents}"
+        )
         if dry_run:
             continue
         dest.mkdir(parents=True, exist_ok=True)
         for src_file in skill_dir.iterdir():
             if src_file.is_file() and not same(src_file, dest / src_file.name):
                 shutil.copy2(src_file, dest / src_file.name)
-        claude_skills.mkdir(parents=True, exist_ok=True)
-        if link.is_symlink():
-            link.unlink()
-        elif link.exists():
-            if not force:
-                log(f"skill {name}: {link} exists and is not a symlink (use --force)")
-                continue
-            shutil.rmtree(link) if link.is_dir() else link.unlink()
-        link.symlink_to(dest)
+        for target in targets:
+            link: Path = target / name
+            target.mkdir(parents=True, exist_ok=True)
+            # A link pointing nowhere is an earlier install whose target moved.
+            # Replacing it is repair, not a conflict, so --force is not needed.
+            if link.is_symlink() and (not link.exists() or force or True):
+                link.unlink()
+            elif link.exists():
+                if not force:
+                    log(
+                        f"skill {name}: {link} exists and is not a symlink (use --force)"
+                    )
+                    continue
+                shutil.rmtree(link) if link.is_dir() else link.unlink()
+            link.symlink_to(dest)
 
 
 def wire_claude(
@@ -190,10 +219,11 @@ def main() -> int:
         checkout / "scripts" / "shared-repo-memory", root, dry_run=args.dry_run
     )
     copy_template(checkout, root, dry_run=args.dry_run)
+    targets = skill_dirs(home)
     install_skills(
         checkout / "skills",
         home / ".agent" / "skills",
-        home / ".claude" / "skills",
+        targets,
         dry_run=args.dry_run,
         force=args.force,
     )

@@ -144,7 +144,7 @@ Honest limits, so you can judge whether it fits.
 
 ## Getting started
 
-Requires Python 3.13+, Git, and Claude Code.
+Requires Python 3.13+, Git, and Claude Code or Cursor.
 
 ```bash
 git clone git@github.com:davecthomas/agentmemory.git
@@ -152,7 +152,7 @@ cd agentmemory
 ./install.sh            # --dry-run to preview, --force to replace non-symlink skill dirs
 ```
 
-The installer copies the scripts to `~/.agent/shared-repo-memory/`, the skills to `~/.agent/skills/` with symlinks from `~/.claude/skills/`, and adds `SessionStart`, `PostCompact`, and `Stop` hooks to `~/.claude/settings.json`. Restart open Claude Code sessions afterwards.
+The installer copies the scripts to `~/.agent/shared-repo-memory/`, the skills to `~/.agent/skills/` with symlinks from `~/.claude/skills/` and `~/.cursor/skills/` for whichever of those you have, and adds `SessionStart`, `PostCompact`, and `Stop` hooks to `~/.claude/settings.json`. Restart open Claude Code sessions afterwards.
 
 Installing turns nothing on. Every hook exits silently in a repository that has not opted in.
 

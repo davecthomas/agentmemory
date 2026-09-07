@@ -98,7 +98,7 @@ def unwire_claude(settings_path: Path, root: Path, *, dry_run: bool) -> None:
 
 
 def remove_skills(
-    skills_root: Path, claude_skills: Path, names: list[str], *, dry_run: bool
+    skills_root: Path, targets: list[Path], names: list[str], *, dry_run: bool
 ) -> None:
     """Remove agentmemory skill symlinks and canonical copies.
 
@@ -108,16 +108,17 @@ def remove_skills(
 
     Args:
         skills_root: ``~/.agent/skills``.
-        claude_skills: ``~/.claude/skills``.
+        targets: Per-agent skill directories to clean.
         names: Skill names shipped by this checkout.
         dry_run: Log only.
     """
     for name in dict.fromkeys([*names, *LEGACY_SKILLS]):
-        link: Path = claude_skills / name
-        if link.is_symlink() and link.resolve() == (skills_root / name).resolve():
-            log(f"{'would remove' if dry_run else 'removing'} {link}")
-            if not dry_run:
-                link.unlink()
+        for target in targets:
+            link: Path = target / name
+            if link.is_symlink() and link.resolve() == (skills_root / name).resolve():
+                log(f"{'would remove' if dry_run else 'removing'} {link}")
+                if not dry_run:
+                    link.unlink()
         copy: Path = skills_root / name
         if copy.is_dir():
             log(f"{'would remove' if dry_run else 'removing'} {copy}")
@@ -132,8 +133,9 @@ def uninstall_global(checkout: Path, *, dry_run: bool) -> None:
     names: list[str] = sorted(
         p.name for p in (checkout / "skills").iterdir() if p.is_dir()
     )
+    install = load_module(HERE / "install.py")
     remove_skills(
-        home / ".agent" / "skills", home / ".claude" / "skills", names, dry_run=dry_run
+        home / ".agent" / "skills", install.skill_dirs(home), names, dry_run=dry_run
     )
     if root.is_dir():
         log(f"{'would remove' if dry_run else 'removing'} {root}")
