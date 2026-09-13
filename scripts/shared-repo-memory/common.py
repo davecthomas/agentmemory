@@ -27,6 +27,8 @@ NOTES_DIR: str = f"{MEMORY_DIR}/notes"
 LOCAL_DIR: str = f"{MEMORY_DIR}/local"
 CONFIG_FILE: str = f"{MEMORY_DIR}/config.json"
 CURSOR_RULE_RELATIVE: str = ".cursor/rules/agentmemory.mdc"
+CONNECTIONS_FILE: str = f"{MEMORY_DIR}/connections.json"
+CONNECTIONS_SCHEMA_VERSION: int = 1
 GITHOOKS_DIR: str = ".githooks"
 CONFIGURED_FLAG: str = "shared_repo_memory_configured"
 ASSETS_REPO_KEY: str = "shared_agent_assets_repo_path"
@@ -38,10 +40,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "notes_full_days": 3,
     # Tags naming decisions every session needs, whatever it is working on.
     "foundational_tags": ["storage", "collaboration", "curation"],
-    # Repositories this one is connected to, rediscovered on every bootstrap.
-    # Each entry is {repo, kind, evidence}; add one by hand with evidence
-    # "declared by hand" and rediscovery will leave it alone.
-    "connections": [],
 }
 
 # A commit body that contains one of these explains a why; the miner and the

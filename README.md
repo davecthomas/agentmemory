@@ -142,46 +142,41 @@ Honest limits, so you can judge whether it fits.
 - **Two runtimes, not every runtime.** Claude Code and Cursor are wired: both read the same skills, and each gets memory injected its own way, through a `SessionStart` hook and a generated `.cursor/rules/agentmemory.mdc` respectively. Other agents can read the Markdown but get no injection yet.
 - **Not free of context cost.** The injected block runs roughly 1,500 to 2,500 words. That is the price of every session starting informed, and the budget is yours to set.
 
-## Next: memory across related repositories
+## Connected repositories
 
-Everything above stays inside one repository. That is the right default, and it leaves a
-gap: a decision made in one service constrains the services that call it, and today the
-agent in the calling repository cannot see it.
+A decision made in one service constrains the services that call it, and inside one
+repository the agent in the calling repository cannot see it. Closing that gap needs one
+fact: which repositories this one is connected to.
 
-Closing that gap needs one fact agentmemory does not have — which repositories are
-related, and how. [`schemas/repos-connections.schema.json`](schemas/repos-connections.schema.json)
-defines the file that carries it: every repository in a fleet, and the other repositories
-each one reaches, with the endpoints the relationship rests on.
+Each repository records only its own connections, in
+`.agents/memory/connections.json`, in the shape
+[`schemas/repo-connections.schema.json`](schemas/repo-connections.schema.json) defines. A
+fleet-wide graph would need somewhere to live that no repository owns and a writer with
+access to all of them; this needs neither, and travels with a clone.
 
-```yaml
-repos:
-- repo: acme/widget-store
-  service: widget-store
-  related:
-  - repo: acme/storefront
-    role: provider
-    endpoints: [widget-store /v2/widgets]
-- repo: acme/storefront
-  service: storefront
-  related:
-  - repo: acme/widget-store
-    role: consumer
-    endpoints: [widget-store /v2/widgets]
+```json
+{
+  "schema_version": 1,
+  "repo": "acme/storefront",
+  "generated_at": "2026-09-13",
+  "related": [
+    {"repo": "acme/proto-schemas", "role": "dependency", "evidence": ".gitmodules"},
+    {"repo": "acme/py-client", "role": "dependency", "evidence": "pyproject.toml"}
+  ]
+}
 ```
 
-Three properties make this usable as a memory index. The generator writes every
-relationship on both repositories, so a session in either one finds its neighbours
-without reading the whole file. Endpoints are the join, which catches the pair no import
-graph can — a frontend building its URLs at runtime shares no symbol with the service it
-calls. And each repository commits its own declaration, so the file changes only when
-someone commits one, and it reviews like code.
+The file is generated. `bootstrap-repo.py` rewrites it on every run from what the
+repository already declares about itself: `.gitmodules`, git dependency URLs in
+`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml` and requirements files, and
+same-organization references in GitHub Actions workflows. Only references on your own git
+host count, so a public dependency is not mistaken for a team edge, and a published action
+from another organization is tooling rather than a relationship.
 
-The schema stays producer-agnostic on purpose: it constrains the shape alone. It names no
-generator, no declaration format, and no repository, so any tool that can work out which
-repositories call which can emit it.
-
-**Not built yet.** The schema lands first so a producer and a consumer can be written
-against one contract. Nothing in agentmemory reads this file today.
+Discovery establishes one half of each edge, the half this repository's files show, so
+every generated entry has role `dependency`. The opposite halves, `dependent`, and the
+API roles `provider` and `consumer` with the endpoints they rest on, are in the schema for
+a producer with wider access to fill in.
 
 ## Getting started
 

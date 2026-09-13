@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import common
-from conftest import load, run_git, run_script
+from conftest import SCRIPTS, load, run_git, run_script
 
 
 def _origin(repo: Path, slug: str = "acme/app") -> None:
@@ -43,9 +43,11 @@ def test_discovers_submodules_dependencies_and_workflows(repo: Path) -> None:
         "acme/shared-action",
         "acme/tools",
     }
-    assert found["acme/shared-lib"]["kind"] == "submodule"
-    assert found["acme/py-client"]["kind"] == "dependency"
-    assert found["acme/shared-action"]["kind"] == "workflow"
+    # Discovery establishes only this repository's own half of an edge.
+    assert {c["role"] for c in found.values()} == {"dependency"}
+    assert found["acme/shared-lib"]["evidence"] == ".gitmodules"
+    assert found["acme/py-client"]["evidence"] == "pyproject.toml"
+    assert found["acme/shared-action"]["evidence"].endswith("ci.yml")
     assert "gitlab" not in str(found)  # a different host is not a team edge
     assert "actions/checkout" not in found  # published tooling is not an edge
 
@@ -59,33 +61,6 @@ def test_own_repository_is_never_its_own_connection(repo: Path) -> None:
     assert conn.discover(repo) == []
 
 
-def test_hand_written_entries_survive_rediscovery(repo: Path) -> None:
-    conn = load("repo-connections.py")
-    _origin(repo)
-    common.dump_json(
-        repo / common.CONFIG_FILE,
-        {
-            "connections": [
-                {
-                    "repo": "acme/manual",
-                    "kind": "runtime",
-                    "evidence": "declared by hand",
-                }
-            ]
-        },
-    )
-    (repo / ".gitmodules").write_text(
-        "\turl = git@github.com:acme/found.git\n", encoding="utf-8"
-    )
-    merged = {c["repo"]: c for c in conn.write(repo)}
-    assert set(merged) == {"acme/manual", "acme/found"}
-    assert merged["acme/manual"]["evidence"] == "declared by hand"
-    assert merged["acme/found"]["discovered"] == common.today()
-
-    again = {c["repo"]: c for c in conn.write(repo)}
-    assert set(again) == {"acme/manual", "acme/found"}  # stable across runs
-
-
 def test_init_records_connections(repo: Path) -> None:
     _origin(repo)
     (repo / ".gitmodules").write_text(
@@ -94,5 +69,31 @@ def test_init_records_connections(repo: Path) -> None:
     result = run_script("bootstrap-repo.py", "--init", cwd=repo)
     assert result.returncode == 0, result.stderr
     assert "1 connected repository" in result.stderr
-    config = common.load_config(repo)
-    assert [c["repo"] for c in config["connections"]] == ["acme/shared-lib"]
+    document = common.load_json(repo / common.CONNECTIONS_FILE, {})
+    assert [c["repo"] for c in document["related"]] == ["acme/shared-lib"]
+    assert document["related"][0]["role"] == "dependency"
+
+
+def test_document_validates_against_the_schema(repo: Path) -> None:
+    """The written document is the shape schemas/repo-connections.schema.json defines."""
+    conn = load("repo-connections.py")
+    _origin(repo)
+    (repo / ".gitmodules").write_text(
+        "\turl = git@github.com:acme/shared-lib.git\n", encoding="utf-8"
+    )
+    conn.write(repo)
+    document = common.load_json(repo / common.CONNECTIONS_FILE, {})
+
+    schema = common.load_json(
+        SCRIPTS.parents[1] / "schemas" / "repo-connections.schema.json", {}
+    )
+    required = set(schema["required"])
+    assert required <= set(document), f"missing {required - set(document)}"
+    assert set(document) <= set(schema["properties"]), "undeclared top-level key"
+
+    rel_schema = schema["$defs"]["relationship"]
+    for entry in document["related"]:
+        assert set(rel_schema["required"]) <= set(entry)
+        assert set(entry) <= set(rel_schema["properties"])
+        assert entry["role"] in rel_schema["properties"]["role"]["enum"]
+        assert entry["repo"] != document["repo"]
