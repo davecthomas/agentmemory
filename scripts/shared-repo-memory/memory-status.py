@@ -12,11 +12,13 @@ from pathlib import Path
 
 from common import (
     CONFIG_FILE,
+    CONNECTIONS_FILE,
     build_memory_context,
     is_opted_in,
     list_adrs,
     list_notes,
     load_config,
+    load_json,
     load_module,
     log,
     note_date,
@@ -66,7 +68,10 @@ def status_report(root: Path, *, with_context: bool = False) -> str:
         f"- Decision surfaces: {', '.join(cfg['decision_surfaces'])}",
         "- Connected repositories: "
         + (
-            ", ".join(str(c["repo"]) for c in cfg.get("connections", []))
+            ", ".join(
+                str(c["repo"])
+                for c in load_json(root / CONNECTIONS_FILE, {}).get("related", [])
+            )
             or "none discovered"
         ),
         f"- Must-read: {', '.join(must) or 'none'}",

@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/davecthomas/agentmemory/blob/main/schemas/repo-connections.schema.json",
+  "title": "repo-connections",
+  "description": "The repositories one repository is connected to, and how. The document describes the repository that holds it and no other, so it is written by that repository, committed with it, and travels with a clone. A fleet-wide graph would need somewhere to live that no single repository owns, and a writer with access to all of them; this needs neither. Each side records its own half, and a reader holding two clones sees both.",
+  "type": "object",
+  "required": ["schema_version", "repo", "related"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Bumped when a change to this schema breaks a reader. A consumer that does not recognise the value should stop rather than guess, because a silently misread graph names the wrong repositories.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "repo": {
+      "$ref": "#/$defs/repoName",
+      "description": "The repository this document describes, taken from its own git remote. Recorded so a copy found outside its repository still says what it is about."
+    },
+    "service": {
+      "description": "The label this repository's endpoints are namespaced under, where it serves any. Deliberately not globally unique; `repo` is what disambiguates two repositories claiming the same label.",
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "description": "When discovery last ran, as an ISO date. A reader comparing this against the repository's recent commits can tell whether the list has had a chance to notice a new dependency.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "related": {
+      "description": "The other repositories this one reaches, sorted by repository then role so a rebuild diffs cleanly. Empty is a real answer: a repository that depends on nothing and serves nobody has no connections, and that is different from never having looked.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/relationship" }
+    }
+  },
+  "$defs": {
+    "relationship": {
+      "description": "One directed relationship, written from this repository's perspective. The repository at the other end holds the opposite role in its own document; neither side can write the other's, which is why both sides record their own.",
+      "type": "object",
+      "required": ["repo", "role", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repoName",
+          "description": "The repository at the other end. Never equal to this document's own `repo`: a repository depending on itself or calling its own endpoint is not a cross-repository relationship."
+        },
+        "role": {
+          "description": "This repository's own side of the relationship. `dependency` and `provider` are what automatic discovery can establish from a repository's own files: what it depends on, and what it serves. `dependent` and `consumer` are the opposite halves, which only the repository at the other end can see, so they arrive by hand or from a generator with wider access.",
+          "type": "string",
+          "enum": ["dependency", "dependent", "provider", "consumer"]
+        },
+        "evidence": {
+          "description": "The repository-relative path the relationship was found in. This file is generated: every discovery run overwrites it, so an entry here is always something the repository currently declares about itself.",
+          "type": "string",
+          "minLength": 1,
+          "examples": [".gitmodules", "pyproject.toml", ".github/workflows/ci.yml"]
+        },
+        "endpoints": {
+          "description": "The endpoint keys an API relationship rests on, sorted and unique. Present for `provider` and `consumer`, absent for a code dependency, which joins two repositories through an import rather than a call. These are the only thing joining two repositories whose code shares no import: a consumer that builds its URLs at runtime has no compile-time reference to its provider.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/endpointKey" }
+        }
+      }
+    },
+    "repoName": {
+      "description": "A repository as `owner/name`, the form the GitHub API and CODEOWNERS both use.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "examples": ["acme/widget-store"]
+    },
+    "endpointKey": {
+      "description": "A service label and a path, separated by one space. The HTTP method is deliberately absent: a declaration may name a surface as a bare path where the repository serving it declares several verbs, and those are one surface. Keying on the verb would leave the bare reference orphaned beside the real entries, inventing an endpoint nobody serves.",
+      "type": "string",
+      "pattern": "^[^\\s]+ /\\S*$",
+      "examples": ["widget-store /v2/widgets", "widget-store /v2/widgets/{widget_id}"]
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "repo": "acme/storefront",
+      "service": "storefront",
+      "generated_at": "2026-09-13",
+      "related": [
+        {
+          "repo": "acme/proto-schemas",
+          "role": "dependency",
+          "evidence": ".gitmodules"
+        },
+        {
+          "repo": "acme/widget-store",
+          "role": "consumer",
+          "evidence": ".github/workflows/deploy.yml",
+          "endpoints": ["widget-store /v2/widgets", "widget-store /v2/widgets/{widget_id}"]
+        }
+      ]
+    }
+  ]
+}

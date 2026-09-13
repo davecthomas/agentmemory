@@ -17,22 +17,28 @@ says about its dependencies:
 
 Only references on the same host as this repository's own remote count, so a
 public dependency on an unrelated project is not mistaken for a team edge.
-Entries a person added by hand are preserved.
+
+The result is written to ``.agents/memory/connections.json`` in the shape
+``schemas/repo-connections.schema.json`` defines. Discovery can only establish
+the halves a repository's own files show, so every discovered relationship has
+role ``dependency``. The opposite halves, and any API relationship, are added
+by hand or by a generator with wider access, and rediscovery leaves those
+alone.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import re
 from pathlib import Path
 from typing import Any
 
 from common import (
-    CONFIG_FILE,
+    CONNECTIONS_FILE,
+    CONNECTIONS_SCHEMA_VERSION,
     dump_json,
     git,
-    load_config,
+    load_json,
     log,
     read_text,
     repo_root,
@@ -76,9 +82,14 @@ def own_identity(root: Path) -> tuple[str, str]:
     return "", ""
 
 
-def _add(found: dict[str, dict[str, str]], slug: str, kind: str, evidence: str) -> None:
-    """Record one edge, keeping the first evidence seen for a repository."""
-    found.setdefault(slug, {"repo": slug, "kind": kind, "evidence": evidence})
+def _add(found: dict[str, dict[str, str]], slug: str, evidence: str) -> None:
+    """Record one edge, keeping the first evidence seen for a repository.
+
+    Every discovered edge has role ``dependency``: it comes from this
+    repository declaring that it needs another. Whether that other repository
+    depends on this one is not visible from here, and is not guessed.
+    """
+    found.setdefault(slug, {"repo": slug, "role": "dependency", "evidence": evidence})
 
 
 def discover(root: Path) -> list[dict[str, str]]:
@@ -88,7 +99,7 @@ def discover(root: Path) -> list[dict[str, str]]:
         root: Repository root.
 
     Returns:
-        list[dict[str, str]]: ``repo``, ``kind`` and ``evidence`` per edge.
+        list[dict[str, str]]: ``repo``, ``role`` and ``evidence`` per edge.
     """
     host, own = own_identity(root)
     found: dict[str, dict[str, str]] = {}
@@ -99,13 +110,13 @@ def discover(root: Path) -> list[dict[str, str]]:
     modules: str = read_text(root / ".gitmodules")
     for match in _URL.finditer(modules + " "):
         if same_host(match) and match.group("slug") != own:
-            _add(found, match.group("slug"), "submodule", ".gitmodules")
+            _add(found, match.group("slug"), ".gitmodules")
 
     for name in MANIFESTS:
         text: str = read_text(root / name)
         for match in _URL.finditer(text + " "):
             if same_host(match) and match.group("slug") != own:
-                _add(found, match.group("slug"), "dependency", name)
+                _add(found, match.group("slug"), name)
 
     for workflow in sorted((root / ".github" / "workflows").glob("*.y*ml")):
         text = read_text(workflow)
@@ -115,53 +126,34 @@ def discover(root: Path) -> list[dict[str, str]]:
                 slug = match.group("slug")
                 # A published action from another org is tooling, not a team edge.
                 if own and slug != own and slug.split("/")[0] == own.split("/")[0]:
-                    _add(found, slug, "workflow", rel)
+                    _add(found, slug, rel)
     return sorted(found.values(), key=lambda c: c["repo"])
 
 
-def merge(
-    existing: list[Any], discovered: list[dict[str, str]]
-) -> list[dict[str, Any]]:
-    """Combine discovered edges with any a person added by hand.
-
-    A hand-written entry wins: someone recorded a relationship the manifests do
-    not show, and rediscovery must not erase it.
-
-    Args:
-        existing: Connections already in the config.
-        discovered: Output of ``discover``.
-
-    Returns:
-        list[dict[str, Any]]: Merged list, sorted by repository name.
-    """
-    by_repo: dict[str, dict[str, Any]] = {}
-    for entry in discovered:
-        by_repo[entry["repo"]] = {**entry, "discovered": today()}
-    for entry in existing:
-        if isinstance(entry, dict) and entry.get("repo"):
-            if (
-                entry.get("evidence") == "declared by hand"
-                or entry["repo"] not in by_repo
-            ):
-                by_repo[entry["repo"]] = entry
-    return sorted(by_repo.values(), key=lambda c: str(c["repo"]))
-
-
 def write(root: Path) -> list[dict[str, Any]]:
-    """Refresh the ``connections`` list in the repository's memory config.
+    """Rewrite ``.agents/memory/connections.json`` from what discovery finds.
+
+    The file is generated: every run overwrites it. A relationship the
+    manifests cannot show is recorded elsewhere, not here.
 
     Args:
         root: Repository root.
 
     Returns:
-        list[dict[str, Any]]: The merged connections.
+        list[dict[str, Any]]: The discovered relationships.
     """
-    path: Path = root / CONFIG_FILE
-    config: dict[str, Any] = json.loads(read_text(path)) if path.is_file() else {}
-    merged = merge(config.get("connections", []), discover(root))
-    config["connections"] = merged
-    dump_json(path, config)
-    return merged
+    related = discover(root)
+    _, own = own_identity(root)
+    dump_json(
+        root / CONNECTIONS_FILE,
+        {
+            "schema_version": CONNECTIONS_SCHEMA_VERSION,
+            "repo": own,
+            "generated_at": today(),
+            "related": related,
+        },
+    )
+    return related
 
 
 def main() -> int:
@@ -173,7 +165,11 @@ def main() -> int:
     if root is None:
         log("repo-connections: not inside a git repository")
         return 1
-    found = write(root) if args.write else load_config(root).get("connections", [])
+    found = (
+        write(root)
+        if args.write
+        else load_json(root / CONNECTIONS_FILE, {}).get("related", [])
+    )
     if args.write:
         log(f"recorded {len(found)} connection{'s' if len(found) != 1 else ''}")
     if not found:
