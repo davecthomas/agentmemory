@@ -426,6 +426,15 @@ def main() -> int:
     )
     ensure_agents_block(root, dry_run=dry)
     ensure_workflow(root, dry_run=dry)
+    if not dry:
+        connections = load_module(
+            Path(__file__).resolve().parent / "repo-connections.py"
+        ).write(root)
+        if connections:
+            log(
+                f"recorded {len(connections)} connected "
+                f"repositor{'y' if len(connections) == 1 else 'ies'}"
+            )
     if (root / ".cursor").is_dir() and not dry:
         load_module(Path(__file__).resolve().parent / "cursor-rules.py").refresh(root)
     ensure_hooks(root, dry_run=dry)

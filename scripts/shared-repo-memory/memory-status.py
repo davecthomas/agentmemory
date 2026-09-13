@@ -64,6 +64,11 @@ def status_report(root: Path, *, with_context: bool = False) -> str:
         f"- Session context: {words} words ≈ {int(words * TOKENS_PER_WORD)} tokens "
         f"of a {cfg['context_budget_words']}-word budget",
         f"- Decision surfaces: {', '.join(cfg['decision_surfaces'])}",
+        "- Connected repositories: "
+        + (
+            ", ".join(str(c["repo"]) for c in cfg.get("connections", []))
+            or "none discovered"
+        ),
         f"- Must-read: {', '.join(must) or 'none'}",
     ]
     if with_context:
