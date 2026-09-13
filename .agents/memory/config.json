@@ -1,4 +1,5 @@
 {
+  "connections": [],
   "context_budget_words": 2500,
   "decision_surfaces": [
     "docs/**"

@@ -270,9 +270,12 @@ Expect `Opted in: yes` and `Wiring: complete`.
   "context_budget_words": 2500,
   "notes_window_days": 14,
   "notes_full_days": 3,
-  "foundational_tags": ["storage", "collaboration", "curation"]
+  "foundational_tags": ["storage", "collaboration", "curation"],
+  "connections": []
 }
 ```
+
+`connections` records which other repositories this one is tied to, so a decision recorded here can be traced to the code it governs elsewhere. Each repository declares only its own edges, which keeps the record next to the repository that has them. `bootstrap-repo.py` rediscovers them on every run, reading `.gitmodules`, git dependency URLs in the usual manifests, and same-organization references in GitHub Actions workflows; only references on your own git host count, so a public dependency is not mistaken for a team edge. Add one the manifests cannot show by hand with `"evidence": "declared by hand"`, and rediscovery will leave it alone.
 
 An ADR can also name the code it governs with `--scope`, and `memory-audit.py` reports any whose scope has changed a lot since the decision landed, so a stale rule gets re-read rather than silently obeyed.
 
@@ -324,6 +327,7 @@ All in `scripts/shared-repo-memory/`, installed to `~/.agent/shared-repo-memory/
 | `memory-query.py` | Search ADRs, notes, docs, path history; ranked, `--since`/`--until`/`--author`, `--json`. |
 | `memory-status.py` | Backs `/agentmemory status`: wiring, counts, context size. |
 | `post-compact.py` | Hook. Re-injects context after compaction. |
+| `repo-connections.py` | Discover which repositories this one is connected to. |
 | `promote-adr.py` | Write an ADR, rebuild the index. `--from-note`, `--supersedes`, `--reindex`. |
 | `session-start.py` | Hook. Repairs wiring, injects context. `--print-context` prints the block. |
 | `turn-nudge.py` | Hook (`Stop`). Once per session, asks for a note when work went unrecorded. |
